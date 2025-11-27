@@ -1,0 +1,73 @@
+Ideas:
+
+Functions hooks
+Variable hooks
+automatic unsigned typedefs
+
+new type: code
+Functions are type code* (memcpying them is legal)
+__asm returns a code*
+code @name_of_patch[] = __asm("bx lr");
+
+Functions are not necessarily in contigous memory?
+
+Implementation:
+0. Get symbols
+    Parse out interesting data from source.
+    Need:
+        all structs, enums
+
+        All variables & their locations
+            (int named 'int_here' at 0x20005000, double[2] named 'double_array' at 0x40, etc)
+            All other globals (patch locations)
+            (ghidra labels with undefined type or code type?)
+
+        All functions
+            Signature, start address, end address
+
+1. Parse and lex
+    Make the @ sign legal for function names and variable names
+    When we find it, mark the function or variable appropriately
+    Is this when we want to do hooking?
+
+2. Find space for our functions.
+    a. chuck it in a new elf segment (can't be in existing because address conflicts)
+    b. Chuck it at the end of the file
+    c. Weave it into holes of unused functions
+        To accomplish this:
+        Every @d function that is not referenced is unused space. 
+        First, parse and lex the source code. Mark all @d functions with no calls to the original as free.
+            Probably want a corresponding (identify unused functions) generator
+
+What's the output of this? A .reo file? A binary?
+
+Need to provide an optional recr_data_init(address) function
+calling it copies the .data section to (address) and causes everything to link to address
+address must be a constant
+
+Otherwise
+Elf:
+    chuck it in a new elf segment
+raw:
+    data is included in whatever we're writing into
+
+reld gets a .reo file and a source binary and creates a patched binary. What does it need?
+
+recr:
+- read necessary information out of DWARF (generate DWARF via separate project)
+- for each function hook:
+    - generate the (unlinked) branch (elf section)
+    - generate the (unlinked) replacement. (elf section)
+    - use frida-gum to move the function around
+    
+- for each variable hook:
+    - create an elf segment w/ data and address
+- for each function:
+    create an elf section
+
+reld:
+- install all variable hooks 
+- link everything
+- copy bytes into output format
+and you have a binary
+
