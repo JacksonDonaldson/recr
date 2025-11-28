@@ -10,6 +10,10 @@
 
 typedef unsigned char byte;
 
+void print_out_all_functions(Dwarf_Debug dbg){
+    
+}
+
 void parse_DWARF(char * name, char* output){
     char path_out[2000];
     Dwarf_Debug dbg = 0;
