@@ -1,3 +1,6 @@
 [submodule "libdwarf-code"]
 	path = libdwarf-code
 	url = git@github.com:davea42/libdwarf-code.git
+[submodule "gcc"]
+	path = gcc
+	url = git@github.com:gcc-mirror/gcc.git
