@@ -1,0 +1,3 @@
+[submodule "libdwarf-code"]
+	path = libdwarf-code
+	url = git@github.com:davea42/libdwarf-code.git
