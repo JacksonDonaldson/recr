@@ -10,21 +10,56 @@
 
 typedef unsigned char byte;
 
+static int
+getlowhighpc(
+    Dwarf_Die die,
+    Dwarf_Addr *lowpc_out,
+    Dwarf_Addr *highpc_out,
+    Dwarf_Error* error)
+{
+    Dwarf_Addr hipc = 0;
+    int res = 0;
+    Dwarf_Half form = 0;
+    enum Dwarf_Form_Class formclass = 0;
+    res = dwarf_lowpc(die,lowpc_out,error);
+    if (res == DW_DLV_OK) {
+        res = dwarf_highpc_b(die,&hipc,&form,&formclass,error);
+        if (res == DW_DLV_OK) {
+            if (formclass == DW_FORM_CLASS_CONSTANT) {
+                hipc += *lowpc_out;
+            }
+            *highpc_out = hipc;
+            return DW_DLV_OK;
+        }
+    }
+    /*  Cannot check ranges yet, we don't know the ranges base
+        offset yet. */
+    return DW_DLV_NO_ENTRY;
+}
+
 //precondition: die is a DW_TAG_subprogram
 //prints name of subprogram by parsing die
-void print_function_name(Dwarf_Debug dbg, Dwarf_Die die, Dwarf_Error * errp){
+void print_function(Dwarf_Debug dbg, Dwarf_Die die, Dwarf_Error * errp){
     char *name = NULL;
+    Dwarf_Addr start, end;
+
     int res = dwarf_diename(die, &name, errp);
     if(res == DW_DLV_OK){
-        printf(": %s\n", name);
+        printf(": %s", name);
+        res = getlowhighpc(die, &start, &end, errp);
+        if(res == DW_DLV_OK){
+            printf(" (%016llx-%016llx)\n", start, end);
+        }
+        else{
+            printf("\n");
+        }
+        
         dwarf_dealloc(dbg, name, DW_DLA_STRING);
     } else if(res == DW_DLV_NO_ENTRY){
         printf(": <no name>\n");
     } else {
         fprintf(stderr, "Error in dwarf_diename\n");
-        if(errp && *errp){
-            dwarf_dealloc_error(dbg, *errp);
-        }
+        exit(1);
     }
 }
 
@@ -35,11 +70,8 @@ int examine_die(Dwarf_Debug dbg, Dwarf_Die die, Dwarf_Error * errp){
 
     if(tag == DW_TAG_subprogram){
         printf("found function");
-        print_function_name(dbg, die, errp);
+        print_function(dbg, die, errp);
     }
-
-
-
     return res;
 }
 int recursively_examine_die(Dwarf_Debug dbg, Dwarf_Die in_die, int is_info, int in_level, Dwarf_Error * errp){
@@ -112,10 +144,6 @@ int print_out_all_functions(Dwarf_Debug dbg){
             return res;
         }
         recursively_examine_die(dbg, cu_die, is_info,0, &error);
-
-        printf("loop\n");
-
-
     }
 }
 
