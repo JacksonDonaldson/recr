@@ -1,0 +1,486 @@
+codezip:
+
+Goals:
+    Modify an already-compiled binary to maximize the amount of free space
+        - the semantics of the binary to be modified cannot change.
+        - the overall footprint of the binary cannot change (functions do not move around. Data is not appended.)
+        - assume we just want to maximize the amount of totally unused space in the binary
+
+Basic idea:
+    Reduce code size through several passes, including:
+        - unused function removal
+        - a highly aggressive variant of function outlining
+        - leaf node optimizations
+
+Overview:
+    1. Decompile the binary and recover function-level information
+        - Recover a list of function entry points, locations in the binary, and lengths.
+        - This is just an export from some arbitrary RE tool - define a common format and expect it as input
+        
+    2. Uplift each function into a series of instructions
+        - Extract code flow and dependency graphs
+    
+    3. Apply optimization passes
+        - Mark unreferenced functions for removal
+        - Remove redundant instructions
+        - Apply function outlining
+    
+    4. Test the modified binary
+        - Ensure the modifications didn't break anything
+
+
+Overall project structure:
+
+codezip.py:
+    - orchestrator
+    - takes arguments, invokes functions in other parts of project as necessary
+
+input_parser.py:
+    - Responsible for taking input from RE tool and converting to python object for later use
+    - Should support: YAML, ghidra XML files
+
+parsers/yaml.py:
+    - does yaml parsing to extract function info from YAML files
+
+parsers/ghidra_xml.py:
+    - does xml parsing to extract function info from XML files.
+
+uplifter.py:
+    - Responsible for turning function locations into 
+    - Splits ISA-specific details of this into isa/[isa].py 
+
+isa/isa.py:
+    - superclass that ISAs should implement
+
+isa/x86_64.py:
+    - The first ISA to be implemented 
+
+optimizers/function_remover.py:
+    - Eliminates unreferenced functions
+
+optimizers/outliner.py:
+    - orchestrates the function outlining optimization.
+
+Detailed breakdown:
+
+
+input_parser.py:
+    
+    global parser_list [yaml, ghidra]
+
+    function parse_re_file(string filename):
+
+        for parser in parser_list:
+            see if it's supported
+            if it is, use it to parse the file
+                return parser result
+
+        return failure
+
+
+
+
+parsers/yaml.py:
+
+    function is_supported(filename):
+        return filename ends in yaml and is successfully parsed as yaml file
+
+    function parse(filename):
+
+        yaml files should have the format:
+
+        isa: [string]
+        functions:
+            function_name:
+                start_address: [ulonglong]
+                file_offset: [ulonglong]
+                length: [ulonglong]
+
+            [repeated]
+        
+        There may be additional data at the top level - ignore it.
+        
+
+        and returns list[uplifter.Function]
+
+parsers/ghidra_xml.py:
+    function is_supported(filename):
+        return filename ends in xml and is successfully parsed as xml file
+    
+    function parse(filename):
+        extracts the same information as the yaml parser.
+
+        See sample_ghidra.xml for the format -> it should get successfully parsed.
+
+        returns list[uplifter.Function]
+    
+
+uplifter.py:
+
+    class Uplifter:
+    
+        function_map = map [entrypoint -> Function]
+        isa = ISA
+        code_xrefs = list[tuple(src_instr, target_address)]
+
+        function init(string isa, Binary binary):
+            create and store and ISA as appropriate
+            save binary
+
+
+        function uplift_function(Function f):
+            
+            list[Instruction] instructions
+
+            - First, do a linear pass
+            - Read function bytes out of src file
+            - Starting at the first byte in the function, going to the end:
+                instr = isa.disassemble(current location)
+                instructions.append(instr)
+                current location += instr.length
+            
+            - next, do a code flow recovery pass
+            - (isa.disassemble is only responsible for filling in flows_to)
+
+            - Start at the first instruction and do a simple dfs/bfs on the flows_to list in order to fill in flows_from
+                
+                - for addresses that fall outside of the bounds of the function:
+                    - don't add them to the dfs list
+                    - instead, add them to the outgoing_references list
+                    - this includes UNK_NONLOCAL and UNK_LOCAL addresswa
+                
+
+            - now recover basic blocks
+                TODO
+
+            - add f to the function map
+        
+        function build_xrefs():
+            - called only after all functions have been uplifted.
+            - want to find all function calls.
+                However, we can't rely on the incoming function list being complete
+                    it may just be a subset of the actual functions in the binary
+                    (ghidra for example often totally misses functions called indirectly)
+                So we do a linear disassembly on the full binary
+            
+            For each offset in the binary:
+                
+                isa.try_interpret_as_pointer(offset)
+                    if that points to any of the function_map functions, add a ref from this offset to the function.
+                    in the function's incoming_references list
+                
+                isa.disassemble(offset)
+                    if that succeeds, check each of the flows_to addresses. If any of the map to a function,
+                    add a ref from here to there in that functions' incoming_references list.
+                
+
+    class Function:
+        name
+        file_offset
+        start_address
+        length
+
+        list[BasicBlock] basic_blocks
+        list[Intruction] instructions
+        list[Reference] incoming_references
+        list[Reference] outgoing_references
+
+        function has_unk_local_reference:
+            return UNK_LOCAL in outgoing_references
+
+    class Address:
+        ulonglong address
+        special options:
+            - UNK LOCAL
+            - UNK NONLOCAL
+
+    class Instruction:
+        bytestring original_data
+        enum type:
+            call
+            arithmetic
+            outline_result_call
+        
+        BasicBlock outlineTarget
+        uint length
+
+        list[StateSpace] modifies
+        list[StateSpace] depends_on
+        list[Address] flows_from
+        list[Address] flows_to
+
+    class StateSpace:
+        string name
+        uint size
+
+    class Reference:
+        Address from
+        Address to
+
+    class FreeSpace:
+        Address start
+        uint size
+        string diagnostic
+
+    class BasicBlock:
+        list[Instruction] instructions
+        bool used_for_outlining
+        Address start_location
+        Function containing_function
+
+
+optimizers/function_remover.py:
+    
+    function run_optimizer(Binary, Uplifter, isa):
+
+        for each function in Uplifter.function_map:
+            if function has no incoming_references:
+                remove the function from the function map
+                add the space occupied by the function to the FreeSpace list
+    
+        return a list of free spaces
+
+
+optimizers/outliner.py:
+    - orchestrates the function outlining optimization.
+    - compilers frequently inline functions. This increases speed at the cost of code size.
+        - what if we could undo that?
+    - 'source sites' refers to the locations where instructions are being replaced
+    - 'target site' refers to the location the newly replaced bytes are being stored.
+
+    instruction_map map[position_invariant_instruction_encoding -> set[Basic block]]
+
+    function run_optimizer(Binary, Uplifter, Isa, free_space):
+        extract_instruction_regions(Binary, Uplifter, Isa)
+
+        if we weren't able to successfully extract anything, return
+
+        relink_in_instructions(extracted_instructions, extracted_basic_blocks, free_space)
+
+    function extract_instruction_regions(Binary, Uplifter, Isa):
+
+        if the isa doesn't support function outlining:
+            note a warning and return
+
+        for each function in Uplifter.function_map:
+            if the function has_unk_local_reference:
+                continue
+            for each basic_block in function:
+                for each instruction in that basic block:
+                    add the basic block to the set of that instruction in instruction_map
+    
+        now find best matches for each basic block.
+
+        extracted_instruction_windows = list[BasicBlock]
+        basic_blocks_to_regenerate = list[(BasicBlock original, BasicBlock modified)]
+
+        For each function:
+            if the function has_unk_local_reference:
+                continue
+            for each basic_block in function:
+                if this basic block has already been outlined:
+                    continue
+
+
+
+                profitible_matches = find_basic_block_matches(basic_block)
+
+                for matching_basic_block in profitable_matches:
+                    if try_generate_replacement_bytes(matching_basic_blocks) succeeds:
+                        
+                        - mark all the containing basic blocks as used for outlining
+                        - add the extracted instructions block to extracted_instruction_windows
+                        - add all of the modifications to basic_blocks_to_regenerate
+                
+        if extracted_instruction_windows and basic_blocks_to_regenerate are empty:
+            return failure
+        
+        Now we need to reassemble all the functions we extracted data from.
+
+        from each of the basic_blocks_to_regenerate:
+            get the containing function, and if it still needs to be regenerated:
+
+            first, iterate through the function's insructions, keeping track of the current base address.
+            For each, call isa.relocate_instruction(new_base_address)
+
+            Next, work back through the list a second time to make branch targets work.
+            For each branch, keep track of the instruction it used to target and call
+            isa.set_instruction_target(new_location_of_that_instruction)
+
+            If an instruction has >2 possible local targets, then the UNK_NONLOCAL flag should've been set -> so this should all work out ok.
+
+            finally, add the freed data between the new end of the function and the old end of the function to a list.
+
+        return success, with: the free space list, the list of instructions that still need to be linked, and the set of extracted basic block regions that we still need to stitch in to the binary
+
+
+    function relink_in_instructions(extracted_instructions, extracted_basic_blocks, free_space):
+        for each basic block we need to link back in to the binary:
+            add a return instruction on the end, if some other step didn't already do that.
+            find the smallest free space that can hold this basic block.
+            put the instruction list in the binary at that location.
+            remove the used space from the free_space list
+            for all the instructions that should point to that basic block:
+                call isa.set_instruction_target(the location)
+
+
+
+    function find_basic_block_matches(block) -> list[tuple(set(basic_block), set(common_instructions))]
+        Find the set of basic blocks this block could be combined with that would save the most bytes overall.
+        
+        There are two criteria for the number of bytes a combination would save:
+            - the length of the encoding of the instructions in common
+            - the number of basic blocks with those common instructions
+        
+        But the combination of those two will depend slightly on the isa.
+            - ultimately at each source site, we're going to need to inject a call instruction
+            - then at the target site we're gonna need to do the common instructions, then return
+
+        Get: # of bytes for call instruction, # of bytes for ret instruction from ISA.
+
+        So the overall # of bytes saved if a particular combo works is:
+            ((combined instruction length - call instruction length) * number of sources) - ret instruction length
+
+        bb_match = map from basic_block -> int best_matches
+
+        for each instruction in this basic block:
+            add 1 to each basic block in instruction_map[instruction]
+
+        reduced_bb_match = throw away all basic blocks with fewer than 3 matches.
+
+        Now from those matching basic blocks we extract the combination that saves the most bytes.
+
+        Use a map again:
+            - hash function on the set of matching instructions
+
+        matching_instruction_map = map[set(instructions)] to set[basic_blocks]
+        so for each basic block in reduced_bb_match:
+            union the set of this_bb instruction and that_bb instructions
+            matching_instruction_map[result].add(that_bb)
+            may as well add this_bb as well for good measure.
+        
+        now calculate profitability of each thing in matching_instruction_map
+        return a sorted list of the 10 most profitable
+
+
+    function try_generate_replacement_bytes(basic_blocks, common_instructions):
+        We're given as set of basic blocks that have some number of instructions in common
+        We need to try to shift each basic block around such that we can actually outline those common instructions.
+
+        To do that, we need some kind of dependency graph, probably.
+
+        1. Resolve instruction order
+
+        The common instructions need to appear in the same order in all basic blocks.
+        That isn't guaranteed to be the case; we need to determine if it is, and if not if we can make that so.
+
+        For simplicity, assume the final instruction order is one of the instruction orders that appears in the incoming basic blocks
+
+        TODO: can we make this arbitrary order, not just one of the incoming orders? Seems like a SAT problem. (don't solve this yet)
+
+        for each src_basic_block in basic_blocks:
+
+            reordered_blocks = list[BasicBlock] initialized_with src_basic_block
+
+            source_indices = find_indices(src_basic_block, common_instructions)
+        
+            ordered_instructions = get instruction order from source_indices
+
+            for other_basic_block in basic_blocks that aren't src_basic_block:
+                this_order = find_indices
+                reordered_block, start_offset = convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance()
+
+                if reordered_block is None:
+                    fail this src_basic_block ordering and try the next one
+                
+                reordered_blocks.append(tuple(reordered_block, start_offset))
+            
+            if we couldn't make this src reordering work:
+                continue to the next one
+            
+
+            convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance guarantees the instructions will end up in the same order.
+            It also guarantees that all those instructions are adjacent.
+
+
+            Now we just need to extract all those segments from each basic block.
+
+            create a basic block that's just the extracted instructions
+
+            for each reordered_block in reordered_blocks:
+                replace the instruction sequence with a special instruction of type outline_result_call
+                give that instruction a reference to the extracted_instruction basic block
+
+            return success with all the reordered basic blocks and the extracted basic block.
+
+        if we couldn't find a reordering, return fail.
+
+
+    
+    function find_indices(basic_block, instructions_to_find):
+        return list[indices of instructions_to_find in basic_block.instructions]
+
+    
+    function convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance(basic_block, instructions_to_move, target_instruction_order):
+
+        for moved_instruction in target_instruction_order[1:]:
+
+            target_location = 1 position in the basic block after the previous instruction in target_instruction_order
+            moved_instruction_group = list[instruction] init'd with moved_instruction
+
+            while the position of the moved_instruction_group doesn't start at the target_location:
+
+
+                see if we can swap the moved_instruction_group with the instruction nearer the target location
+                
+
+                if we can:
+                    do the swap and record the modified list[instruction] in the basic block. Make sure to keep all the instruction 
+                
+                if we can't:
+                    if the instruction we're trying to swap with is in target_instruction_order:
+                        return failure
+                    otherwise, add that instruction to the moved_instruction_group in the right location. (start or end depending on move direction)
+
+
+            the instruction is now at the correct relative location in the basic block, with the minimum number of non-target instructions between it and the previous target instruction.
+
+            try to swap all of the non-target instructions in moved_instruction_group to the other side of the instruction chain
+            (such that all the target instructions are adjacent)
+            if we can't:
+                return failure
+
+        
+        if we were able to move all instructions to the right location, return success. Also return the offset into the basic block that the target instructions start at.
+
+    
+    function can_swap_instruction(list[instruction] group_to_move, instruction to_swap_with):
+
+        we're allowed to swap the group with that instruction if:
+            - the group doesn't depend on any of to_swap_with outputs
+            - to_swap_with doesn't depend on any of group_to_move outputs
+        
+        calculate that based on the instruction fields:
+        list[StateSpace] modifies
+        list[StateSpace] depends_on
+
+        This is legal because we're treating all locations with persistent side effects as registers.
+
+        TODO: If your ISA is stupid enough to require software enforced delay slots, this model could be problematic.
+
+
+isa/isa.py:
+
+    class ISA:
+        function relocate_instruction(instruction, new_base_address) ->rewrites instruction to be at new_base_address.
+        function disassemble(byte array) -> instruction
+        function set_instruction_target(instruction, new_target_address) -> rewrites instruction to target new_target_address with any jumps / etc.
+        function try_interpret_as_pointer(byte array) -> try interpreting byte array as an address
+
+isa/x86_64.py:
+    implements ISA using capstone disassembler.
+
+
+
+codezip.py:
+    has all the options you'd expect and orchestrates the overall binary well.
