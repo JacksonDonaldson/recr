@@ -1,0 +1,18 @@
+# Minimal YAML export accepted by parsers/yaml.py.
+# Extra top-level keys are ignored.
+tool: example-re-tool
+image_base: 0x400000
+isa: x86_64
+functions:
+  _start:
+    start_address: 0x401000
+    file_offset: 0x1000
+    length: 0x20
+  main:
+    start_address: 0x401020
+    file_offset: 0x1020
+    length: 0x40
+  helper:
+    start_address: 0x401060
+    file_offset: 0x1060
+    length: 0x10

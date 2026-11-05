@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  Simplified Ghidra XML export used by parsers/ghidra_xml.py.
+  Function extents come from FUNCTION/ADDRESS_RANGE; END is inclusive.
+-->
+<PROGRAM NAME="sample" EXE_PATH="sample" EXE_FORMAT="ELF" IMAGE_BASE="0x400000">
+  <INFO_SOURCE
+      TOOL="Ghidra XML Exporter"
+      USER="analyst"
+      FILE="sample"
+      TIMESTAMP="2026-01-01 00:00"/>
+  <PROCESSOR NAME="x86" ENDIAN="little" ADDRESS_MODEL="64-bit"/>
+
+  <MEMORY_MAP>
+    <MEMORY_SECTION NAME=".text" START_ADDR="0x401000" LENGTH="0x100" PERMISSIONS="rx"/>
+    <MEMORY_SECTION NAME=".rodata" START_ADDR="0x402000" LENGTH="0x40" PERMISSIONS="r"/>
+  </MEMORY_MAP>
+
+  <SYMBOL_TABLE>
+    <SYMBOL NAME="_start" ADDRESS="0x401000" TYPE="Function" NAMESPACE="Global"/>
+    <SYMBOL NAME="main" ADDRESS="0x401020" TYPE="Function" NAMESPACE="Global"/>
+    <SYMBOL NAME="helper" ADDRESS="0x401060" TYPE="Function" NAMESPACE="Global"/>
+  </SYMBOL_TABLE>
+
+  <FUNCTIONS>
+    <FUNCTION ENTRY_POINT="0x401000" NAME="_start">
+      <ADDRESS_RANGE START="0x401000" END="0x40101f"/>
+    </FUNCTION>
+    <FUNCTION ENTRY_POINT="0x401020" NAME="main">
+      <ADDRESS_RANGE START="0x401020" END="0x40105f"/>
+    </FUNCTION>
+    <FUNCTION ENTRY_POINT="0x401060" NAME="helper">
+      <ADDRESS_RANGE START="0x401060" END="0x40106f"/>
+    </FUNCTION>
+  </FUNCTIONS>
+</PROGRAM>

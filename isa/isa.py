@@ -1,0 +1,68 @@
+"""ISA encoding contract shared by the uplifter, optimizers, and ISAs.
+
+The normative description lives in ``ir.md``.  This class is the interface each
+concrete ISA implements; see :mod:`isa.x86_64` for the first implementation.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, ClassVar, Optional
+
+from ir import Address, Instruction
+
+if TYPE_CHECKING:
+    from binary.binary import Binary
+
+
+class ISA(ABC):
+    """Interface for an instruction-set architecture."""
+
+    name: ClassVar[str] = ""
+    supports_outlining: ClassVar[bool] = False
+
+    @abstractmethod
+    def disassemble(self, binary: "Binary", address: int) -> Instruction:
+        """Decode one instruction at ``address`` and fill in its dependencies."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def relocate_instruction(
+        self, instruction: Instruction, new_base_address: int
+    ) -> Instruction:
+        """Re-encode ``instruction`` for ``new_base_address`` without growing it."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def set_instruction_target(
+        self, instruction: Instruction, new_target_address: Address
+    ) -> Instruction:
+        """Re-encode a branch or call to target ``new_target_address``."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def can_encode(self, instruction: Instruction, address: int) -> bool:
+        """Return whether ``instruction`` can be encoded at ``address``."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def required_length(self, instruction: Instruction, address: int) -> int:
+        """Return the encoded length of ``instruction`` at ``address``."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def try_interpret_as_pointer(
+        self, binary: "Binary", offset: int
+    ) -> Optional[Address]:
+        """Interpret bytes at ``offset`` as a pointer, if possible."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def call_instruction_length(self) -> int:
+        """Return the length of the call emitted at an outline source site."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def ret_instruction_length(self) -> int:
+        """Return the length of the return emitted at an outline target site."""
+        raise NotImplementedError
