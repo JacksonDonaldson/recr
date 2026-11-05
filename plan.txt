@@ -3,8 +3,9 @@ codezip:
 Goals:
     Modify an already-compiled binary to maximize the amount of free space
         - the semantics of the binary to be modified cannot change.
-        - the overall footprint of the binary cannot change (functions do not move; data is not appended.)
-        - assume we just want to maximize the amount of completely unused space in the binary
+        - the overall footprint of the binary cannot change
+          (function entry points and extents do not move; instructions within a function may; data is not appended.)
+        - assume we just want to maximize the amount of completely unused space in the binary (contiguity does not matter)
 
 Basic idea:
     Reduce code size through several passes, including:
@@ -27,6 +28,7 @@ Overview:
     
     4. Test the modified binary
         - Ensure the modifications did not break anything
+        - Run a large C project's own test suite before and after
 
 
 Overall project structure:
@@ -49,11 +51,15 @@ uplifter.py:
     - Responsible for turning function locations into instruction sequences and control-flow graphs
     - Splits ISA-specific details of this into isa/[isa].py 
 
+ir.md:
+    - data model and ISA encoding contract shared by the uplifter, optimizers, and ISAs
+
 isa/isa.py:
     - superclass that ISAs should implement
 
 isa/x86_64.py:
-    - The first ISA to be implemented 
+    - The first ISA to be implemented
+    - other reasonable ISAs after
 
 optimizers/function_remover.py:
     - Eliminates unreferenced functions
@@ -61,11 +67,20 @@ optimizers/function_remover.py:
 optimizers/outliner.py:
     - orchestrates the function outlining optimization.
 
+verify.py:
+    - static and dynamic checks that the modified binary still behaves the same
+
 binary/binary.py:
     superclass defining all the functions needed to interface with the binary file we're patching.
 
 binary/elf.py
     - does the parsing necessary for ELF files
+
+binary/pe.py
+    - does the parsing necessary for PE files
+
+binary/raw.py
+    - does the parsing necessary for raw binaries
 
 
 Detailed breakdown:
@@ -75,14 +90,16 @@ input_parser.py:
     
     global parser_list [yaml, ghidra]
 
+    class ParseResult:
+        string isa
+        list[Function] functions
+        list[string] warnings
+
     function parse_re_file(string filename):
 
-        for parser in parser_list:
-            see if it's supported
-            if it is, use it to parse the file
-                return parser result
-
-        return failure
+        pick the parser by file extension
+        sniff the content to confirm; if it doesn't match, fail with the specific parse error
+        return ParseResult
 
 
 
@@ -108,7 +125,7 @@ parsers/yaml.py:
         There may be additional data at the top level - ignore it.
         
 
-        and returns list[uplifter.Function]
+        and returns ParseResult(isa, functions, warnings)
 
 parsers/ghidra_xml.py:
     function is_supported(filename):
@@ -119,7 +136,9 @@ parsers/ghidra_xml.py:
 
         See sample_ghidra.xml for the format; it should parse successfully.
 
-        returns list[uplifter.Function]
+        Ghidra gives virtual addresses; Binary maps them to file offsets.
+
+        returns ParseResult(isa, functions, warnings)
     
 
 uplifter.py:
@@ -128,7 +147,6 @@ uplifter.py:
     
         function_map = map [entrypoint -> Function]
         isa = ISA
-        code_xrefs = list[tuple(src_instr, target_address)]
 
         function __init__(string isa, Binary binary):
             create and store an ISA as appropriate
@@ -158,7 +176,11 @@ uplifter.py:
                 
 
             - Now recover basic blocks
-                TODO
+                - a basic block is a maximal straight-line sequence of instructions
+                  ending at a branch or return; calls do not end a block
+                - build the CFG by recursive descent from function entries and known targets
+                - an outline window is a single-entry, single-exit straight-line region;
+                  it is not the same thing as a basic block
 
             - add f to the function map
         
@@ -181,70 +203,10 @@ uplifter.py:
                     add a ref from here to there in that function's incoming_references list.
                 
 
-    class Function:
-        name
-        file_offset
-        start_address
-        length
-
-        list[BasicBlock] basic_blocks
-        list[Instruction] instructions
-        list[Reference] incoming_references
-        list[Reference] outgoing_references
-
-        function has_unk_local_reference:
-            return UNK_LOCAL in outgoing_references
-
-        function uses_red_zone:
-            scan all instructions for negative stack accesses - leaf functions that access the stack that way can't get outlined.
-
-    class Address:
-        ulonglong address
-        special options:
-            - UNK_LOCAL
-            - UNK_NONLOCAL
-
-    class Instruction:
-        bytestring original_data
-        enum type:
-            call
-            arithmetic
-            outline_result_call
-        
-        BasicBlock outline_target
-        uint length
-
-        list[StateSpace] modifies
-        list[StateSpace] depends_on
-        list[Address] flows_from
-        list[Address] flows_to
-
-        function is_outlinable:
-            returns whether or not the instruction can be outlined.
-            instructions where flows_to != flows_from + 1 or where the stack pointer is in the modified list are not outlinable.
-
-        function add_extra_stack_space:
-            adds [pointer size] to all stack-relative instructions
-            [to be used for instructions that being outlined, since they'll run with that many more bytes on the stack]
-
-    class StateSpace:
-        string name
-        uint size
-
-    class Reference:
-        Address from
-        Address to
-
-    class FreeSpace:
-        Address start
-        uint size
-        string diagnostic
-
-    class BasicBlock:
-        list[Instruction] instructions
-        bool used_for_outlining
-        Address start_location
-        Function containing_function
+    Model:
+        Function, BasicBlock, Instruction, Address, StateSpace, Reference, and
+        FreeSpace are defined in ir.md.
+        BasicBlock owns instructions; Function owns basic blocks.
 
 
 optimizers/function_remover.py:
@@ -266,6 +228,7 @@ optimizers/outliner.py:
     - 'source sites' refers to the locations where instructions are being replaced
     - 'target site' refers to the location where the newly extracted bytes are stored.
     - must run after function remover
+    - does not update unwind info yet; unwinding through an outlined block is out of scope
 
     instruction_map map[position_invariant_instruction_encoding -> set[BasicBlock]]
 
@@ -309,7 +272,7 @@ optimizers/outliner.py:
                 profitable_matches = find_basic_block_matches(basic_block)
 
                 for matching_basic_block in profitable_matches:
-                    if try_generate_replacement_bytes(matching_basic_block) succeeds:
+                    if try_generate_replacement_bytes(*matching_basic_block) succeeds:
                         
                         - mark all the containing basic blocks as used for outlining
                         - add the extracted instructions block to extracted_instructions
@@ -329,6 +292,9 @@ optimizers/outliner.py:
             Next, work back through the list a second time to make branch targets work.
             For each branch, keep track of the instruction it used to target and call
             isa.set_instruction_target(branch, new_location_of_that_instruction)
+
+            Functions must not grow. If relocating a branch would exceed its encoding range,
+            reject this candidate and leave the function unchanged.
 
             If an instruction has >2 possible local targets, then the UNK_NONLOCAL flag should have been set -> so this should all work out ok.
 
@@ -376,7 +342,8 @@ optimizers/outliner.py:
             if instruction.is_outlinable():
                 add 1 to each basic block in instruction_map[instruction]
 
-        reduced_bb_match = throw away all basic blocks with fewer than 3 matches.
+        reduced_bb_match = throw away all basic blocks where the savings formula above is <= 0.
+            also require common instruction length >= call instruction length.
 
         Now from those matching basic blocks we extract the combination that saves the most bytes.
 
@@ -458,7 +425,11 @@ optimizers/outliner.py:
             target_location = 1 position in the basic block after the previous instruction in target_instruction_order
             moved_instruction_group = list[instruction] init'd with moved_instruction
 
+            iterations = 0
             while the position of the moved_instruction_group doesn't start at the target_location:
+                iterations += 1
+                if iterations > len(basic_block.instructions):
+                    return failure
 
 
                 see if we can swap the moved_instruction_group with the instruction nearer the target location
@@ -499,13 +470,26 @@ optimizers/outliner.py:
         TODO: If the target ISA requires software-enforced delay slots, this model may be unsound.
 
 
+
+
+
+test/verify.py:
+
+    function run(Binary original, Binary modified, Uplifter, isa):
+        1. round-trip: disassemble and re-emit every original instruction; require byte identity
+        2. static: every freed byte is unreferenced; every modified function's CFG is isomorphic
+        3. per-function: emulate original and modified with the same state; compare results
+        4. end-to-end: build a large well-tested C project, run its test suite before and after
+
+        any function that fails a check is reverted to its original bytes
+
+
 isa/isa.py:
 
     class ISA:
-        function relocate_instruction(instruction, new_base_address) -> rewrites instruction to be at new_base_address.
-        function disassemble(byte array) -> instruction
-        function set_instruction_target(instruction, new_target_address) -> rewrites instruction to target new_target_address with any jumps / etc.
-        function try_interpret_as_pointer(byte array) -> try interpreting the byte array as an address
+        see ir.md for the full encoding contract.
+        methods: disassemble, relocate_instruction, set_instruction_target,
+                 can_encode, required_length, try_interpret_as_pointer.
 
 isa/x86_64.py:
     implements ISA using the Capstone disassembler.
@@ -520,11 +504,24 @@ binary/binary.py:
         function read:
             takes a (virtual) address and length and returns the data there
 
+        function virtual_to_file:
+            maps a virtual address to a file offset
+
         function finish:
             does any required metadata fixups
+                - rewrite or remove unwind info (.eh_frame / .pdata) for modified functions
+                - rewrite relocations that point into moved code
+                - update symbol sizes
+                - TODO: exact formats per binary type
 
 binary/elf.py:
     implements Binary for ELFs.
+
+binary/pe.py:
+    implements Binary for PE files.
+
+binary/raw.py:
+    implements Binary for raw binaries.
 
 codezip.py:
     parses CLI arguments, drives the parse -> uplift -> optimize -> verify pipeline, and writes the modified binary plus a report.
