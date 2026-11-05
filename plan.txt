@@ -3,8 +3,8 @@ codezip:
 Goals:
     Modify an already-compiled binary to maximize the amount of free space
         - the semantics of the binary to be modified cannot change.
-        - the overall footprint of the binary cannot change (functions do not move around. Data is not appended.)
-        - assume we just want to maximize the amount of totally unused space in the binary
+        - the overall footprint of the binary cannot change (functions do not move; data is not appended.)
+        - assume we just want to maximize the amount of completely unused space in the binary
 
 Basic idea:
     Reduce code size through several passes, including:
@@ -13,9 +13,9 @@ Basic idea:
         - leaf node optimizations
 
 Overview:
-    1. Decompile the binary and recover function-level information
+    1. Disassemble the binary and recover function-level information
         - Recover a list of function entry points, locations in the binary, and lengths.
-        - This is just an export from some arbitrary RE tool - define a common format and expect it as input
+        - This is just an export from some arbitrary reverse-engineering tool - define a common format and expect it as input
         
     2. Uplift each function into a series of instructions
         - Extract code flow and dependency graphs
@@ -26,7 +26,7 @@ Overview:
         - Apply function outlining
     
     4. Test the modified binary
-        - Ensure the modifications didn't break anything
+        - Ensure the modifications did not break anything
 
 
 Overall project structure:
@@ -37,16 +37,16 @@ codezip.py:
 
 input_parser.py:
     - Responsible for taking input from RE tool and converting to python object for later use
-    - Should support: YAML, ghidra XML files
+    - Should support: YAML and Ghidra XML files
 
 parsers/yaml.py:
     - does yaml parsing to extract function info from YAML files
 
 parsers/ghidra_xml.py:
-    - does xml parsing to extract function info from XML files.
+    - does XML parsing to extract function info from XML files.
 
 uplifter.py:
-    - Responsible for turning function locations into 
+    - Responsible for turning function locations into instruction sequences and control-flow graphs
     - Splits ISA-specific details of this into isa/[isa].py 
 
 isa/isa.py:
@@ -83,11 +83,11 @@ input_parser.py:
 parsers/yaml.py:
 
     function is_supported(filename):
-        return filename ends in yaml and is successfully parsed as yaml file
+        return filename ends in .yaml and the file parses successfully as YAML
 
     function parse(filename):
 
-        yaml files should have the format:
+        YAML files should have the format:
 
         isa: [string]
         functions:
@@ -105,12 +105,12 @@ parsers/yaml.py:
 
 parsers/ghidra_xml.py:
     function is_supported(filename):
-        return filename ends in xml and is successfully parsed as xml file
+        return filename ends in .xml and the file parses successfully as XML
     
     function parse(filename):
-        extracts the same information as the yaml parser.
+        extracts the same information as the YAML parser.
 
-        See sample_ghidra.xml for the format -> it should get successfully parsed.
+        See sample_ghidra.xml for the format; it should parse successfully.
 
         returns list[uplifter.Function]
     
@@ -123,8 +123,8 @@ uplifter.py:
         isa = ISA
         code_xrefs = list[tuple(src_instr, target_address)]
 
-        function init(string isa, Binary binary):
-            create and store and ISA as appropriate
+        function __init__(string isa, Binary binary):
+            create and store an ISA as appropriate
             save binary
 
 
@@ -139,18 +139,18 @@ uplifter.py:
                 instructions.append(instr)
                 current location += instr.length
             
-            - next, do a code flow recovery pass
+            - Next, do a code flow recovery pass
             - (isa.disassemble is only responsible for filling in flows_to)
 
             - Start at the first instruction and do a simple dfs/bfs on the flows_to list in order to fill in flows_from
                 
-                - for addresses that fall outside of the bounds of the function:
+                - for addresses that fall outside the bounds of the function:
                     - don't add them to the dfs list
                     - instead, add them to the outgoing_references list
-                    - this includes UNK_NONLOCAL and UNK_LOCAL addresswa
+                    - this includes UNK_NONLOCAL and UNK_LOCAL addresses
                 
 
-            - now recover basic blocks
+            - Now recover basic blocks
                 TODO
 
             - add f to the function map
@@ -160,7 +160,7 @@ uplifter.py:
             - want to find all function calls.
                 However, we can't rely on the incoming function list being complete
                     it may just be a subset of the actual functions in the binary
-                    (ghidra for example often totally misses functions called indirectly)
+                    (Ghidra, for example, often misses functions called indirectly)
                 So we do a linear disassembly on the full binary
             
             For each offset in the binary:
@@ -170,8 +170,8 @@ uplifter.py:
                     in the function's incoming_references list
                 
                 isa.disassemble(offset)
-                    if that succeeds, check each of the flows_to addresses. If any of the map to a function,
-                    add a ref from here to there in that functions' incoming_references list.
+                    if that succeeds, check each of the flows_to addresses. If any of them map to a function,
+                    add a ref from here to there in that function's incoming_references list.
                 
 
     class Function:
@@ -181,7 +181,7 @@ uplifter.py:
         length
 
         list[BasicBlock] basic_blocks
-        list[Intruction] instructions
+        list[Instruction] instructions
         list[Reference] incoming_references
         list[Reference] outgoing_references
 
@@ -191,8 +191,8 @@ uplifter.py:
     class Address:
         ulonglong address
         special options:
-            - UNK LOCAL
-            - UNK NONLOCAL
+            - UNK_LOCAL
+            - UNK_NONLOCAL
 
     class Instruction:
         bytestring original_data
@@ -201,7 +201,7 @@ uplifter.py:
             arithmetic
             outline_result_call
         
-        BasicBlock outlineTarget
+        BasicBlock outline_target
         uint length
 
         list[StateSpace] modifies
@@ -243,21 +243,21 @@ optimizers/function_remover.py:
 
 optimizers/outliner.py:
     - orchestrates the function outlining optimization.
-    - compilers frequently inline functions. This increases speed at the cost of code size.
-        - what if we could undo that?
+    - Compilers frequently inline functions. This increases speed at the cost of code size.
+        - What if we could undo that?
     - 'source sites' refers to the locations where instructions are being replaced
-    - 'target site' refers to the location the newly replaced bytes are being stored.
+    - 'target site' refers to the location where the newly extracted bytes are stored.
 
-    instruction_map map[position_invariant_instruction_encoding -> set[Basic block]]
+    instruction_map map[position_invariant_instruction_encoding -> set[BasicBlock]]
 
-    function run_optimizer(Binary, Uplifter, Isa, free_space):
-        extract_instruction_regions(Binary, Uplifter, Isa)
+    function run_optimizer(Binary, Uplifter, isa, free_space):
+        extract_instruction_regions(Binary, Uplifter, isa)
 
         if we weren't able to successfully extract anything, return
 
         relink_in_instructions(extracted_instructions, extracted_basic_blocks, free_space)
 
-    function extract_instruction_regions(Binary, Uplifter, Isa):
+    function extract_instruction_regions(Binary, Uplifter, isa):
 
         if the isa doesn't support function outlining:
             note a warning and return
@@ -269,7 +269,7 @@ optimizers/outliner.py:
                 for each instruction in that basic block:
                     add the basic block to the set of that instruction in instruction_map
     
-        now find best matches for each basic block.
+        Now find the best matches for each basic block.
 
         extracted_instruction_windows = list[BasicBlock]
         basic_blocks_to_regenerate = list[(BasicBlock original, BasicBlock modified)]
@@ -283,10 +283,10 @@ optimizers/outliner.py:
 
 
 
-                profitible_matches = find_basic_block_matches(basic_block)
+                profitable_matches = find_basic_block_matches(basic_block)
 
                 for matching_basic_block in profitable_matches:
-                    if try_generate_replacement_bytes(matching_basic_blocks) succeeds:
+                    if try_generate_replacement_bytes(matching_basic_block) succeeds:
                         
                         - mark all the containing basic blocks as used for outlining
                         - add the extracted instructions block to extracted_instruction_windows
@@ -300,14 +300,14 @@ optimizers/outliner.py:
         from each of the basic_blocks_to_regenerate:
             get the containing function, and if it still needs to be regenerated:
 
-            first, iterate through the function's insructions, keeping track of the current base address.
-            For each, call isa.relocate_instruction(new_base_address)
+            first, iterate through the function's instructions, keeping track of the current base address.
+            For each, call isa.relocate_instruction(instruction, new_base_address)
 
             Next, work back through the list a second time to make branch targets work.
             For each branch, keep track of the instruction it used to target and call
-            isa.set_instruction_target(new_location_of_that_instruction)
+            isa.set_instruction_target(branch, new_location_of_that_instruction)
 
-            If an instruction has >2 possible local targets, then the UNK_NONLOCAL flag should've been set -> so this should all work out ok.
+            If an instruction has >2 possible local targets, then the UNK_NONLOCAL flag should have been set -> so this should all work out ok.
 
             finally, add the freed data between the new end of the function and the old end of the function to a list.
 
@@ -316,12 +316,12 @@ optimizers/outliner.py:
 
     function relink_in_instructions(extracted_instructions, extracted_basic_blocks, free_space):
         for each basic block we need to link back in to the binary:
-            add a return instruction on the end, if some other step didn't already do that.
+            add a return instruction at the end, if some other step has not already done so.
             find the smallest free space that can hold this basic block.
             put the instruction list in the binary at that location.
             remove the used space from the free_space list
             for all the instructions that should point to that basic block:
-                call isa.set_instruction_target(the location)
+                call isa.set_instruction_target(instruction, the location)
 
 
 
@@ -332,13 +332,13 @@ optimizers/outliner.py:
             - the length of the encoding of the instructions in common
             - the number of basic blocks with those common instructions
         
-        But the combination of those two will depend slightly on the isa.
+        But the combination of those two will depend on the ISA.
             - ultimately at each source site, we're going to need to inject a call instruction
-            - then at the target site we're gonna need to do the common instructions, then return
+            - then at the target site we're going to need to do the common instructions, then return
 
-        Get: # of bytes for call instruction, # of bytes for ret instruction from ISA.
+        Get: number of bytes for the call instruction and number of bytes for the ret instruction from the ISA.
 
-        So the overall # of bytes saved if a particular combo works is:
+        So the overall number of bytes saved if a particular combination works is:
             ((combined instruction length - call instruction length) * number of sources) - ret instruction length
 
         bb_match = map from basic_block -> int best_matches
@@ -359,15 +359,15 @@ optimizers/outliner.py:
             matching_instruction_map[result].add(that_bb)
             may as well add this_bb as well for good measure.
         
-        now calculate profitability of each thing in matching_instruction_map
+        Now calculate the profitability of each entry in matching_instruction_map
         return a sorted list of the 10 most profitable
 
 
     function try_generate_replacement_bytes(basic_blocks, common_instructions):
-        We're given as set of basic blocks that have some number of instructions in common
+        We're given a set of basic blocks that have some number of instructions in common
         We need to try to shift each basic block around such that we can actually outline those common instructions.
 
-        To do that, we need some kind of dependency graph, probably.
+        To do that, we need some kind of dependency graph.
 
         1. Resolve instruction order
 
@@ -376,7 +376,7 @@ optimizers/outliner.py:
 
         For simplicity, assume the final instruction order is one of the instruction orders that appears in the incoming basic blocks
 
-        TODO: can we make this arbitrary order, not just one of the incoming orders? Seems like a SAT problem. (don't solve this yet)
+        TODO: can we make this an arbitrary order, not just one of the incoming orders? Seems like a SAT problem. (Don't solve this yet.)
 
         for each src_basic_block in basic_blocks:
 
@@ -393,7 +393,7 @@ optimizers/outliner.py:
                 if reordered_block is None:
                     fail this src_basic_block ordering and try the next one
                 
-                reordered_blocks.append(tuple(reordered_block, start_offset))
+                reordered_blocks.append((reordered_block, start_offset))
             
             if we couldn't make this src reordering work:
                 continue to the next one
@@ -435,7 +435,7 @@ optimizers/outliner.py:
                 
 
                 if we can:
-                    do the swap and record the modified list[instruction] in the basic block. Make sure to keep all the instruction 
+                    do the swap and record the modified list[instruction] in the basic block. Make sure to keep all instruction fields in sync.
                 
                 if we can't:
                     if the instruction we're trying to swap with is in target_instruction_order:
@@ -466,21 +466,21 @@ optimizers/outliner.py:
 
         This is legal because we're treating all locations with persistent side effects as registers.
 
-        TODO: If your ISA is stupid enough to require software enforced delay slots, this model could be problematic.
+        TODO: If the target ISA requires software-enforced delay slots, this model may be unsound.
 
 
 isa/isa.py:
 
     class ISA:
-        function relocate_instruction(instruction, new_base_address) ->rewrites instruction to be at new_base_address.
+        function relocate_instruction(instruction, new_base_address) -> rewrites instruction to be at new_base_address.
         function disassemble(byte array) -> instruction
         function set_instruction_target(instruction, new_target_address) -> rewrites instruction to target new_target_address with any jumps / etc.
-        function try_interpret_as_pointer(byte array) -> try interpreting byte array as an address
+        function try_interpret_as_pointer(byte array) -> try interpreting the byte array as an address
 
 isa/x86_64.py:
-    implements ISA using capstone disassembler.
+    implements ISA using the Capstone disassembler.
 
 
 
 codezip.py:
-    has all the options you'd expect and orchestrates the overall binary well.
+    parses CLI arguments, drives the parse -> uplift -> optimize -> verify pipeline, and writes the modified binary plus a report.
