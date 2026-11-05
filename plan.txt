@@ -61,6 +61,13 @@ optimizers/function_remover.py:
 optimizers/outliner.py:
     - orchestrates the function outlining optimization.
 
+binary/binary.py:
+    superclass defining all the functions needed to interface with the binary file we're patching.
+
+binary/elf.py
+    - does the parsing necessary for ELF files
+
+
 Detailed breakdown:
 
 
@@ -188,6 +195,9 @@ uplifter.py:
         function has_unk_local_reference:
             return UNK_LOCAL in outgoing_references
 
+        function uses_red_zone:
+            scan all instructions for negative stack accesses - leaf functions that access the stack that way can't get outlined.
+
     class Address:
         ulonglong address
         special options:
@@ -208,6 +218,14 @@ uplifter.py:
         list[StateSpace] depends_on
         list[Address] flows_from
         list[Address] flows_to
+
+        function is_outlinable:
+            returns whether or not the instruction can be outlined.
+            instructions where flows_to != flows_from + 1 or where the stack pointer is in the modified list are not outlinable.
+
+        function add_extra_stack_space:
+            adds [pointer size] to all stack-relative instructions
+            [to be used for instructions that being outlined, since they'll run with that many more bytes on the stack]
 
     class StateSpace:
         string name
@@ -247,8 +265,11 @@ optimizers/outliner.py:
         - What if we could undo that?
     - 'source sites' refers to the locations where instructions are being replaced
     - 'target site' refers to the location where the newly extracted bytes are stored.
+    - must run after function remover
 
     instruction_map map[position_invariant_instruction_encoding -> set[BasicBlock]]
+
+            where position_invariant_instruction_encoding is just the bytes of the function re-linked to a standard address
 
     function run_optimizer(Binary, Uplifter, isa, free_space):
         extract_instruction_regions(Binary, Uplifter, isa)
@@ -265,13 +286,15 @@ optimizers/outliner.py:
         for each function in Uplifter.function_map:
             if the function has_unk_local_reference:
                 continue
+            if the function uses_red_zone:
+                continue
             for each basic_block in function:
                 for each instruction in that basic block:
                     add the basic block to the set of that instruction in instruction_map
     
         Now find the best matches for each basic block.
 
-        extracted_instruction_windows = list[BasicBlock]
+        extracted_instructions = list[BasicBlock]
         basic_blocks_to_regenerate = list[(BasicBlock original, BasicBlock modified)]
 
         For each function:
@@ -289,10 +312,10 @@ optimizers/outliner.py:
                     if try_generate_replacement_bytes(matching_basic_block) succeeds:
                         
                         - mark all the containing basic blocks as used for outlining
-                        - add the extracted instructions block to extracted_instruction_windows
+                        - add the extracted instructions block to extracted_instructions
                         - add all of the modifications to basic_blocks_to_regenerate
                 
-        if extracted_instruction_windows and basic_blocks_to_regenerate are empty:
+        if extracted_instructions or basic_blocks_to_regenerate are empty:
             return failure
         
         Now we need to reassemble all the functions we extracted data from.
@@ -315,10 +338,16 @@ optimizers/outliner.py:
 
 
     function relink_in_instructions(extracted_instructions, extracted_basic_blocks, free_space):
+
+
         for each basic block we need to link back in to the binary:
             add a return instruction at the end, if some other step has not already done so.
             find the smallest free space that can hold this basic block.
+            
             put the instruction list in the binary at that location.
+                this involves relinking each instruction to be at the new base address.
+                Then, call instruction.add_extra_stack_space to handle the modified stack pointer 
+            
             remove the used space from the free_space list
             for all the instructions that should point to that basic block:
                 call isa.set_instruction_target(instruction, the location)
@@ -344,7 +373,8 @@ optimizers/outliner.py:
         bb_match = map from basic_block -> int best_matches
 
         for each instruction in this basic block:
-            add 1 to each basic block in instruction_map[instruction]
+            if instruction.is_outlinable():
+                add 1 to each basic block in instruction_map[instruction]
 
         reduced_bb_match = throw away all basic blocks with fewer than 3 matches.
 
@@ -480,7 +510,21 @@ isa/isa.py:
 isa/x86_64.py:
     implements ISA using the Capstone disassembler.
 
+binary/binary.py:
 
+    class Binary:
+
+        function open:
+            reads the data
+
+        function read:
+            takes a (virtual) address and length and returns the data there
+
+        function finish:
+            does any required metadata fixups
+
+binary/elf.py:
+    implements Binary for ELFs.
 
 codezip.py:
     parses CLI arguments, drives the parse -> uplift -> optimize -> verify pipeline, and writes the modified binary plus a report.
