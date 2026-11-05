@@ -14,12 +14,14 @@ Additional top-level keys are ignored.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from parsers.base import ParseResult
 
 
 def is_supported(filename: str) -> bool:
     """Return whether ``filename`` looks like a YAML function export."""
-    raise NotImplementedError
+    return Path(filename).suffix.lower() in (".yaml", ".yml")
 
 
 def parse(filename: str) -> ParseResult:

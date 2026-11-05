@@ -7,6 +7,10 @@ from dataclasses import dataclass, field
 from ir import Function
 
 
+class ParseError(Exception):
+    """Raised when an input file is not a valid supported export."""
+
+
 @dataclass
 class ParseResult:
     """Function-level information recovered from an RE-tool export."""
