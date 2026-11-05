@@ -8,6 +8,17 @@
 
 If a change affects the IR or ISA contract, update `ir.py` and `ir.md` together.
 
+## Workflow
+
+Before implementing a change, look around the repository, write an
+implementation plan, and ask any questions that come up. Settle the plan and
+open questions before editing code.
+
+At the end of every run, update the "Current state" section below so it matches
+the repository. Keep it concise: record what is implemented, what is still a
+stub, and any essential constraints. Do not add task logs, changelogs, or
+transient notes.
+
 ## Non-negotiable constraints
 
 - Binary semantics must not change.
@@ -39,14 +50,19 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 
 Implemented:
 
-- Ghidra XML parsing (`parsers/ghidra_xml.py`)
-- Parser dispatch and `ParseError` handling
-- Parser tests against a real Ghidra 12.2 export
+- Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
+  `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.
+- ELF access (`binary/elf.py`) using `pyelftools`: `PT_LOAD` virtual-to-file
+  mapping, reads with BSS zero-fill, full-file writes, and a no-op `finish()`.
+  `Binary(path)` routes by magic bytes; PE and raw inputs raise
+  `UnsupportedBinaryFormat` for now.
+- ELF tests (`test/test_elf.py`) build `test/build/sample` with `make` when
+  missing or stale, then verify Ghidra-derived `main` bytes and ELF mapping.
 
 Still stubs:
 
 - YAML parser
-- Binary backends
+- PE and raw binary backends
 - x86-64 ISA
 - Uplifter
 - Function remover and outliner
@@ -138,4 +154,5 @@ python -m pytest -q
 - [ ] No change to binary semantics or layout constraints
 - [ ] Encoding/relocation failures are rejected, not assumed safe
 - [ ] IR and ISA docs updated if their contract changed
+- [ ] `AGENTS.md` "Current state" is accurate and concise
 - [ ] No machine-specific data committed

@@ -6,9 +6,10 @@ fixed; instructions may move within a function, and data is never appended.
 
 ## Status
 
-This is the **first-pass scaffold**. The project structure, IR data model, and
-module interfaces are in place, but the pipeline stages are stubs that raise
-`NotImplementedError`. No binary modification behavior is implemented yet.
+This is an early scaffold. The project structure, IR data model, module
+interfaces, and ELF reading backend are in place, but the optimization
+pipeline stages are still stubs that raise `NotImplementedError`. No binary
+modification behavior is implemented yet.
 
 ## Planned pipeline
 
@@ -38,10 +39,10 @@ module interfaces are in place, but the pipeline stages are stubs that raise
 | `isa/x86_64.py` | x86-64 backend (will use Capstone) |
 | `optimizers/function_remover.py` | Unreferenced-function removal |
 | `optimizers/outliner.py` | Repeated-region outlining |
-| `binary/binary.py` | Binary file interface |
+| `binary/binary.py` | Binary file interface and format routing |
 | `binary/elf.py` | ELF backend |
-| `binary/pe.py` | PE backend |
-| `binary/raw.py` | Raw binary backend |
+| `binary/pe.py` | PE backend (stub) |
+| `binary/raw.py` | Raw binary backend (stub) |
 | `verify.py` | Static and dynamic equivalence checks |
 | `test/` | Smoke tests, skipped parser tests, and fixtures |
 
