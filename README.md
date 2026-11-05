@@ -36,7 +36,7 @@ modification behavior is implemented yet.
 | `ir.md` | Normative IR and ISA contract |
 | `uplifter.py` | Function → IR conversion and cross-reference recovery |
 | `isa/isa.py` | ISA superclass and encoding contract |
-| `isa/x86_64.py` | x86-64 backend (will use Capstone) |
+| `isa/x86_64/` | x86-64 backend and pinned Ghidra 12.2 SLEIGH spec |
 | `optimizers/function_remover.py` | Unreferenced-function removal |
 | `optimizers/outliner.py` | Repeated-region outlining |
 | `binary/binary.py` | Binary file interface and format routing |

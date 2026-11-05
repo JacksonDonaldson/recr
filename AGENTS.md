@@ -58,6 +58,10 @@ Implemented:
   `UnsupportedBinaryFormat` for now.
 - ELF tests (`test/test_elf.py`) build `test/build/sample` with `make` when
   missing or stale, then verify Ghidra-derived `main` bytes and ELF mapping.
+- x86-64 package (`isa/x86_64/`) contains the pinned Ghidra 12.2 SLEIGH files
+  and a NASM `add eax, 0x20` fixture. `pypcode` 4.1.0 handles disassembly and
+  P-code; full address-space access and reassembly need Ghidra's Java API
+  (PyGhidra).
 
 Still stubs:
 

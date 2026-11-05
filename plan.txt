@@ -57,8 +57,9 @@ ir.md:
 isa/isa.py:
     - superclass that ISAs should implement
 
-isa/x86_64.py:
+isa/x86_64/:
     - The first ISA to be implemented
+    - reuses Ghidra's x86-64 SLEIGH specification for disassembly and IR
     - other reasonable ISAs after
 
 optimizers/function_remover.py:
@@ -491,8 +492,8 @@ isa/isa.py:
         methods: disassemble, relocate_instruction, set_instruction_target,
                  can_encode, required_length, try_interpret_as_pointer.
 
-isa/x86_64.py:
-    implements ISA using the Capstone disassembler.
+isa/x86_64/:
+    implements ISA using Ghidra's SLEIGH x86-64 specification.
 
 binary/binary.py:
 

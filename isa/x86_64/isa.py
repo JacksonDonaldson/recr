@@ -1,6 +1,7 @@
 """x86-64 ISA backend.
 
-This will be implemented with Capstone.  Every method is currently a stub.
+Disassembly and IR are driven by Ghidra's x86-64 SLEIGH specification.  Every
+method is currently a stub.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ class X86_64ISA(ISA):
     supports_outlining = True
 
     def __init__(self) -> None:
-        # TODO: initialize the Capstone handle and configure detail mode.
+        # TODO: initialize the SLEIGH context from the pinned Ghidra spec.
         pass
 
     def disassemble(self, binary: "Binary", address: int) -> Instruction:
