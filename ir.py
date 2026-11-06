@@ -84,6 +84,7 @@ class Instruction:
     original_data: bytes
     type: InstructionType
     length: int
+    address: int = 0
 
     outline_target: Optional["BasicBlock"] = None
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import subprocess
 
 import pytest
 
@@ -11,33 +10,7 @@ from binary.binary import Binary, UnsupportedBinaryFormat
 from binary.elf import ELF, ELFError
 from input_parser import parse_re_file
 
-TEST_DIR = Path(__file__).parent
-SAMPLE = TEST_DIR / "build" / "sample"
-SAMPLE_SOURCE = TEST_DIR / "sample.c"
-GHIDRA_XML = TEST_DIR / "fixtures" / "sample_ghidra.xml"
-
-
-@pytest.fixture(scope="session")
-def sample_elf() -> Path:
-    """Return the built sample, rebuilding it with make when necessary."""
-    if not SAMPLE.is_file() or SAMPLE.stat().st_mtime < SAMPLE_SOURCE.stat().st_mtime:
-        try:
-            result = subprocess.run(
-                ["make", "-C", str(TEST_DIR)],
-                capture_output=True,
-                text=True,
-            )
-        except OSError as exc:
-            pytest.skip(f"could not run make to build the sample ELF: {exc}")
-
-        if result.returncode != 0:
-            pytest.skip(
-                "could not build test/build/sample; run 'make -C test'\n"
-                f"{result.stdout}{result.stderr}"
-            )
-
-    assert SAMPLE.is_file()
-    return SAMPLE
+GHIDRA_XML = Path(__file__).parents[1] / "fixtures" / "sample_ghidra.xml"
 
 
 def test_binary_constructor_routes_elf(sample_elf: Path) -> None:

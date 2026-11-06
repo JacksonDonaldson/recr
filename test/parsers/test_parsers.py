@@ -9,7 +9,7 @@ import pytest
 from input_parser import ParseError, parse_re_file
 from parsers import ghidra_xml
 
-FIXTURES = Path(__file__).parent / "fixtures"
+FIXTURES = Path(__file__).parents[1] / "fixtures"
 
 EXPECTED_USER_FUNCTIONS = {
     "add",

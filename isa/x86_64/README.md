@@ -29,48 +29,17 @@ Source tag:
 [`Ghidra_12.2_build`](https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build),
 `Ghidra/Processors/x86/data/languages/`.
 
-The compiled `x86-64.sla` is byte-identical to the copy bundled with
-`pypcode` 4.1.0, which vendors Ghidra 12.2.
-
 ## Python interface research
 
-`pypcode` is the most practical existing Python interface. It is a
-pybind11 binding to Ghidra's SLEIGH library and supports:
-
-- disassembly (`Context.disassemble`),
-- P-code translation (`Context.translate`),
-- register and address-space metadata through `Varnode`,
-- loading a specific compiled `.sla` through `Arch` and `ArchLanguage`.
-
-`pypcode` exposes state spaces through varnodes (`Varnode.space`, `offset`, and
-`size`) and register metadata. It does not expose the entire SLEIGH symbol
-table, cannot enumerate all address spaces, and has no assembler/encoder API.
-It is therefore not sufficient on its own for full state-space discovery or
-reassembly.
-
-Example using the pinned spec:
-
-```python
-from pathlib import Path
-
-from pypcode import Arch, Context
-
-spec_dir = Path("isa/x86_64/ghidra")
-arch = Arch("x86", str(spec_dir / "x86.ldefs"))
-language = next(
-    lang for lang in arch.languages if lang.id == "x86:LE:64:default"
-)
-ctx = Context(language)
-disassembly = ctx.disassemble(bytes.fromhex("83c020"))
-```
-
-Documentation: [pypcode](https://api.angr.io/projects/pypcode/en/latest/).
+Existing Python interfaces wrap Ghidra's SLEIGH library, but none expose both
+the complete address-space/symbol metadata and an encoder suitable for
+codezip's reassembly requirements.
 
 Alternatives:
 
 - **PyGhidra** (official): exposes the full Ghidra Java API, including the
   complete SLEIGH address-space and symbol tables. It needs Ghidra and a JDK
-  and is much heavier than `pypcode`.
+  and is much heavier.
   [PyGhidra README](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra)
 - **ghidra_bridge / Ghidrathon**: Python scripting inside or against a running
   Ghidra instance; useful for full-API access but not a standalone parser.
@@ -79,9 +48,9 @@ Alternatives:
 - **lifting-bits/sleigh**: C++ build and CLI for SLEIGH, no maintained Python
   binding. [lifting-bits/sleigh](https://github.com/lifting-bits/sleigh)
 
-Current preference: use `pypcode` for fast, in-process disassembly and P-code,
-but use the Ghidra Java API through PyGhidra when full state-space metadata or
-reassembly is required.
+Chosen approach: parse the compiled `.sla` directly in `isa/sleigher/`. It
+exposes the full address spaces, symbol table, and the encoding path needed for
+instruction relocation.
 
 ## Reassembly
 
@@ -104,9 +73,12 @@ Full state-space access is available through the Ghidra `Language` API:
 - `Language.getRegisters()` / `Language.getContextRegisters()`
 - `Language.parse(...)` for the matched `InstructionPrototype`
 
-## Test fixture
+## Test fixtures
 
-`test/test.s` is a single `add eax, 0x20` instruction. Build it with:
+`test/test.s` is a single `add eax, 0x20` instruction. `test/opcodes.s` holds
+the multi-opcode decoder matrix. `test/intel_64bit_forms.txt` is the full
+Intel 64-bit instruction-form corpus, assembled through NASM by
+`test/intel_cases.py`. Build all fixtures with:
 
 ```sh
 make -C isa/x86_64/test

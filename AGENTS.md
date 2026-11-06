@@ -14,6 +14,10 @@ Before implementing a change, look around the repository, write an
 implementation plan, and ask any questions that come up. Settle the plan and
 open questions before editing code.
 
+Before committing, verify the staged change set, not just the working tree.
+Untracked conftest files, fixtures, or tests are not part of the commit; run the
+suite against a clean checkout of the index when a change spans several files.
+
 At the end of every run, update the "Current state" section below so it matches
 the repository. Keep it concise: record what is implemented, what is still a
 stub, and any essential constraints. Do not add task logs, changelogs, or
@@ -31,6 +35,40 @@ transient notes.
 
 When in doubt, be conservative: reject an optimization rather than risk changing behavior.
 
+## Decoder implementation checklist
+
+- Treat spec-format data as untrusted. Enumerate every constant kind and
+  selector; unknown values must raise `SlaError`, not return `None`. Silent
+  `None` returns hide missing P-code writes and varnode locations.
+- Context is constructor-local. After applying context changes, store the
+  updated value on the resolved constructor and use it for nested operand
+  resolution, varnode lookup, and state recovery. Never reuse the root context
+  for nested constructors.
+- A constructor with an unresolved required subtable operand is not a valid
+  decode. Reject it instead of accepting a prefix-sized partial instruction.
+- Canonicalize registers at the parser/IR boundary exactly as `ir.md`
+  specifies. Never leak `AL`, `AH`, `XMM0_Qa`, or other SLEIGH sub-varnodes as
+  independent machine state.
+- Test state effects, not only lengths and bytes. Cover partial registers,
+  SIMD/AVX, x87, mask registers, memory addressing, segments, and control flow;
+  keep a corpus-wide golden and hand-check representative cases.
+- Test the negative space: lone prefixes, truncated encodings, invalid ModRM
+  combinations, and every proper prefix of a valid instruction must be
+  rejected. `FWAIT` is the documented exception because it is a standalone
+  instruction.
+- Verify relocation invariants directly: the absolute target before and after
+  relocation must match, length must not change, and out-of-range displacements
+  must be rejected. Include RIP-relative loads and stores.
+- Do not derive expected values only from the implementation. Use an
+  independent oracle or hand-computed cases, especially for state effects.
+- Validate external fixtures before declaring an upstream bug. Record the tool,
+  version, exact bytes, and evidence in `other_peoples_bugs.md`, and keep the
+  test strict `xfail` until the external cause is fixed.
+- Never let missing NASM, make, or other tooling skip silently. Fixture build
+  and execution failures are test failures.
+- Add the failure-path test in the same change as the feature. A decoder change
+  without malformed-input coverage is incomplete.
+
 ## Layout
 
 | Path | Responsibility |
@@ -44,7 +82,7 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 | `optimizers/` | Function removal and outlining |
 | `binary/` | ELF, PE, and raw binary access |
 | `verify.py` | Static and dynamic equivalence checks |
-| `test/` | Tests, sample C input, Ghidra export fixture |
+| `test/` | Grouped pytest suites, sample C input, NASM fixtures, Ghidra export |
 
 ## Current state
 
@@ -56,12 +94,25 @@ Implemented:
   mapping, reads with BSS zero-fill, full-file writes, and a no-op `finish()`.
   `Binary(path)` routes by magic bytes; PE and raw inputs raise
   `UnsupportedBinaryFormat` for now.
-- ELF tests (`test/test_elf.py`) build `test/build/sample` with `make` when
-  missing or stale, then verify Ghidra-derived `main` bytes and ELF mapping.
+- ELF tests (`test/binary/test_elf.py`) build `test/build/sample` with `make`
+  when missing or stale, then verify Ghidra-derived `main` bytes and ELF
+  mapping. Fixture-build failures are test failures, not skips.
 - x86-64 package (`isa/x86_64/`) contains the pinned Ghidra 12.2 SLEIGH files
-  and a NASM `add eax, 0x20` fixture. `pypcode` 4.1.0 handles disassembly and
-  P-code; full address-space access and reassembly need Ghidra's Java API
-  (PyGhidra).
+  and NASM fixtures.
+- `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
+  constructors, decision trees, context changes, and P-code templates. The
+  x86-64 decoder recovers modified and source register/flag/memory states,
+  propagates constructor context into nested operands, and canonicalizes
+  subregisters to their root register (GPR to 64-bit, vector to ZMM, MM, ST).
+  Tests cover an opcode matrix, hand-authored state-effect categories for
+  partial registers/SIMD/x87/memory/segments, a committed state-effect golden
+  for every decodable Intel form, malformed/truncated byte rejection, and
+  RIP-relative relocation. Reassembly preserves absolute targets by repatching
+  relative displacement fields and is checked against NASM at a relocated
+  origin. Seven Intel forms are strict xfail for external tool bugs documented
+  in `other_peoples_bugs.md`: five EVEX forms missing an immediate in Ghidra
+  12.2 SLEIGH and two PTWRITE forms missing the mandatory `F3` prefix in NASM
+  2.16.01.
 
 Still stubs:
 
@@ -150,6 +201,8 @@ python -m pytest -q
   module-level documentation.
 - Update `plan.txt` only for intentional design changes.
 - Update `ir.md` for any IR or ISA contract change.
+- Do not claim an oracle, cross-check, or coverage number in documentation
+  unless a test actually exercises it.
 
 ## Definition of done
 

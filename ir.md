@@ -37,6 +37,7 @@ Types:
 
         BasicBlock outline_target
         uint length
+        ulonglong address
 
         list[StateSpace] modifies
         list[StateSpace] depends_on

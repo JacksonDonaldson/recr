@@ -36,6 +36,7 @@ modification behavior is implemented yet.
 | `ir.md` | Normative IR and ISA contract |
 | `uplifter.py` | Function → IR conversion and cross-reference recovery |
 | `isa/isa.py` | ISA superclass and encoding contract |
+| `isa/sleigher/` | Direct parser/interpreter for compiled SLEIGH `.sla` files |
 | `isa/x86_64/` | x86-64 backend and pinned Ghidra 12.2 SLEIGH spec |
 | `optimizers/function_remover.py` | Unreferenced-function removal |
 | `optimizers/outliner.py` | Repeated-region outlining |
@@ -44,7 +45,7 @@ modification behavior is implemented yet.
 | `binary/pe.py` | PE backend (stub) |
 | `binary/raw.py` | Raw binary backend (stub) |
 | `verify.py` | Static and dynamic equivalence checks |
-| `test/` | Smoke tests, skipped parser tests, and fixtures |
+| `test/` | Grouped pytest suites, sample C input, NASM fixtures, and Ghidra exports |
 
 ## Input formats
 
