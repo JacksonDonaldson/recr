@@ -183,10 +183,15 @@ OP_CBRANCH = 5
 OP_BRANCHIND = 6
 OP_CALL = 7
 OP_CALLIND = 8
+OP_CALLOTHER = 9
 OP_RETURN = 10
 OP_BUILD = 60
 
 FLAG_REGISTERS = {
+    "C0",
+    "C1",
+    "C2",
+    "C3",
     "CF",
     "F1",
     "PF",
@@ -212,6 +217,32 @@ FLAG_REGISTERS = {
     "eflags",
     "rflags",
 }
+
+# SLEIGH registers used as scratch space, not architectural machine state.
+_SLEIGH_TEMPORARY_REGISTERS = {
+    "XmmResult",
+    "YmmResult",
+    "ZmmResult",
+    "XmmMask",
+    "YmmMask",
+    "ZmmMask",
+    "contextreg",
+    "BCST4",
+    "BCST8",
+    "BCST16",
+    "BCST32",
+    "BCST64",
+}
+
+# Userops that only mark a prefix and have no architectural effect.
+_NO_EFFECT_USEROPS = {"LOCK", "UNLOCK", "XACQUIRE", "XRELEASE"}
+
+# Output-bearing userops whose implicit inputs are not represented in p-code.
+_OPAQUE_USEROPS_PREFIXES = ("cpuid",)
+
+
+def _is_sleigh_temporary(name: str) -> bool:
+    return name in _SLEIGH_TEMPORARY_REGISTERS or name.startswith("xmmTmp")
 
 # Legacy names and their 64-bit parent registers.
 _GPR_PARENTS = {
@@ -1029,6 +1060,8 @@ class SlaSpec:
         self._varnodes_by_location: dict[tuple[int, int, int], VarnodeInfo] = {}
         self._varnodes_by_name: dict[str, VarnodeInfo] = {}
         self._canonical_registers: dict[int, VarnodeInfo] = {}
+        self.userops: list[str] = []
+        self._all_state_spaces: tuple[StateSpace, ...] | None = None
         self.default_space = "ram"
         self.root_subtable: Subtable | None = None
         self._parse()
@@ -1049,6 +1082,11 @@ class SlaSpec:
         if symbol_table is None:
             raise SlaError("SLA specification has no symbol table")
         self._parse_symbols(symbol_table)
+        self.userops = [
+            symbol.name
+            for _, symbol in sorted(self.symbols.items())
+            if symbol.kind == E_USEROP_HEAD
+        ]
         self._build_register_canonicalization()
         self._parse_subtables()
 
@@ -1171,6 +1209,36 @@ class SlaSpec:
             parent_name = _canonical_register_parent(varnode.name)
             parent = self._varnodes_by_name.get(parent_name) if parent_name else None
             self._canonical_registers[varnode.symbol_id] = parent or varnode
+
+    def userop_name(self, index: int) -> str:
+        if index < 0 or index >= len(self.userops):
+            raise SlaError(f"unknown userop index {index}")
+        return self.userops[index]
+
+    def all_state_spaces(self) -> tuple[StateSpace, ...]:
+        """Return every architectural state space, for opaque userops."""
+        if self._all_state_spaces is None:
+            states: dict[tuple[StateSpaceKind, str, int], StateSpace] = {}
+            for varnode in self.varnodes.values():
+                canonical = self._canonical_registers.get(
+                    varnode.symbol_id, varnode
+                )
+                if _is_sleigh_temporary(canonical.name):
+                    continue
+                if canonical.name in FLAG_REGISTERS:
+                    continue
+                state = StateSpace(
+                    StateSpaceKind.REGISTER, canonical.name, canonical.size
+                )
+                states[(state.kind, state.name, state.size)] = state
+            flag = StateSpace(StateSpaceKind.FLAG, "flags", 1)
+            memory = StateSpace(
+                StateSpaceKind.MEMORY, self.default_space, 1
+            )
+            states[(flag.kind, flag.name, flag.size)] = flag
+            states[(memory.kind, memory.name, memory.size)] = memory
+            self._all_state_spaces = tuple(states.values())
+        return self._all_state_spaces
 
     def _parse_subtables(self) -> None:
         for symbol_id, symbol in self.symbols.items():
@@ -1466,7 +1534,9 @@ class SlaSpec:
 
     @staticmethod
     def _first_handle_index(tpl: VarnodeTpl) -> int | None:
-        for const in (tpl.space, tpl.offset, tpl.size):
+        # A handle in the size field only describes the width of a value; it
+        # is not a read of the operand it refers to.
+        for const in (tpl.space, tpl.offset):
             if const.kind == "handle":
                 return const.value
         return None
@@ -1537,8 +1607,13 @@ class SlaSpec:
             if const.select == 2:
                 return varnode.size
             if const.select == 3:
-                return varnode.offset + const.plus
-            return None
+                if varnode.space_index != 0:
+                    # Low 16 bits are a byte delta from the handle offset.
+                    return varnode.offset + (const.plus & 0xFFFF)
+                # Constant handles are shifted instead: high 16 bits are
+                # the byte count to discard.
+                return varnode.offset >> (8 * (const.plus >> 16))
+            raise SlaError(f"unknown handle selector {const.select}")
         if const.kind == "spaceid":
             return const.value
         if const.kind == "start":
@@ -1686,9 +1761,17 @@ class SlaSpec:
     ) -> Instruction:
         modifies: list[StateSpace] = []
         depends_on: list[StateSpace] = []
+        opaque = False
 
         for op, owner in self._semantic_ops(resolved):
             owner_context = owner.context
+            if op.opcode == OP_CALLOTHER and op.inputs:
+                name = self.userop_name(op.inputs[0].offset.value)
+                if name not in _NO_EFFECT_USEROPS and (
+                    op.output is None
+                    or name.startswith(_OPAQUE_USEROPS_PREFIXES)
+                ):
+                    opaque = True
             if op.output is not None:
                 location = self._resolve_varnode_tpl(
                     op.output, owner, data, owner_context, address
@@ -1720,7 +1803,16 @@ class SlaSpec:
                 if state not in depends_on:
                     depends_on.append(state)
 
-            for input_tpl in op.inputs:
+            for index, input_tpl in enumerate(op.inputs):
+                if op.opcode in (OP_LOAD, OP_STORE) and index == 0:
+                    # First LOAD/STORE input is an address-space id.
+                    continue
+                if op.opcode in (OP_BRANCH, OP_CBRANCH, OP_CALL) and index == 0:
+                    # First BRANCH/CBRANCH/CALL input is the code target.
+                    continue
+                if op.opcode == OP_CALLOTHER and index == 0:
+                    # First CALLOTHER input is the userop index.
+                    continue
                 location = self._resolve_varnode_tpl(
                     input_tpl, owner, data, owner_context, address
                 )
@@ -1739,6 +1831,16 @@ class SlaSpec:
                     ):
                         if state not in depends_on:
                             depends_on.append(state)
+
+        if opaque:
+            # Userop bodies are not present in the SLEIGH file.  Treat an
+            # opaque operation as reading and writing every tracked state
+            # space rather than guessing which ones it clobbers.
+            for state in self.all_state_spaces():
+                if state not in modifies:
+                    modifies.append(state)
+                if state not in depends_on:
+                    depends_on.append(state)
 
         length = resolved.length
         return Instruction(
@@ -1775,6 +1877,8 @@ class SlaSpec:
             if varnode is None:
                 return None
             canonical = self._canonical_registers.get(varnode.symbol_id, varnode)
+            if _is_sleigh_temporary(canonical.name):
+                return None
             if canonical.name in FLAG_REGISTERS:
                 return StateSpace(StateSpaceKind.FLAG, "flags", 1)
             return StateSpace(

@@ -21,15 +21,4 @@ GHIDRA_GAPS = {
     ),
 }
 
-NASM_GAPS = {
-    "PTWRITE r64/m64": (
-        "NASM 2.16.01 emits the encoding without the mandatory F3 prefix; "
-        "see other_peoples_bugs.md"
-    ),
-    "PTWRITE r32/m32": (
-        "NASM 2.16.01 emits the encoding without the mandatory F3 prefix; "
-        "see other_peoples_bugs.md"
-    ),
-}
-
-KNOWN_CORPUS_GAPS = {**GHIDRA_GAPS, **NASM_GAPS}
+KNOWN_CORPUS_GAPS = {**GHIDRA_GAPS}

@@ -104,15 +104,16 @@ Implemented:
   x86-64 decoder recovers modified and source register/flag/memory states,
   propagates constructor context into nested operands, and canonicalizes
   subregisters to their root register (GPR to 64-bit, vector to ZMM, MM, ST).
+  x87 condition codes map to the flag state, SLEIGH scratch registers are
+  excluded, and opaque userops conservatively clobber all tracked state.
   Tests cover an opcode matrix, hand-authored state-effect categories for
   partial registers/SIMD/x87/memory/segments, a committed state-effect golden
-  for every decodable Intel form, malformed/truncated byte rejection, and
-  RIP-relative relocation. Reassembly preserves absolute targets by repatching
+  for every decodable Intel form, hand-coded audit regressions, malformed or
+  truncated byte rejection, and RIP-relative relocation. Reassembly preserves absolute targets by repatching
   relative displacement fields and is checked against NASM at a relocated
-  origin. Seven Intel forms are strict xfail for external tool bugs documented
-  in `other_peoples_bugs.md`: five EVEX forms missing an immediate in Ghidra
-  12.2 SLEIGH and two PTWRITE forms missing the mandatory `F3` prefix in NASM
-  2.16.01.
+  origin. Five Intel forms are strict xfail for the external bug documented in
+  `other_peoples_bugs.md`: EVEX forms missing an immediate in Ghidra 12.2
+  SLEIGH.
 
 Still stubs:
 
@@ -131,6 +132,10 @@ Do not assume an unimplemented module works. Add tests as each stub is filled in
 python -m pip install -r requirements.txt
 python -m pytest -q
 ```
+
+Use NASM 2.16.02 or newer. The corpus is generated with NASM 3.02; NASM
+2.16.01 emits PTWRITE without the mandatory `F3` prefix (see
+`other_peoples_bugs.md`).
 
 Build and run the sample ELF:
 

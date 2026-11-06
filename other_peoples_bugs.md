@@ -1,8 +1,8 @@
 # External tool bugs affecting the x86-64 test corpus
 
-The x86-64 coverage suite keeps seven Intel-corpus entries as strict `xfail`
-because the expected bytes come from external tools that disagree with the
-pinned Ghidra specification. Both causes are external to codezip.
+The x86-64 coverage suite keeps five Intel-corpus entries as strict `xfail`
+because the pinned Ghidra 12.2 SLEIGH specification disagrees with the
+assembler. The cause is external to codezip.
 
 ## Ghidra 12.2 SLEIGH: missing EVEX immediate
 
@@ -33,41 +33,29 @@ forms cannot be safely decoded until the specification is updated or a targeted
 workaround is added. The tests remain strict `xfail` so they start passing as
 soon as the pinned specification is replaced.
 
-## NASM 2.16.01: PTWRITE is emitted without `F3`
+## Resolved: NASM 2.16.01 PTWRITE prefix
 
-Affected forms:
-
-- `PTWRITE r64/m64`
-- `PTWRITE r32/m32`
-
-Intel documents PTWRITE as `F3 0F AE /4` (`F3 REX.W 0F AE /4` for the 64-bit
-form). NASM 2.16.01 on this machine emits the forms without the mandatory `F3`
-prefix:
+NASM 2.16.01 emitted `PTWRITE r64/m64` and `PTWRITE r32/m32` without the
+mandatory `F3` prefix:
 
 ```text
 PTWRITE rax  ->  48 0f ae e0
 PTWRITE eax  ->     0f ae e0
 ```
 
-The first byte sequence is not a valid PTWRITE. In fact
-`48 0f ae e0` has ModRM `mod=11` for an `0F AE /0` opcode, which is invalid for
-FXSAVE and has no matching constructor.
+The cause was `x86/insns.dat` using the `np` ("no prefix") marker instead of
+`f3`. The first byte sequence is not a valid PTWRITE: `48 0f ae e0` has ModRM
+`mod=11` for an `0F AE /0` opcode and no matching constructor.
 
-The pinned SLEIGH specification does decode correctly encoded PTWRITE. Both of
-these are accepted as four- and five-byte instructions:
+This was fixed upstream in commit `24275695ff2d952f754570391a2e141aa8a7305e`
+(`x86/insns.dat: PTWRITE requires the F3 prefix`) and first released in NASM
+2.16.02. The corpus is now generated with NASM 3.02, which emits
+`f3 48 0f ae e0` and `f3 0f ae e0`; both decode and reassemble correctly, so no
+PTWRITE entries remain in `test/isa/known_gaps.py`.
 
-```text
-f3 0f ae e0      -> PTWRITE (4 bytes)
-f3 48 0f ae e0   -> PTWRITE (5 bytes)
-```
-
-The corpus generator should use those bytes directly (or a fixed NASM) rather
-than relying on NASM's `PTWRITE` mnemonic. Until then the two corpus entries
-remain strict `xfail`.
-
-## Why keep them failing
+## Why keep the Ghidra entries failing
 
 The corpus test compares the decoder against NASM's original and relocated
-encodings. Keeping the entries as strict `xfail` preserves the evidence and
-makes the recovery condition explicit: remove the corresponding entry from
-`test/isa/known_gaps.py` when the specification or assembler is fixed.
+encodings. Keeping the five entries as strict `xfail` preserves the evidence
+and makes the recovery condition explicit: remove the corresponding entry from
+`test/isa/known_gaps.py` when the specification is fixed.

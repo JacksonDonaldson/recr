@@ -83,7 +83,7 @@ CASES: list[
     (
         "cmovz eax, ebx",
         {reg("RAX")},
-        {FLAGS, RAM, reg("RAX"), reg("RBX")},
+        {FLAGS, reg("RAX"), reg("RBX")},
     ),
     ("setz al", {reg("RAX")}, {FLAGS}),
     # Mask registers, fences, and upper-lane zeroing.

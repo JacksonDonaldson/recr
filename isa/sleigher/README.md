@@ -19,8 +19,15 @@ derived from the constructor's P-code template.
 
 Registers are canonicalized before they reach the IR: GPR subregisters map to
 their 64-bit parent, vector views and XMM/YMM registers map to ZMM, MM views map
-to MM, x87 high words map to ST, and flags/eflags/rflags map to the single flag
-state.
+to MM, x87 high words map to ST, and flags/eflags/rflags as well as the x87
+condition codes C0-C3 map to the single flag state. SLEIGH scratch registers
+(for example `XmmResult`, `xmmTmp*`, and `BCST*`) are excluded rather than
+leaked as machine state.
+
+Opaque userops are handled conservatively. A `CALLOTHER` with no result
+varnode, or the `cpuid` family (whose implicit input is not in P-code), is
+treated as reading and writing every tracked register, flag, and memory state.
+Userops whose results are fully described by P-code keep their precise effects.
 
 Tests cover a data-driven matrix of x86-64 instructions, a hand-written
 category matrix covering partial registers, SIMD, x87, mask registers, memory
@@ -32,10 +39,9 @@ of a valid corpus form is rejected (except the standalone `FWAIT` instruction).
 The Intel 64-bit instruction corpus under `isa/x86_64/test/` covers all 3,377
 unique valid forms from the Intel instruction tables. Every form is decoded and
 reassembled, with bytes checked against NASM assembled at a relocated origin.
-Seven forms are marked xfail for two external-tool bugs documented in
-`other_peoples_bugs.md`: five EVEX forms that Ghidra 12.2 SLEIGH decodes
-without their trailing immediate, and two PTWRITE forms that NASM 2.16.01
-encodes without the mandatory `F3` prefix.
+Five forms are marked xfail for one external-tool bug documented in
+`other_peoples_bugs.md`: EVEX forms that Ghidra 12.2 SLEIGH decodes without
+their trailing immediate.
 
 `reassemble()` preserves position-independent encodings and repatches direct
 relative branch/call and RIP-relative displacement fields so the absolute
