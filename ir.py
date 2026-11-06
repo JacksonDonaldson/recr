@@ -1,8 +1,7 @@
 """Core intermediate representation shared by every stage.
 
-The normative description of these types lives in ``ir.md``.  This module is
-only a scaffold: it defines the data model and leaves the behavioural methods
-unimplemented.
+The normative description of these types lives in ``ir.md``.  This module
+defines the data model; ISA-specific behaviour lives on the ISA implementations.
 """
 
 from __future__ import annotations
@@ -92,18 +91,6 @@ class Instruction:
     depends_on: list[StateSpace] = field(default_factory=list)
     flows_from: list[Address] = field(default_factory=list)
     flows_to: list[Address] = field(default_factory=list)
-
-    def is_outlinable(self) -> bool:
-        """Return whether this instruction may be moved into an outlined block."""
-        raise NotImplementedError
-
-    def add_extra_stack_space(self, pointer_size: int) -> None:
-        """Bias stack-relative memory operands by ``pointer_size`` bytes.
-
-        Used for instructions that are outlined, because they run with that
-        many more bytes on the stack.
-        """
-        raise NotImplementedError
 
 
 @dataclass

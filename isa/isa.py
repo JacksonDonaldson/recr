@@ -27,6 +27,24 @@ class ISA(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def is_outlinable(self, instruction: Instruction) -> bool:
+        """Return whether ``instruction`` may be moved into an outlined block."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def add_extra_stack_space(
+        self, instruction: Instruction, pointer_size: int
+    ) -> Instruction:
+        """Return ``instruction`` with stack-relative operands biased.
+
+        Outlined instructions run with ``pointer_size`` more bytes on the
+        stack, so every stack-relative memory operand is shifted by that
+        amount.  Raise :class:`ValueError` if the instruction cannot be
+        re-encoded in place without changing its length or semantics.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def relocate_instruction(
         self, instruction: Instruction, new_base_address: int
     ) -> Instruction:

@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from ir import InstructionType, StateSpaceKind
 from isa.sleigher import X86Sleigher
 
+ADD_EAX_0X20 = b"\x83\xc0\x20"
 
-def test_parse_add_modifies_rax(
-    isa_test_binary: Path, sleigher: X86Sleigher
-) -> None:
-    instruction = sleigher.parse(isa_test_binary.read_bytes())
+
+def test_parse_add_modifies_rax(sleigher: X86Sleigher) -> None:
+    instruction = sleigher.parse(ADD_EAX_0X20)
 
     assert instruction is not None
     assert instruction.original_data == b"\x83\xc0\x20"
@@ -33,9 +31,9 @@ def test_parse_add_modifies_rax(
 
 
 def test_reassemble_position_independent_instruction(
-    isa_test_binary: Path, sleigher: X86Sleigher
+    sleigher: X86Sleigher,
 ) -> None:
-    instruction = sleigher.parse(isa_test_binary.read_bytes())
+    instruction = sleigher.parse(ADD_EAX_0X20)
     assert instruction is not None
 
     moved = sleigher.reassemble(instruction, 0x401000)

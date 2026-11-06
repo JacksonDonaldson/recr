@@ -31,7 +31,8 @@ transient notes.
 - No instruction may be relocated without an `isa.can_encode` check.
 - `BasicBlock` owns its instructions; `Function` owns its basic blocks.
 - `flows_from` / `flows_to` contain absolute addresses, not block-relative addresses.
-- Every instruction that can be outlined must report `is_outlinable() == True`.
+- Every instruction that can be outlined must return `True` from
+  `isa.is_outlinable(instruction)`.
 
 When in doubt, be conservative: reject an optimization rather than risk changing behavior.
 
@@ -98,7 +99,18 @@ Implemented:
   when missing or stale, then verify Ghidra-derived `main` bytes and ELF
   mapping. Fixture-build failures are test failures, not skips.
 - x86-64 package (`isa/x86_64/`) contains the pinned Ghidra 12.2 SLEIGH files
-  and NASM fixtures.
+  and NASM fixtures. `X86_64ISA` decodes through the SLEIGH backend, exposes
+  `is_outlinable` and `add_extra_stack_space`, and delegates relocation to the
+  SLEIGH backend. RSP-relative operands are shifted by the outline call;
+  RBP-relative operands are left unchanged because RBP is callee-saved. Forms
+  with no displacement field, disp8 overflow, RSP value use, and EVEX
+  compressed disp8 (including after legacy prefixes) are conservatively
+  rejected. Trap and control-transfer mnemonics that the decoder classifies as
+  arithmetic are rejected explicitly. `disassemble` clamps its read to the
+  mapped range so instructions at the end of a segment still decode.
+  NASM-generated tests cover every Intel memory form in the corpus across
+  RSP/ESP/RBP/SIB and disp8/disp32 variants. `set_instruction_target`,
+  `try_interpret_as_pointer`, and the call/ret length helpers are still stubs.
 - `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
   constructors, decision trees, context changes, and P-code templates. The
   x86-64 decoder recovers modified and source register/flag/memory states,
@@ -119,7 +131,6 @@ Still stubs:
 
 - YAML parser
 - PE and raw binary backends
-- x86-64 ISA
 - Uplifter
 - Function remover and outliner
 - Verification passes

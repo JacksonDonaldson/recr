@@ -313,7 +313,7 @@ optimizers/outliner.py:
             
             put the instruction list in the binary at that location.
                 this involves relinking each instruction to be at the new base address.
-                Then, call instruction.add_extra_stack_space to handle the modified stack pointer 
+                Then, call isa.add_extra_stack_space to handle the modified stack pointer 
             
             remove the used space from the free_space list
             for all the instructions that should point to that basic block:
@@ -340,7 +340,7 @@ optimizers/outliner.py:
         bb_match = map from basic_block -> int best_matches
 
         for each instruction in this basic block:
-            if instruction.is_outlinable():
+            if isa.is_outlinable(instruction):
                 add 1 to each basic block in instruction_map[instruction]
 
         reduced_bb_match = throw away all basic blocks where the savings formula above is <= 0.

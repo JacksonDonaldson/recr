@@ -44,15 +44,6 @@ Types:
         list[Address] flows_from
         list[Address] flows_to
 
-        function is_outlinable:
-            false if flows_to != flows_from + 1
-            false if rsp is in modifies (push / pop / call / leave / add rsp)
-            false if type is ret or call_indirect
-
-        function add_extra_stack_space:
-            adds [pointer size] to all stack-relative memory operands
-            [to be used for instructions that are being outlined, since they'll run with that many more bytes on the stack]
-
     class BasicBlock:
         list[Instruction] instructions
         bool used_for_outlining
@@ -100,11 +91,28 @@ ISA contract:
 
     class ISA:
         function disassemble(binary, address) -> Instruction
+        function is_outlinable(instruction) -> bool
+        function add_extra_stack_space(instruction, pointer_size) -> Instruction
         function relocate_instruction(instruction, new_base_address) -> Instruction
         function set_instruction_target(instruction, new_target_address) -> Instruction
         function can_encode(instruction, address) -> bool
         function required_length(instruction, address) -> uint
         function try_interpret_as_pointer(binary, offset) -> Address | None
+
+        is_outlinable returns false if:
+            flows_to != flows_from + 1
+            rsp is in modifies (push / pop / call / leave / add rsp)
+            rsp is used as a value rather than only as an address base
+            type is call, call_indirect, branch, or ret
+            the instruction is a trap or control transfer (int, hlt, ud2, ...)
+            an rsp-relative memory operand cannot be biased in place
+
+        add_extra_stack_space returns a re-encoded instruction with [pointer size]
+        added to every rsp-relative memory operand.  It is used for instructions
+        that are being outlined, since the outlining call pushes a return address
+        and changes rsp by that amount.  Registers that the call does not change,
+        such as rbp, are left alone.  It raises ValueError if the instruction
+        cannot be re-encoded without changing length or semantics.
 
         relocate_instruction preserves the instruction's absolute target(s):
             a moved call still calls the same address, and a moved rip-relative

@@ -10,7 +10,7 @@ P-code semantics we need for the IR.
 ```text
 isa/x86_64/
   __init__.py       # exports X86_64ISA
-  isa.py            # current ISA backend scaffold
+  isa.py            # decoding, outlining checks, stack-space biasing
   ghidra/           # pinned Ghidra 12.2 x86-64 language files
   test/             # NASM assembly fixtures
 ```
@@ -73,10 +73,34 @@ Full state-space access is available through the Ghidra `Language` API:
 - `Language.getRegisters()` / `Language.getContextRegisters()`
 - `Language.parse(...)` for the matched `InstructionPrototype`
 
+## Outlining and stack-relative operands
+
+`X86_64ISA.is_outlinable` rejects control-flow instructions, anything that
+modifies RSP, and anything that uses RSP as a value rather than only as an
+address base.  It also rejects trap and control-transfer mnemonics such as
+`INT`, `INT3`, `HLT`, `UD2`, and `RSM`, which the SLEIGH decoder classifies as
+`ARITHMETIC`, and stack-relative memory operands that cannot be biased in
+place.
+
+`X86_64ISA.add_extra_stack_space` adds the pointer size to every explicit
+memory operand whose base is RSP.  RBP is callee-saved and is not changed by
+the outlining call, so its displacement is left alone.  The method re-encodes
+the existing displacement field and refuses to change the instruction length.
+Forms with no displacement field (for example `[rsp]` or `[rsp+rax*4]`) cannot
+grow, and a disp8 that would overflow to disp32 is rejected.  EVEX disp8
+operands are compressed by the instruction's tuple size; the pinned SLEIGH
+specification does not expose that size reliably for every form, so those are
+rejected conservatively rather than encoded with a possibly wrong effective
+address.  The EVEX prefix is found after any legacy prefixes, so forms such as
+`[esp+...]` and segment-relative operands are covered.  EVEX disp32 operands
+are handled normally.  The pinned SLEIGH model for `INVPCID` also resolves its
+register operand from the r/m field, so stack-relative `INVPCID` forms are
+conservatively treated as RSP value uses.
+
 ## Test fixtures
 
-`test/test.s` is a single `add eax, 0x20` instruction. `test/opcodes.s` holds
-the multi-opcode decoder matrix. `test/intel_64bit_forms.txt` is the full
+`test/opcodes.s` holds the multi-opcode decoder matrix.
+`test/intel_64bit_forms.txt` is the full
 Intel 64-bit instruction-form corpus, assembled through NASM by
 `test/intel_cases.py`. Build all fixtures with:
 
