@@ -32,6 +32,8 @@ def test_disassemble_clamps_read_to_mapped_memory(
 
     assert instruction.original_data == instruction_bytes
     assert instruction.length == len(instruction_bytes)
+    assert instruction.flows_from == []
+    assert instruction.flows_to == [Address.absolute(13 + len(instruction_bytes))]
 
 
 def test_disassemble_rejects_unmapped_address(
@@ -55,6 +57,10 @@ def test_relocate_instruction_preserves_rip_relative_target(
     assert relocated.address == 0x1000
     assert relocated.length == instruction.length
     assert relocated.original_data == bytes.fromhex("8b0510f0ffff")
+    assert relocated.flows_from == []
+    assert relocated.flows_to == [
+        Address.absolute(0x1000 + relocated.length)
+    ]
 
 
 def test_relocate_instruction_rejects_out_of_range_address(
@@ -93,7 +99,25 @@ def test_position_independent_instruction_encodes_anywhere(
 def test_is_outlinable_accepts_empty_flows(
     x86_64_isa: X86_64ISA,
 ) -> None:
-    instruction = replace(_decode(x86_64_isa, b"\x90"), address=0x1000)
+    instruction = replace(
+        _decode(x86_64_isa, b"\x90"),
+        address=0x1000,
+        flows_from=[],
+        flows_to=[],
+    )
+
+    assert x86_64_isa.is_outlinable(instruction) is True
+
+
+def test_is_outlinable_accepts_fallthrough_without_flows_from(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    instruction = replace(
+        _decode(x86_64_isa, b"\x90"),
+        address=0x1000,
+        flows_from=[],
+        flows_to=[Address.absolute(0x1001)],
+    )
 
     assert x86_64_isa.is_outlinable(instruction) is True
 
@@ -136,13 +160,6 @@ def test_is_outlinable_rejects_unpaired_flow(
     assert x86_64_isa.is_outlinable(instruction) is False
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "is_outlinable compares flows_to against flows_from + 1; the next "
-        "instruction is at address + length"
-    ),
-)
 def test_is_outlinable_accepts_multi_byte_fallthrough(
     x86_64_isa: X86_64ISA,
 ) -> None:

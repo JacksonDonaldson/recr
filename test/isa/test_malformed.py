@@ -6,6 +6,7 @@ import random
 
 import pytest
 
+from ir import InstructionType
 from isa.sleigher import X86Sleigher
 from test.isa.known_gaps import GHIDRA_GAPS
 from test.isa.test_intel_manual import FORMS
@@ -88,6 +89,10 @@ def test_random_bytes_that_decode_are_self_consistent(
         assert 1 <= instruction.length <= 15
         assert instruction.length <= len(data)
         assert instruction.original_data == data[: instruction.length]
+        if instruction.type is InstructionType.RET:
+            assert instruction.flows_to == []
+        else:
+            assert instruction.flows_to
         again = sleigher.parse(instruction.original_data)
         assert again is not None
         assert again.length == instruction.length

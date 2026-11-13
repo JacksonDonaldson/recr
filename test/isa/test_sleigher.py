@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ir import InstructionType, StateSpaceKind
+from ir import Address, InstructionType, StateSpaceKind
 from isa.sleigher import X86Sleigher
 
 ADD_EAX_0X20 = b"\x83\xc0\x20"
@@ -29,6 +29,9 @@ def test_parse_add_modifies_rax(sleigher: X86Sleigher) -> None:
         for state in instruction.depends_on
     )
 
+    assert instruction.flows_from == []
+    assert instruction.flows_to == [Address.absolute(instruction.length)]
+
 
 def test_reassemble_position_independent_instruction(
     sleigher: X86Sleigher,
@@ -43,6 +46,8 @@ def test_reassemble_position_independent_instruction(
     assert moved.original_data == instruction.original_data
     assert moved.length == instruction.length
     assert moved.modifies == instruction.modifies
+    assert moved.flows_from == []
+    assert moved.flows_to == [Address.absolute(0x401000 + moved.length)]
 
 
 def test_incomplete_input_returns_none(sleigher: X86Sleigher) -> None:

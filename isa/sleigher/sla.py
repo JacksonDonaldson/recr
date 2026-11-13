@@ -14,7 +14,13 @@ import re
 import zlib
 from typing import Any
 
-from ir import Instruction, InstructionType, StateSpace, StateSpaceKind
+from ir import (
+    Address,
+    Instruction,
+    InstructionType,
+    StateSpace,
+    StateSpaceKind,
+)
 
 
 class SlaError(ValueError):
@@ -1752,6 +1758,72 @@ class SlaSpec:
         )
         return address + resolved.length + displacement, offset, size
 
+    @staticmethod
+    def _unique_addresses(addresses: list[Address]) -> list[Address]:
+        unique: list[Address] = []
+        for address in addresses:
+            if address not in unique:
+                unique.append(address)
+        return unique
+
+    def flow_targets(
+        self,
+        resolved: ResolvedConstructor,
+        data: bytes,
+        address: int,
+        instruction_type: InstructionType | None = None,
+    ) -> list[Address]:
+        """Return the control-flow targets of a decoded constructor.
+
+        Straight-line instructions fall through to the next instruction.
+        Direct branches and calls use their encoded relative target.  Indirect
+        branches are local but unresolved; indirect calls are non-local and
+        unresolved.  A conditional branch also falls through.
+        """
+        if instruction_type is None:
+            instruction_type = self.instruction_type(resolved)
+        next_address = Address.absolute(address + resolved.length)
+
+        if instruction_type is InstructionType.RET:
+            return []
+
+        opcodes = {op.opcode for op, _ in self._semantic_ops(resolved)}
+
+        if instruction_type is InstructionType.BRANCH:
+            if OP_BRANCHIND in opcodes:
+                return [Address.unknown_local()]
+            if OP_BRANCH not in opcodes and OP_CBRANCH not in opcodes:
+                return [Address.unknown_local()]
+
+            relative = self.relative_target(resolved, data, address)
+            if relative is None:
+                return [Address.unknown_local()]
+
+            target = Address.absolute(relative[0])
+            if OP_CBRANCH in opcodes:
+                return self._unique_addresses([target, next_address])
+            return [target]
+
+        if instruction_type in (
+            InstructionType.CALL,
+            InstructionType.CALL_INDIRECT,
+        ):
+            if OP_CALLIND in opcodes:
+                return self._unique_addresses(
+                    [Address.unknown_nonlocal(), next_address]
+                )
+
+            relative = self.relative_target(resolved, data, address)
+            if relative is not None:
+                target = Address.absolute(relative[0])
+                return self._unique_addresses([target, next_address])
+
+            return self._unique_addresses(
+                [Address.unknown_nonlocal(), next_address]
+            )
+
+        return [next_address]
+
     def make_instruction(
         self,
         data: bytes,
@@ -1843,13 +1915,17 @@ class SlaSpec:
                     depends_on.append(state)
 
         length = resolved.length
+        instruction_type = self.instruction_type(resolved)
         return Instruction(
             original_data=data[:length],
-            type=self.instruction_type(resolved),
+            type=instruction_type,
             length=length,
             address=address,
             modifies=modifies,
             depends_on=depends_on,
+            flows_to=self.flow_targets(
+                resolved, data, address, instruction_type
+            ),
         )
 
     def _state_space(

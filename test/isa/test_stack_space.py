@@ -179,6 +179,10 @@ def test_hand_written_adjustments(
     instruction = _disassemble(x86_64_isa, bytes.fromhex(original))
     result = x86_64_isa.add_extra_stack_space(instruction, 8)
 
+    assert instruction.flows_from == [], assembly
+    assert instruction.flows_to == [
+        Address.absolute(instruction.length)
+    ], assembly
     assert result.original_data.hex() == adjusted, assembly
     assert x86_64_isa.is_outlinable(instruction) is True, assembly
 

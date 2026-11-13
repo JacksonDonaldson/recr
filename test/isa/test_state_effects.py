@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from ir import StateSpaceKind
+from ir import Address, StateSpaceKind
 from isa.sleigher import X86Sleigher
 
 
@@ -135,3 +135,5 @@ def test_state_effects(
     assert {
         (state.kind, state.name) for state in decoded.depends_on
     } == expected_sources, instruction
+    assert decoded.flows_from == [], instruction
+    assert decoded.flows_to == [Address.absolute(decoded.length)], instruction

@@ -114,8 +114,12 @@ Implemented:
 - `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
   constructors, decision trees, context changes, and P-code templates. The
   x86-64 decoder recovers modified and source register/flag/memory states,
+  fills `flows_to` (fallthrough, direct branch/call targets, `UNK_LOCAL` for
+  indirect branches, `UNK_NONLOCAL` for indirect calls, none for returns),
   propagates constructor context into nested operands, and canonicalizes
   subregisters to their root register (GPR to 64-bit, vector to ZMM, MM, ST).
+  `flows_from` is left for the code-flow recovery pass.  Reassembly refreshes
+  fallthrough targets while preserving absolute branch and call targets.
   x87 condition codes map to the flag state, SLEIGH scratch registers are
   excluded, and opaque userops conservatively clobber all tracked state.
   Tests cover an opcode matrix, hand-authored state-effect categories for

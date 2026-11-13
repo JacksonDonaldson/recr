@@ -64,6 +64,15 @@ class Sleigher:
                     + data[offset + size :]
                 )
 
+        flows_to = list(instruction.flows_to)
+        if resolved is not None:
+            flows_to = self.spec.flow_targets(
+                resolved,
+                data,
+                new_address,
+                self.spec.instruction_type(resolved),
+            )
+
         return replace(
             instruction,
             original_data=data,
@@ -71,5 +80,5 @@ class Sleigher:
             modifies=list(instruction.modifies),
             depends_on=list(instruction.depends_on),
             flows_from=list(instruction.flows_from),
-            flows_to=list(instruction.flows_to),
+            flows_to=flows_to,
         )

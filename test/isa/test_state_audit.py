@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from ir import StateSpaceKind
+from ir import Address, StateSpaceKind
 from isa.sleigher import X86Sleigher
 from test.isa.known_gaps import KNOWN_CORPUS_GAPS
 
@@ -118,6 +118,8 @@ def test_audited_state_effects(
     assert decoded is not None, instruction
     assert _state_keys(decoded.modifies) == expected_modifies, instruction
     assert _state_keys(decoded.depends_on) == expected_sources, instruction
+    assert decoded.flows_from == [], instruction
+    assert decoded.flows_to == [Address.absolute(decoded.length)], instruction
 
 
 # Userops with no output varnode carry side effects we cannot recover.
@@ -145,6 +147,8 @@ def test_opaque_callother_clobbers_all_state(
     }
     assert _state_keys(decoded.modifies) == expected, instruction
     assert _state_keys(decoded.depends_on) == expected, instruction
+    assert decoded.flows_from == [], instruction
+    assert decoded.flows_to == [Address.absolute(decoded.length)], instruction
 
 
 # Userops whose results are fully described by p-code keep precise effects.
@@ -181,6 +185,8 @@ def test_known_callother_effects_stay_precise(
 
     assert _state_keys(decoded.modifies) == expected_modifies, instruction
     assert _state_keys(decoded.depends_on) == expected_sources, instruction
+    assert decoded.flows_from == [], instruction
+    assert decoded.flows_to == [Address.absolute(decoded.length)], instruction
 
 
 def _is_temporary(name: str) -> bool:

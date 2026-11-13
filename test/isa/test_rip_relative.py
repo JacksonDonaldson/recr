@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from ir import StateSpaceKind
+from ir import Address, StateSpaceKind
 from isa.sleigher import X86Sleigher
 
 
@@ -27,6 +27,20 @@ class RipCase:
     relocated: bytes
     modifies: frozenset[tuple[StateSpaceKind, str]]
     depends_on: frozenset[tuple[StateSpaceKind, str]]
+    flow: str = "fallthrough"
+
+
+def _expected_flows(
+    flow: str, address: int, length: int
+) -> list[Address]:
+    fallthrough = Address.absolute(address + length)
+    if flow == "fallthrough":
+        return [fallthrough]
+    if flow == "call_indirect":
+        return [Address.unknown_nonlocal(), fallthrough]
+    if flow == "branch_indirect":
+        return [Address.unknown_local()]
+    raise AssertionError(f"unknown flow kind {flow!r}")
 
 
 CASES = [
@@ -74,6 +88,7 @@ CASES = [
         bytes.fromhex("ff1550b0ffff"),
         frozenset({RAM, reg("RSP")}),
         frozenset({RAM, reg("RSP")}),
+        flow="call_indirect",
     ),
     RipCase(
         "jmp qword [rip+0x60]",
@@ -83,6 +98,7 @@ CASES = [
         bytes.fromhex("ff2560a0ffff"),
         frozenset(),
         frozenset({RAM}),
+        flow="branch_indirect",
     ),
     RipCase(
         "add dword [rip+0x70], eax",
@@ -139,12 +155,20 @@ def test_rip_relative_reassemble_preserves_target(
     assert {
         (state.kind, state.name) for state in instruction.depends_on
     } == case.depends_on
+    assert instruction.flows_from == []
+    assert instruction.flows_to == _expected_flows(
+        case.flow, case.original_address, len(case.original)
+    )
 
     relocated = sleigher.reassemble(instruction, case.relocated_address)
     assert relocated is not None
     assert relocated.address == case.relocated_address
     assert relocated.length == len(case.original)
     assert relocated.original_data == case.relocated
+    assert relocated.flows_from == []
+    assert relocated.flows_to == _expected_flows(
+        case.flow, case.relocated_address, len(case.original)
+    )
 
     old_target = _target(
         sleigher, case.original, case.original_address
@@ -166,6 +190,8 @@ def test_rip_relative_reassemble_at_low_address(
     relocated = sleigher.reassemble(instruction, 0)
     assert relocated is not None
     assert relocated.original_data == bytes.fromhex("8b0510100000")
+    assert relocated.flows_from == []
+    assert relocated.flows_to == [Address.absolute(relocated.length)]
 
 
 @pytest.mark.parametrize("new_address", [0x80002000, 0x100000000])

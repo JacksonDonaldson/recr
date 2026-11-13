@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from ir import InstructionType, StateSpaceKind
+from ir import Address, InstructionType, StateSpaceKind
 from isa.sleigher import X86Sleigher
 
 NEW_BASE = 0x500000
@@ -91,6 +91,25 @@ for _case in CASES:
     _offset += _case[1]
 
 
+def _expected_flows(name: str, address: int, length: int) -> list[Address]:
+    """Derive control-flow targets from the NASM source line."""
+    parts = name.split()
+    mnemonic = parts[0].upper()
+    fallthrough = Address.absolute(address + length)
+
+    if mnemonic in {"RET", "RETF", "IRET", "IRETD", "IRETQ"}:
+        return []
+    if mnemonic == "CALL":
+        target = Address.absolute(int(parts[1], 0))
+        return list(dict.fromkeys([target, fallthrough]))
+    if mnemonic == "JMP":
+        return [Address.absolute(int(parts[1], 0))]
+    if mnemonic.startswith("J") or mnemonic.startswith("LOOP"):
+        target = Address.absolute(int(parts[1], 0))
+        return list(dict.fromkeys([target, fallthrough]))
+    return [fallthrough]
+
+
 def _assemble_at(name: str, origin: int, tmp_path: Path) -> bytes:
     source = tmp_path / "instruction.s"
     output = tmp_path / "instruction.bin"
@@ -138,6 +157,10 @@ def test_opcode(
     assert {
         (state.kind, state.name) for state in instruction.depends_on
     } == expected_sources, name
+    assert instruction.flows_from == [], name
+    assert instruction.flows_to == _expected_flows(
+        name, offset, length
+    ), name
 
 
 @pytest.mark.parametrize(
@@ -170,6 +193,10 @@ def test_reassemble_matches_nasm_at_new_base(
     assert relocated.address == new_address, name
     assert relocated.length == length, name
     assert relocated.modifies == instruction.modifies, name
+    assert relocated.flows_from == [], name
+    assert relocated.flows_to == _expected_flows(
+        name, new_address, length
+    ), name
 
     expected = _assemble_at(name, new_address, tmp_path)
     assert len(expected) == length, name

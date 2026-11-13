@@ -99,8 +99,18 @@ ISA contract:
         function required_length(instruction, address) -> uint
         function try_interpret_as_pointer(binary, offset) -> Address | None
 
+        disassemble fills flows_to:
+            straight-line instruction: [address + length]
+            direct conditional branch: [target, address + length]
+            direct unconditional branch: [target]
+            direct call: [target, address + length]
+            indirect branch: [UNK_LOCAL]
+            indirect call: [UNK_NONLOCAL, address + length]
+            return: []
+            flows_from is left empty; the code-flow recovery pass fills it.
+
         is_outlinable returns false if:
-            flows_to != flows_from + 1
+            flows are present and flows_to is not a single fallthrough edge
             rsp is in modifies (push / pop / call / leave / add rsp)
             rsp is used as a value rather than only as an address base
             type is call, call_indirect, branch, or ret

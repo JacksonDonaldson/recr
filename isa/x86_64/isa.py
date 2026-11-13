@@ -267,16 +267,24 @@ class X86_64ISA(ISA):
     def _is_fallthrough(instruction: Instruction) -> bool:
         if not instruction.flows_from and not instruction.flows_to:
             return True
-        if len(instruction.flows_from) != 1 or len(instruction.flows_to) != 1:
+        if len(instruction.flows_to) != 1:
             return False
-        source = instruction.flows_from[0]
+
         target = instruction.flows_to[0]
-        if (
-            source.kind is not AddressKind.ABSOLUTE
-            or target.kind is not AddressKind.ABSOLUTE
-        ):
+        if target.kind is not AddressKind.ABSOLUTE:
             return False
-        return target.value == source.value + 1
+
+        if instruction.flows_from:
+            if len(instruction.flows_from) != 1:
+                return False
+            source = instruction.flows_from[0]
+            if source.kind is not AddressKind.ABSOLUTE:
+                return False
+            return target.value == source.value + instruction.length
+
+        # flows_from is filled in by the code-flow recovery pass, so accept a
+        # single fallthrough edge before that pass has run.
+        return target.value == instruction.address + instruction.length
 
     @staticmethod
     def _modifies_rsp(instruction: Instruction) -> bool:
