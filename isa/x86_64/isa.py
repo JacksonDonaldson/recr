@@ -9,7 +9,7 @@ different stack pointer.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Iterator, Optional
+from typing import TYPE_CHECKING, Iterator
 
 from ir import (
     Address,
@@ -206,16 +206,28 @@ class X86_64ISA(ISA):
 
     def try_interpret_as_pointer(
         self, binary: "Binary", offset: int
-    ) -> Optional[Address]:
+    ) -> set[Address]:
+        """Return 64-bit and 32-bit little-endian readings at ``offset``.
+
+        Each width is read independently so a 32-bit value near the end of a
+        mapped range is still recovered when a full pointer-sized read would
+        cross into unmapped memory.  Unreadable widths contribute nothing.
+        """
+        pointers: set[Address] = set()
         if offset < 0:
-            return None
-        try:
-            data = binary.read(offset, self.pointer_size)
-        except ValueError:
-            return None
-        if len(data) != self.pointer_size:
-            return None
-        return Address.absolute(int.from_bytes(data, "little", signed=False))
+            return pointers
+
+        for size in (self.pointer_size, 4):
+            try:
+                data = binary.read(offset, size)
+            except ValueError:
+                continue
+            if len(data) != size:
+                continue
+            pointers.add(
+                Address.absolute(int.from_bytes(data, "little", signed=False))
+            )
+        return pointers
 
     def call_instruction_length(self) -> int:
         raise NotImplementedError

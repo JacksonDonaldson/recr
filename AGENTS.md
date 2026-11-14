@@ -109,8 +109,10 @@ Implemented:
   rejected. Trap and control-transfer mnemonics that the decoder classifies as
   arithmetic are rejected explicitly. `disassemble` clamps its read to the
   mapped range so instructions at the end of a segment still decode.
-  `try_interpret_as_pointer` reads a little-endian pointer-sized value and
-  returns `None` for unmapped offsets. NASM-generated tests cover every Intel
+  `try_interpret_as_pointer` reads the bytes at an offset as both
+  little-endian 64-bit and 32-bit addresses and returns every readable value,
+  which lets xref recovery find immediates such as `_start`'s
+  `mov rdi, main`. NASM-generated tests cover every Intel
   memory form in the corpus across RSP/ESP/RBP/SIB and disp8/disp32 variants.
   `set_instruction_target` and the call/ret length helpers are still stubs.
 - `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
@@ -144,9 +146,9 @@ Implemented:
   the result, including incoming and outgoing references, to stdout.
   `test/uplift_sample.py` uplifts and prints every sample function;
   `test/test_uplifter.py` covers the sample and rejection paths.
-- `Uplifter.build_xrefs()` scans every mapped virtual address for pointer-sized
-  values and successfully decoded control-flow instructions that target a known
-  function entry, then records unique incoming references. Ordinary
+- `Uplifter.build_xrefs()` scans every mapped virtual address for 64-bit and
+  32-bit values and successfully decoded control-flow instructions that target a
+  known function entry, then records unique incoming references. Ordinary
   fallthrough edges are not cross-references.
 - `optimizers/function_remover.py` implements `run_optimizer`: any function with
   no incoming references is dropped from the uplifter's function map and its

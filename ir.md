@@ -97,7 +97,12 @@ ISA contract:
         function set_instruction_target(instruction, new_target_address) -> Instruction
         function can_encode(instruction, address) -> bool
         function required_length(instruction, address) -> uint
-        function try_interpret_as_pointer(binary, offset) -> Address | None
+        function try_interpret_as_pointer(binary, offset) -> set[Address]
+
+        try_interpret_as_pointer reads little-endian pointer-sized and 32-bit
+        values at offset, and returns every Address that could be read.  A
+        width whose read would cross unmapped memory is omitted, so an offset
+        near the end of a mapped range can still yield a 32-bit address.
 
         disassemble fills flows_to:
             straight-line instruction: [address + length]

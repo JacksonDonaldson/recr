@@ -96,19 +96,30 @@ def test_position_independent_instruction_encodes_anywhere(
     assert x86_64_isa.required_length(instruction, 0x100000000) == 1
 
 
-def test_try_interpret_as_pointer_reads_little_endian_pointer(
+def test_try_interpret_as_pointer_reads_both_widths(
     x86_64_isa: X86_64ISA,
 ) -> None:
     binary = _BoundedBinary(
         b"\x56\x11\x40\x00\x00\x00\x00\x00" + b"\xff" * 8
     )
 
-    assert x86_64_isa.try_interpret_as_pointer(binary, 0) == Address.absolute(
-        0x401156
-    )
-    assert x86_64_isa.try_interpret_as_pointer(binary, 8) == Address.absolute(
-        0xFFFFFFFFFFFFFFFF
-    )
+    assert x86_64_isa.try_interpret_as_pointer(binary, 0) == {
+        Address.absolute(0x401156)
+    }
+    assert x86_64_isa.try_interpret_as_pointer(binary, 8) == {
+        Address.absolute(0xFFFFFFFFFFFFFFFF),
+        Address.absolute(0xFFFFFFFF),
+    }
+
+
+def test_try_interpret_as_pointer_falls_back_to_32_bits(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    binary = _BoundedBinary(b"\0" * 4 + b"\x56\x11\x40\x00")
+
+    assert x86_64_isa.try_interpret_as_pointer(binary, 4) == {
+        Address.absolute(0x401156)
+    }
 
 
 def test_try_interpret_as_pointer_rejects_unmapped_offsets(
@@ -116,9 +127,9 @@ def test_try_interpret_as_pointer_rejects_unmapped_offsets(
 ) -> None:
     binary = _BoundedBinary(b"\0" * 8)
 
-    assert x86_64_isa.try_interpret_as_pointer(binary, -1) is None
-    assert x86_64_isa.try_interpret_as_pointer(binary, 1) is None
-    assert x86_64_isa.try_interpret_as_pointer(binary, 8) is None
+    assert x86_64_isa.try_interpret_as_pointer(binary, -1) == set()
+    assert x86_64_isa.try_interpret_as_pointer(binary, 5) == set()
+    assert x86_64_isa.try_interpret_as_pointer(binary, 8) == set()
 
 
 def test_is_outlinable_accepts_empty_flows(

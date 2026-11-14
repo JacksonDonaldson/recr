@@ -79,18 +79,19 @@ class Uplifter:
                 self._record_flow_references(address)
 
     def _record_pointer_reference(self, address: int) -> None:
-        pointer = self.isa.try_interpret_as_pointer(self.binary, address)
-        if pointer is None or pointer.kind is not AddressKind.ABSOLUTE:
-            return
+        pointers = self.isa.try_interpret_as_pointer(self.binary, address)
+        for pointer in pointers:
+            if pointer.kind is not AddressKind.ABSOLUTE:
+                continue
 
-        function = self.function_map.get(pointer)
-        if function is None:
-            return
+            function = self.function_map.get(pointer)
+            if function is None:
+                continue
 
-        _append_unique(
-            function.incoming_references,
-            Reference(Address.absolute(address), pointer),
-        )
+            _append_unique(
+                function.incoming_references,
+                Reference(Address.absolute(address), pointer),
+            )
 
     def _record_flow_references(self, address: int) -> None:
         try:

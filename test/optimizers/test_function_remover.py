@@ -50,7 +50,7 @@ def test_unreferenced_function_is_marked_as_free_space(
 def test_referenced_functions_remain_live(optimized_sample) -> None:
     parsed, uplifter, _ = optimized_sample
 
-    for name in ("add", "divide_safe", "<EXTERNAL>::printf"):
+    for name in ("add", "divide_safe", "main", "<EXTERNAL>::printf"):
         function = _function(parsed, name)
         assert function.incoming_references
         entry = Address.absolute(function.start_address)

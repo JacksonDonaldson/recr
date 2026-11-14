@@ -375,6 +375,21 @@ def test_build_xrefs_records_pointer_references(cross_referenced_sample) -> None
     )
 
 
+def test_build_xrefs_records_32_bit_immediate_references(
+    cross_referenced_sample,
+) -> None:
+    parsed, _, _ = cross_referenced_sample
+    main = _function(parsed, "main")
+
+    # _start loads main's address with ``mov rdi, 0x40182b``.  That is a
+    # 32-bit immediate, not a pointer-sized value, so it is recovered from the
+    # 32-bit interpretation of the instruction bytes.
+    assert (
+        Reference(Address.absolute(0x40108B), Address.absolute(0x40182B))
+        in main.incoming_references
+    )
+
+
 def test_build_xrefs_ignores_fallthrough_edges(
     cross_referenced_sample,
 ) -> None:

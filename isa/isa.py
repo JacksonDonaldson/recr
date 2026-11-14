@@ -7,7 +7,7 @@ concrete ISA implements; see :mod:`isa.x86_64` for the first implementation.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar, Optional
+from typing import TYPE_CHECKING, ClassVar
 
 from ir import Address, Instruction
 
@@ -71,8 +71,8 @@ class ISA(ABC):
     @abstractmethod
     def try_interpret_as_pointer(
         self, binary: "Binary", offset: int
-    ) -> Optional[Address]:
-        """Interpret bytes at ``offset`` as a pointer, if possible."""
+    ) -> set[Address]:
+        """Interpret bytes at ``offset`` as 64-bit and 32-bit addresses."""
         raise NotImplementedError
 
     @abstractmethod

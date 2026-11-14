@@ -44,7 +44,7 @@ def test_pipeline_uplifts_everything_then_exits_with_error(
     assert "recovering cross-references" in caplog.text
     assert "incoming reference(s)" in caplog.text
     assert "removing unreferenced functions" in caplog.text
-    assert "marked 3 function(s) as free space" in caplog.text
+    assert "marked 2 function(s) as free space" in caplog.text
     assert (
         "free space 0x401af7 (0x34 bytes): "
         "unreferenced function unreferenced_function"
