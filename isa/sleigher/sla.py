@@ -8,13 +8,16 @@ runtime model that codezip needs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
+import hashlib
 from pathlib import Path
+import pickle
 import re
 import zlib
 from typing import Any
 
+import cache
 from ir import (
     Address,
     AddressKind,
@@ -510,6 +513,74 @@ def decode_sla(path: str | Path) -> SlaElement:
     return root
 
 
+# Bump when the cached state layout changes.  The version is part of the key,
+# so an old entry is ignored rather than misread.
+_CACHE_VERSION = b"codezip-sla-1"
+
+
+def _source_digest() -> str:
+    """Return a digest of this module, which gives the cached state meaning."""
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def _cache_key(data: bytes) -> str:
+    """Return the cache key for a specification's raw bytes.
+
+    The key is a SHA-256 over the bytes that get parsed, so a changed
+    specification never reuses an entry.  This module's own digest is stored
+    in the entry and checked on load, so a changed parser reuses the file but
+    rewrites its contents.
+    """
+    digest = hashlib.sha256()
+    digest.update(_CACHE_VERSION)
+    digest.update(data)
+    return digest.hexdigest()
+
+
+def _load_cached_state(path: Path) -> dict[str, Any] | None:
+    """Return a cached parse state, or ``None`` if it cannot be used.
+
+    A damaged or stale entry is not an error: the caller parses the
+    specification again and rewrites the entry.
+    """
+    try:
+        with path.open("rb") as stream:
+            payload = pickle.load(stream)
+    except (
+        OSError,
+        EOFError,
+        ValueError,
+        AttributeError,
+        ImportError,
+        pickle.UnpicklingError,
+    ):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("version") != _CACHE_VERSION:
+        return None
+    if payload.get("source") != _source_digest():
+        return None
+    state = payload.get("state")
+    return state if isinstance(state, dict) else None
+
+
+def _store_cached_state(path: Path, state: dict[str, Any]) -> None:
+    def write(temporary: Path) -> None:
+        with temporary.open("wb") as stream:
+            pickle.dump(
+                {
+                    "version": _CACHE_VERSION,
+                    "source": _source_digest(),
+                    "state": state,
+                },
+                stream,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+
+    cache.replace(path, write)
+
+
 @dataclass(frozen=True)
 class AddressSpaceInfo:
     index: int
@@ -622,7 +693,6 @@ class Constructor:
     print_pieces: list[tuple[str, Any]]
     context_ops: list[ContextOp]
     template: ConstructTpl | None
-    raw: SlaElement
 
 
 @dataclass
@@ -1056,80 +1126,121 @@ def _parse_decision(element: SlaElement) -> DecisionNode:
     return node
 
 
-def _parse_const(element: SlaElement) -> ConstTpl:
+def _parse_const(element: SlaElement, interner: "_Interner") -> ConstTpl:
     a = element.attributes
     if element.id == E_CONST_REAL:
-        return ConstTpl("real", int(a[A_VAL]))
-    if element.id == E_CONST_HANDLE:
-        return ConstTpl(
+        const = ConstTpl("real", int(a[A_VAL]))
+    elif element.id == E_CONST_HANDLE:
+        const = ConstTpl(
             "handle",
             int(a[A_VAL]),
             int(a[A_S]),
             int(a.get(A_PLUS, 0)),
         )
-    if element.id == E_CONST_SPACEID:
+    elif element.id == E_CONST_SPACEID:
         space = a[A_SPACE]
         if not isinstance(space, tuple) or space[0] != "space":
             raise SlaError("CONST_SPACEID is missing its address space")
-        return ConstTpl("spaceid", int(space[1]))
-    if element.id == E_CONST_START:
-        return ConstTpl("start")
-    if element.id == E_CONST_NEXT:
-        return ConstTpl("next")
-    if element.id == E_CONST_NEXT2:
-        return ConstTpl("next2")
-    if element.id == E_CONST_CURSPACE:
-        return ConstTpl("curspace")
-    if element.id == E_CONST_CURSPACE_SIZE:
-        return ConstTpl("curspace_size")
-    if element.id == E_CONST_RELATIVE:
-        return ConstTpl("relative", int(a[A_VAL]))
-    if element.id == E_CONST_FLOWREF:
-        return ConstTpl("flowref")
-    if element.id == E_CONST_FLOWREF_SIZE:
-        return ConstTpl("flowref_size")
-    if element.id == E_CONST_FLOWDEST:
-        return ConstTpl("flowdest")
-    if element.id == E_CONST_FLOWDEST_SIZE:
-        return ConstTpl("flowdest_size")
-    raise SlaError(f"unsupported constant element {element.id}")
+        const = ConstTpl("spaceid", int(space[1]))
+    elif element.id == E_CONST_START:
+        const = ConstTpl("start")
+    elif element.id == E_CONST_NEXT:
+        const = ConstTpl("next")
+    elif element.id == E_CONST_NEXT2:
+        const = ConstTpl("next2")
+    elif element.id == E_CONST_CURSPACE:
+        const = ConstTpl("curspace")
+    elif element.id == E_CONST_CURSPACE_SIZE:
+        const = ConstTpl("curspace_size")
+    elif element.id == E_CONST_RELATIVE:
+        const = ConstTpl("relative", int(a[A_VAL]))
+    elif element.id == E_CONST_FLOWREF:
+        const = ConstTpl("flowref")
+    elif element.id == E_CONST_FLOWREF_SIZE:
+        const = ConstTpl("flowref_size")
+    elif element.id == E_CONST_FLOWDEST:
+        const = ConstTpl("flowdest")
+    elif element.id == E_CONST_FLOWDEST_SIZE:
+        const = ConstTpl("flowdest_size")
+    else:
+        raise SlaError(f"unsupported constant element {element.id}")
+    return interner.const(const)
 
 
-def _parse_varnode_tpl(element: SlaElement) -> VarnodeTpl:
+def _parse_varnode_tpl(element: SlaElement, interner: "_Interner") -> VarnodeTpl:
     if element.id != E_VARNODE_TPL or len(element.children) != 3:
         raise SlaError("invalid VARNODE_TPL")
-    return VarnodeTpl(
-        _parse_const(element.children[0]),
-        _parse_const(element.children[1]),
-        _parse_const(element.children[2]),
+    return interner.varnode(
+        VarnodeTpl(
+            _parse_const(element.children[0], interner),
+            _parse_const(element.children[1], interner),
+            _parse_const(element.children[2], interner),
+        )
     )
 
 
-def _parse_op_tpl(element: SlaElement) -> OpTpl:
+def _parse_op_tpl(element: SlaElement, interner: "_Interner") -> OpTpl:
     children = iter(element.children)
     first = next(children)
-    output = None if first.id == E_NULL else _parse_varnode_tpl(first)
-    inputs = tuple(_parse_varnode_tpl(child) for child in children)
-    return OpTpl(int(element.attributes[A_CODE]), output, inputs)
+    output = (
+        None if first.id == E_NULL else _parse_varnode_tpl(first, interner)
+    )
+    inputs = tuple(_parse_varnode_tpl(child, interner) for child in children)
+    return interner.op(OpTpl(int(element.attributes[A_CODE]), output, inputs))
 
 
-def _parse_handle_tpl(element: SlaElement) -> HandleTpl:
+def _parse_handle_tpl(element: SlaElement, interner: "_Interner") -> HandleTpl:
     if element.id != E_HANDLE_TPL or len(element.children) != 7:
         raise SlaError("invalid HANDLE_TPL")
-    return HandleTpl(*(_parse_const(child) for child in element.children))
+    return interner.handle(
+        HandleTpl(*(_parse_const(child, interner) for child in element.children))
+    )
 
 
-def _parse_construct_tpl(element: SlaElement) -> ConstructTpl | None:
+def _parse_construct_tpl(
+    element: SlaElement, interner: "_Interner"
+) -> ConstructTpl | None:
     if A_SECTION in element.attributes:
         return None
     result = None
     ops: list[OpTpl] = []
     for child in element.children:
         if child.id == E_HANDLE_TPL:
-            result = _parse_handle_tpl(child)
+            result = _parse_handle_tpl(child, interner)
         elif child.id == E_OP_TPL:
-            ops.append(_parse_op_tpl(child))
-    return ConstructTpl(result, tuple(ops))
+            ops.append(_parse_op_tpl(child, interner))
+    return interner.template(ConstructTpl(result, tuple(ops)))
+
+
+class _Interner:
+    """Share identical P-code template objects across constructors.
+
+    The specification repeats the same templates thousands of times.  Sharing
+    them keeps the parsed graph small, which keeps the on-disk cache compact
+    and the parse allocation-light.
+    """
+
+    def __init__(self) -> None:
+        self._consts: dict[ConstTpl, ConstTpl] = {}
+        self._varnodes: dict[VarnodeTpl, VarnodeTpl] = {}
+        self._handles: dict[HandleTpl, HandleTpl] = {}
+        self._ops: dict[OpTpl, OpTpl] = {}
+        self._templates: dict[ConstructTpl, ConstructTpl] = {}
+
+    def const(self, value: ConstTpl) -> ConstTpl:
+        return self._consts.setdefault(value, value)
+
+    def varnode(self, value: VarnodeTpl) -> VarnodeTpl:
+        return self._varnodes.setdefault(value, value)
+
+    def handle(self, value: HandleTpl) -> HandleTpl:
+        return self._handles.setdefault(value, value)
+
+    def op(self, value: OpTpl) -> OpTpl:
+        return self._ops.setdefault(value, value)
+
+    def template(self, value: ConstructTpl) -> ConstructTpl:
+        return self._templates.setdefault(value, value)
 
 
 class SlaSpec:
@@ -1142,8 +1253,42 @@ class SlaSpec:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
-        self.root = decode_sla(self.path)
-        self.spaces: dict[int, AddressSpaceInfo] = {}
+        data = self.path.read_bytes()
+        entry = cache.entry_path("sla", _cache_key(data), ".pickle")
+        cached = _load_cached_state(entry)
+        if cached is None:
+            self._parse(decode_sla(self.path))
+            try:
+                _store_cached_state(
+                    entry,
+                    {
+                        key: value
+                        for key, value in self.__dict__.items()
+                        if key != "path"
+                    },
+                )
+            except OSError:
+                # The cache is an optimization; an unwritable temporary
+                # directory must not make parsing fail.
+                pass
+        else:
+            self.__dict__.update(cached)
+        self._resolve_cached = lru_cache(maxsize=self._DECODE_CACHE_LIMIT)(
+            self._resolve_uncached
+        )
+        self._state_effects_cache: dict[
+            tuple[bytes, int],
+            tuple[tuple[StateSpace, ...], tuple[StateSpace, ...]],
+        ] = {}
+
+    @classmethod
+    def from_path(cls, path: str | Path) -> "SlaSpec":
+        return cls(path)
+
+    def _parse(self, root: SlaElement) -> None:
+        self.spaces: dict[int, AddressSpaceInfo] = {
+            0: AddressSpaceInfo(0, "const", 8, 1, False, "const")
+        }
         self.symbols: dict[int, SymbolInfo] = {}
         self.varnodes: dict[int, VarnodeInfo] = {}
         self.operands: dict[int, OperandInfo] = {}
@@ -1158,24 +1303,9 @@ class SlaSpec:
         self._unknown_transfer_clobbers: tuple[StateSpace, ...] | None = None
         self._call_argument_state: tuple[StateSpace, ...] | None = None
         self.default_space = "ram"
-        self.root_subtable: Subtable | None = None
-        self._parse()
-        self._resolve_cached = lru_cache(maxsize=self._DECODE_CACHE_LIMIT)(
-            self._resolve_uncached
-        )
-        self._state_effects_cache: dict[
-            tuple[bytes, int],
-            tuple[tuple[StateSpace, ...], tuple[StateSpace, ...]],
-        ] = {}
 
-    @classmethod
-    def from_path(cls, path: str | Path) -> "SlaSpec":
-        return cls(path)
-
-    def _parse(self) -> None:
-        self.spaces[0] = AddressSpaceInfo(0, "const", 8, 1, False, "const")
         symbol_table: SlaElement | None = None
-        for child in self.root.children:
+        for child in root.children:
             if child.id == E_SPACES:
                 self._parse_spaces(child)
             elif child.id == E_SYMBOL_TABLE:
@@ -1198,6 +1328,13 @@ class SlaSpec:
         )
         if self.root_subtable is None:
             raise SlaError("SLA specification has no 'instruction' subtable")
+
+        # The element tree is a parse-time intermediate.  Dropping the last
+        # references to it keeps a cache hit and a fresh parse identical and
+        # keeps the cached payload small.
+        for symbol_id, symbol in self.symbols.items():
+            if symbol.content is not None:
+                self.symbols[symbol_id] = replace(symbol, content=None)
 
     def _parse_spaces(self, element: SlaElement) -> None:
         self.default_space = str(element.attributes.get(A_DEFAULTSPACE, "ram"))
@@ -1374,6 +1511,7 @@ class SlaSpec:
         return self._call_argument_state
 
     def _parse_subtables(self) -> None:
+        interner = _Interner()
         for symbol_id, symbol in self.symbols.items():
             content = symbol.content
             if symbol.kind != E_SUBTABLE_SYM_HEAD or content is None:
@@ -1384,7 +1522,7 @@ class SlaSpec:
                 (c for c in content.children if c.id == E_CONSTRUCTOR)
             ):
                 subtable.constructors.append(
-                    self._parse_constructor(index, symbol_id, child)
+                    self._parse_constructor(index, symbol_id, child, interner)
                 )
             decision = next(
                 (c for c in content.children if c.id == E_DECISION), None
@@ -1394,7 +1532,11 @@ class SlaSpec:
             self.subtables[symbol_id] = subtable
 
     def _parse_constructor(
-        self, index: int, parent_id: int, element: SlaElement
+        self,
+        index: int,
+        parent_id: int,
+        element: SlaElement,
+        interner: _Interner,
     ) -> Constructor:
         a = element.attributes
         operands = [
@@ -1421,7 +1563,7 @@ class SlaSpec:
                     )
                 )
             elif child.id == E_CONSTRUCT_TPL:
-                parsed = _parse_construct_tpl(child)
+                parsed = _parse_construct_tpl(child, interner)
                 if parsed is not None:
                     template = parsed
         return Constructor(
@@ -1432,7 +1574,6 @@ class SlaSpec:
             print_pieces=pieces,
             context_ops=context_ops,
             template=template,
-            raw=element,
         )
 
     def build_context(self, defaults: dict[str, int]) -> int:

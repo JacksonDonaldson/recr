@@ -92,6 +92,9 @@ ISA contract:
     class ISA:
         function disassemble(binary, address) -> Instruction
         function decode_flows(binary, address) -> DecodedFlow
+        function decode_range(binary, start, end) -> Iterator[DecodedFlow | None]
+        function decode_control_flow_range(binary, start, end)
+                -> Iterator[DecodedFlow]
         function is_outlinable(instruction) -> bool
         function add_extra_stack_space(instruction, pointer_size) -> Instruction
         function relocate_instruction(instruction, new_base_address) -> Instruction
@@ -99,6 +102,8 @@ ISA contract:
         function can_encode(instruction, address) -> bool
         function required_length(instruction, address) -> uint
         function try_interpret_as_pointer(binary, offset) -> set[Address]
+        function iter_pointer_references(binary, start, end, targets)
+                -> Iterator[(address, target)]
 
         try_interpret_as_pointer reads little-endian pointer-sized and 32-bit
         values at offset, and returns every Address that could be read.  A
@@ -111,6 +116,20 @@ ISA contract:
         scan only needs control flow.  The reported fields are identical to
         disassemble's, and the same ValueError is raised when no instruction
         decodes.
+
+        decode_range decodes one instruction at every address in [start, end),
+        yielding None where nothing decodes.  It is the whole-image form of
+        decode_flows: element i is decode_flows(start + i) or None.  An ISA may
+        override it to batch the work, but the results must not differ.
+
+        decode_control_flow_range is decode_range restricted to the flows that
+        can produce a cross-reference.  Straight-line instructions are dropped
+        because their only flow is the fallthrough, which is never a reference.
+        It must never drop a flow the default filter would have kept.
+
+        iter_pointer_references yields (address, target) for every address in
+        [start, end) whose pointer readings include a value in targets.  It
+        matches calling try_interpret_as_pointer at each address.
 
         disassemble fills flows_to:
             straight-line instruction: [address + length]

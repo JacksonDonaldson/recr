@@ -39,6 +39,7 @@ class ELF(Binary):
         self._data = bytearray(self.path.read_bytes())
         self._segments = self._parse_segments()
         self._last_segment: _LoadSegment | None = None
+        self._revision = 0
 
     @classmethod
     def open(cls, path: str | Path) -> "ELF":
@@ -106,6 +107,23 @@ class ELF(Binary):
                 self._segments, key=lambda segment: segment.virtual_address
             )
         ]
+
+    def mapped_segments(self) -> list[tuple[int, int, int, int]]:
+        return [
+            (
+                segment.virtual_address,
+                segment.file_offset,
+                segment.file_size,
+                segment.memory_size,
+            )
+            for segment in self._segments
+        ]
+
+    def image_bytes(self) -> bytes:
+        return bytes(self._data)
+
+    def image_revision(self) -> int:
+        return self._revision
 
     def read(self, address: int, length: int) -> bytes:
         if length < 0:
@@ -183,6 +201,7 @@ class ELF(Binary):
 
         start = segment.file_offset + offset
         self._data[start : start + len(data)] = data
+        self._revision += 1
 
     def write_to_disk(self, path: str | Path) -> None:
         """Apply metadata fixups and write the in-memory image to ``path``.

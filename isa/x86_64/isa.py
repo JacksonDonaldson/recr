@@ -9,7 +9,7 @@ different stack pointer.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, AbstractSet, Iterator
 
 from ir import (
     Address,
@@ -24,6 +24,9 @@ from isa.sleigher.sla import ResolvedConstructor, ResolvedOperand
 
 if TYPE_CHECKING:
     from binary.binary import Binary
+    # ``gpu`` is imported lazily inside the range methods: it pulls in the
+    # SLEIGH parser, which imports this package.
+    import gpu
 
 
 class _NotAdjustable(ValueError):
@@ -112,6 +115,10 @@ class X86_64ISA(ISA):
 
     def __init__(self) -> None:
         self._sleigher = X86Sleigher()
+        self._gpu_tables: gpu.GpuTables | None = None
+        self._gpu_device: gpu.Device | None = None
+        self._gpu_binary: object | None = None
+        self._gpu_revision = -1
 
     def disassemble(self, binary: "Binary", address: int) -> Instruction:
         data = self._read_instruction_bytes(binary, address)
@@ -126,6 +133,178 @@ class X86_64ISA(ISA):
         if flow is None:
             raise ValueError(f"cannot decode instruction at {address:#x}")
         return flow
+
+    # ------------------------------------------------------------ range scans
+
+    # Addresses are handed to the device in batches so the scratch buffers stay
+    # small on very large images.
+    _RANGE_CHUNK = 1 << 20
+
+    def tables(self) -> gpu.GpuTables:
+        """Return the flattened decode tables for this specification."""
+        import gpu
+
+        if self._gpu_tables is None:
+            self._gpu_tables = gpu.build_tables(self._sleigher.spec)
+        return self._gpu_tables
+
+    def device(self, binary: "Binary") -> gpu.Device | None:
+        """Return a CUDA device holding ``binary``, or ``None``.
+
+        The device caches the image, so it is rebuilt whenever the binary is
+        patched.  Anything that cannot be uploaded falls back to the CPU.
+        """
+        import gpu
+
+        if not hasattr(binary, "mapped_segments") or not gpu.available():
+            return None
+        revision = binary.image_revision()
+        if self._gpu_binary is binary and self._gpu_revision == revision:
+            return self._gpu_device
+
+        self._gpu_device = None
+        self._gpu_binary = None
+        try:
+            segments = [
+                gpu.Segment(*values) for values in binary.mapped_segments()
+            ]
+            device = gpu.Device(
+                self.tables().blob, binary.image_bytes(), segments
+            )
+        except (gpu.BackendError, ValueError):
+            return None
+
+        self._gpu_device = device
+        self._gpu_binary = binary
+        self._gpu_revision = revision
+        return device
+
+    def _gpu_chunks(
+        self, device: gpu.Device, start: int, end: int
+    ) -> Iterator[tuple]:
+        tables = self.tables()
+        context = self._sleigher.context
+        position = start
+        while position < end:
+            count = min(self._RANGE_CHUNK, end - position)
+            avail = device.check_addresses(position, count)
+            batch = device.decode_range(
+                position, count, avail, tables.root, context
+            )
+            yield (position,) + batch
+            position += count
+
+    @staticmethod
+    def _flow_from(
+        position: int, index: int, types, lengths, targets, kinds
+    ) -> DecodedFlow:
+        """Build one flow from the kernel's per-address columns."""
+        import gpu
+
+        length = lengths[index * 2] | (lengths[index * 2 + 1] << 8)
+        values: list[Address] = []
+        for slot in (0, 1):
+            kind = kinds[index * 2 + slot]
+            if kind == gpu.KIND_NONE:
+                continue
+            if kind == gpu.KIND_ABSOLUTE:
+                values.append(Address.absolute(targets[index * 2 + slot]))
+            elif kind == gpu.KIND_UNK_LOCAL:
+                values.append(Address.unknown_local())
+            else:
+                values.append(Address.unknown_nonlocal())
+        return DecodedFlow(
+            address=position + index,
+            length=length,
+            type=gpu.tables.TYPE_FROM_CODE[types[index]],
+            flows_to=tuple(values),
+        )
+
+    def decode_range(
+        self, binary: "Binary", start: int, end: int
+    ) -> Iterator[DecodedFlow | None]:
+        import gpu
+
+        device = self.device(binary)
+        if device is None:
+            yield from super().decode_range(binary, start, end)
+            return
+
+        tables = self.tables()
+        for position, status, types, lengths, targets, kinds in (
+            self._gpu_chunks(device, start, end)
+        ):
+            for index, state in enumerate(status):
+                address = position + index
+                if state == gpu.STATUS_DEFER:
+                    yield self._defer(binary, address)
+                    continue
+                if state == gpu.STATUS_UNDECODED:
+                    yield None
+                    continue
+                yield self._flow_from(
+                    position, index, types, lengths, targets, kinds
+                )
+
+    def _defer(self, binary: "Binary", address: int) -> DecodedFlow | None:
+        data = self._read_instruction_bytes(binary, address)
+        return self._sleigher.parse_flow(data, address)
+
+    def decode_control_flow_range(
+        self, binary: "Binary", start: int, end: int
+    ) -> Iterator[DecodedFlow]:
+        import gpu
+
+        device = self.device(binary)
+        if device is None:
+            yield from super().decode_control_flow_range(binary, start, end)
+            return
+
+        for position, status, types, lengths, targets, kinds in (
+            self._gpu_chunks(device, start, end)
+        ):
+            index = status.find(gpu.STATUS_FLOW)
+            while index != -1:
+                yield self._flow_from(
+                    position, index, types, lengths, targets, kinds
+                )
+                index = status.find(gpu.STATUS_FLOW, index + 1)
+
+            index = status.find(gpu.STATUS_DEFER)
+            while index != -1:
+                flow = self._defer(binary, position + index)
+                if flow is not None and flow.type not in (
+                    InstructionType.ARITHMETIC,
+                    InstructionType.NOP,
+                ):
+                    yield flow
+                index = status.find(gpu.STATUS_DEFER, index + 1)
+
+    def iter_pointer_references(
+        self,
+        binary: "Binary",
+        start: int,
+        end: int,
+        targets: AbstractSet[int],
+    ) -> Iterator[tuple[int, int]]:
+        device = self.device(binary)
+        if not targets:
+            return
+        if device is None:
+            yield from super().iter_pointer_references(
+                binary, start, end, targets
+            )
+            return
+
+        entries = sorted(targets)
+        position = start
+        while position < end:
+            count = min(self._RANGE_CHUNK, end - position)
+            for address, target in sorted(
+                device.scan_pointers(position, count, entries)
+            ):
+                yield address, target
+            position += count
 
     def is_outlinable(self, instruction: Instruction) -> bool:
         if instruction.type in self._NON_OUTLINABLE_TYPES:

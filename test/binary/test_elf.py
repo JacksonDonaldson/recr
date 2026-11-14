@@ -64,6 +64,36 @@ def test_mapped_ranges_reports_load_segments(sample_elf: Path) -> None:
     ]
 
 
+def test_mapped_segments_describe_the_file_image(sample_elf: Path) -> None:
+    binary = Binary(sample_elf)
+
+    segments = binary.mapped_segments()
+
+    assert [segment[0] for segment in segments] == [
+        0x400000,
+        0x401000,
+        0x402000,
+        0x403DF8,
+    ]
+    for virtual_address, file_offset, file_size, memory_size in segments:
+        assert memory_size >= file_size
+        assert file_offset + file_size <= len(binary.image_bytes())
+        # The first byte of a segment reads back from its file offset.
+        assert binary.read(virtual_address, 1) == binary.image_bytes()[
+            file_offset : file_offset + 1
+        ]
+
+
+def test_image_revision_changes_only_on_write(sample_elf: Path) -> None:
+    binary = Binary(sample_elf)
+
+    before = binary.image_revision()
+    binary.write(0x401000, b"\x90")
+
+    assert binary.image_revision() == before + 1
+    assert binary.image_bytes()[binary.virtual_to_file(0x401000)] == 0x90
+
+
 
 def test_read_zero_fills_bss(sample_elf: Path) -> None:
     binary = Binary(sample_elf)

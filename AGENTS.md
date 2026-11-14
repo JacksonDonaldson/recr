@@ -78,8 +78,10 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 | `input_parser.py` | Select and run an input parser |
 | `parsers/` | YAML and Ghidra XML exports |
 | `ir.py` | IR data model |
+| `cache.py` | Shared on-disk cache root for the CUDA build and SLA parse |
 | `uplifter.py` | Bytes → instructions → basic blocks → CFG |
 | `isa/` | ISA interface and x86-64 backend |
+| `gpu/` | Optional CUDA backend for whole-image range scans |
 | `optimizers/` | Function removal and outlining |
 | `binary/` | ELF, PE, and raw binary access |
 | `verify.py` | Static and dynamic equivalence checks |
@@ -96,9 +98,10 @@ Implemented:
   mapping, reads with BSS zero-fill, in-memory patching via
   `write(address, data)`, `write_to_disk(path)` (metadata fixups are currently
   a no-op), and `mapped_ranges()` for enumerating loadable virtual-address
-  ranges. `write` rejects unmapped and non-file-backed ranges and never touches
-  the input file. `Binary(path)` routes by magic bytes; PE and raw inputs raise
-  `UnsupportedBinaryFormat` for now.
+  ranges. `mapped_segments()`, `image_bytes()`, and `image_revision()` expose
+  the file image that the CUDA backend uploads. `write` rejects unmapped and
+  non-file-backed ranges and never touches the input file. `Binary(path)` routes
+  by magic bytes; PE and raw inputs raise `UnsupportedBinaryFormat` for now.
 - ELF tests (`test/binary/test_elf.py`) build `test/build/sample` with `make`
   when missing or stale, then verify Ghidra-derived `main` bytes and ELF
   mapping. Fixture-build failures are test failures, not skips.
@@ -138,6 +141,11 @@ Implemented:
   Constructor resolution and state effects are cached per (instruction bytes,
   context); state spaces name register, flag, and memory classes and never
   carry an address, so the state-effect cache is address-independent.
+  The parsed specification is also cached on disk between runs, keyed by a
+  SHA-256 of the raw `.sla` bytes; the entry records the digest of `sla.py`
+  itself, so a changed parser reparses and overwrites the entry. Identical
+  P-code templates are hash-consed during the parse, which keeps the cached
+  state compact.
   Tests cover an opcode matrix, hand-authored state-effect categories for
   partial registers/SIMD/x87/memory/segments, a committed state-effect golden
   for every decodable Intel form, hand-coded audit regressions, malformed or
@@ -159,7 +167,23 @@ Implemented:
   32-bit values and successfully decoded control-flow instructions that target a
   known function entry, then records unique incoming references. The
   instruction scan uses the ISA's flow-only decode, so it does not compute
-  state effects. Ordinary fallthrough edges are not cross-references.
+  state effects. Ordinary fallthrough edges are not cross-references. It uses
+  `ISA.iter_pointer_references` and `ISA.decode_control_flow_range`, which the
+  x86-64 backend batches on the GPU.
+- `gpu/` is an optional CUDA backend for whole-image range scans. `gpu.available()`
+  probes for `nvcc` and a device; `gpu/kernels.cu` is compiled on first use into
+  the system temporary directory, keyed by the source text and compiler version.
+  Without a compiler or device every caller falls back to the CPU path. The
+  kernel is a table interpreter over a flattened copy of the parsed SLEIGH
+  spec (`gpu/tables.py`): decision-tree matching, constructor matching, operand
+  layout, context ops, expression evaluation, nested-subtable recursion, and
+  P-code opcode aggregation all run one thread per address. It also builds the
+  flow targets, so no address is handed back to Python. A second kernel does
+  address checking (contiguous mapped bytes after an address) and a third scans
+  for pointer-sized readings of known function entries. `test/gpu/` compares
+  every mapped address against the per-address CPU decoder, and compares the
+  whole Intel form corpus instruction by instruction (and at every byte of the
+  concatenated corpus); a mismatch is a test failure.
 - `optimizers/function_remover.py` implements `run_optimizer`: any function with
   no incoming references is dropped from the uplifter's function map and its
   whole declared extent is reported as one `FreeSpace` block with a diagnostic.
@@ -200,6 +224,13 @@ Do not assume an unimplemented module works. Add tests as each stub is filled in
 python -m pip install -r requirements.txt
 python -m pytest -q
 ```
+
+CUDA acceleration is optional and needs no Python package: `gpu/` loads a
+shared library built by `nvcc` from `gpu/kernels.cu` with `ctypes`. Tests that
+need it skip when no compiler or device is present. Both the kernel build and
+the parsed SLEIGH specification are cached under the system temporary
+directory (`codezip-cuda/`); delete that directory to force a rebuild or a
+fresh parse.
 
 Use NASM 2.16.02 or newer. The corpus is generated with NASM 3.02; NASM
 2.16.01 emits PTWRITE without the mandatory `F3` prefix (see

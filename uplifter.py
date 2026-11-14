@@ -14,7 +14,7 @@ from ir import (
     InstructionType,
     Reference,
 )
-from isa import ISA, create_isa
+from isa import DecodedFlow, ISA, create_isa
 
 if TYPE_CHECKING:
     from binary.binary import Binary
@@ -76,33 +76,32 @@ class Uplifter:
         if not self.function_map:
             return
 
+        targets = {
+            key.value
+            for key in self.function_map
+            if key.kind is AddressKind.ABSOLUTE
+        }
         for start, size in sorted(self.binary.mapped_ranges()):
-            for address in range(start, start + size):
-                self._record_pointer_reference(address)
-                self._record_flow_references(address)
+            end = start + size
+            for address, target in self.isa.iter_pointer_references(
+                self.binary, start, end, targets
+            ):
+                function = self.function_map.get(Address.absolute(target))
+                if function is None:
+                    continue
+                _append_unique(
+                    function.incoming_references,
+                    Reference(
+                        Address.absolute(address), Address.absolute(target)
+                    ),
+                )
+            for flow in self.isa.decode_control_flow_range(
+                self.binary, start, end
+            ):
+                self._record_flow_references(flow)
 
-    def _record_pointer_reference(self, address: int) -> None:
-        pointers = self.isa.try_interpret_as_pointer(self.binary, address)
-        for pointer in pointers:
-            if pointer.kind is not AddressKind.ABSOLUTE:
-                continue
-
-            function = self.function_map.get(pointer)
-            if function is None:
-                continue
-
-            _append_unique(
-                function.incoming_references,
-                Reference(Address.absolute(address), pointer),
-            )
-
-    def _record_flow_references(self, address: int) -> None:
-        try:
-            flow = self.isa.decode_flows(self.binary, address)
-        except ValueError:
-            return
-
-        source = Address.absolute(address)
+    def _record_flow_references(self, flow: "DecodedFlow") -> None:
+        source = Address.absolute(flow.address)
         fallthrough = flow.address + flow.length
         for target in flow.flows_to:
             if target.kind is not AddressKind.ABSOLUTE:

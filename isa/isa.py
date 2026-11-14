@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, AbstractSet, ClassVar, Iterator
 
-from ir import Address, Instruction, InstructionType
+from ir import Address, AddressKind, Instruction, InstructionType
 
 if TYPE_CHECKING:
     from binary.binary import Binary
@@ -51,6 +51,63 @@ class ISA(ABC):
         :class:`ValueError` if no instruction decodes at ``address``.
         """
         raise NotImplementedError
+
+    def decode_range(
+        self, binary: "Binary", start: int, end: int
+    ) -> Iterator[DecodedFlow | None]:
+        """Decode one instruction at every address in ``[start, end)``.
+
+        Yields ``None`` where no instruction decodes.  The default
+        implementation decodes one address at a time; an ISA may override this
+        to batch the work, for example on a GPU.  The yielded flows are
+        identical to calling :meth:`decode_flows` at each address.
+        """
+        for address in range(start, end):
+            try:
+                yield self.decode_flows(binary, address)
+            except ValueError:
+                yield None
+
+    def decode_control_flow_range(
+        self, binary: "Binary", start: int, end: int
+    ) -> Iterator[DecodedFlow]:
+        """Yield the flows in ``[start, end)`` that can produce a reference.
+
+        Straight-line instructions are skipped because their only flow is the
+        fallthrough, which is never a cross-reference.  This is a filter over
+        :meth:`decode_range`, so an override must not yield anything the
+        default would have dropped.
+        """
+        for flow in self.decode_range(binary, start, end):
+            if flow is None:
+                continue
+            if flow.type in (
+                InstructionType.ARITHMETIC,
+                InstructionType.NOP,
+            ):
+                continue
+            yield flow
+
+    def iter_pointer_references(
+        self,
+        binary: "Binary",
+        start: int,
+        end: int,
+        targets: AbstractSet[int],
+    ) -> Iterator[tuple[int, int]]:
+        """Yield ``(address, target)`` for pointer readings of ``targets``.
+
+        ``targets`` holds the addresses that are worth reporting.  The default
+        implementation reads every address; an ISA may override this to scan a
+        whole range at once.
+        """
+        for address in range(start, end):
+            for pointer in self.try_interpret_as_pointer(binary, address):
+                if (
+                    pointer.kind is AddressKind.ABSOLUTE
+                    and pointer.value in targets
+                ):
+                    yield address, pointer.value
 
     @abstractmethod
     def is_outlinable(self, instruction: Instruction) -> bool:

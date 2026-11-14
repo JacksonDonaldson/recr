@@ -54,6 +54,24 @@ class Binary(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def mapped_segments(self) -> list[tuple[int, int, int, int]]:
+        """Return ``(virtual address, file offset, file size, memory size)``.
+
+        These are the loadable segments behind :meth:`mapped_ranges`, in file
+        order.  Bulk scanners use them to map addresses to file bytes.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def image_bytes(self) -> bytes:
+        """Return a snapshot of the current in-memory file image."""
+        raise NotImplementedError
+
+    def image_revision(self) -> int:
+        """Return a counter that changes whenever the image is patched."""
+        return 0
+
+    @abstractmethod
     def read(self, address: int, length: int) -> bytes:
         """Read ``length`` bytes at virtual ``address``."""
         raise NotImplementedError

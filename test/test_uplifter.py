@@ -408,24 +408,26 @@ def test_build_xrefs_never_computes_state_effects(
     uplifted_sample, monkeypatch
 ) -> None:
     parsed, _, uplifter = uplifted_sample
-    decoded = []
-    decode_flows = uplifter.isa.decode_flows
+    scanned = []
+    decode_control_flow_range = uplifter.isa.decode_control_flow_range
 
-    def record_flow(binary, address):
-        decoded.append(address)
-        return decode_flows(binary, address)
+    def record_range(binary, start, end):
+        scanned.append((start, end))
+        return decode_control_flow_range(binary, start, end)
 
     def disassemble(binary, address):
         raise AssertionError(
             "build_xrefs must not compute instruction state effects"
         )
 
-    monkeypatch.setattr(uplifter.isa, "decode_flows", record_flow)
     monkeypatch.setattr(uplifter.isa, "disassemble", disassemble)
+    monkeypatch.setattr(
+        uplifter.isa, "decode_control_flow_range", record_range
+    )
 
     uplifter.build_xrefs()
 
-    assert decoded
+    assert scanned
     add = _function(parsed, "add")
     assert (
         Reference(Address.absolute(0x40189E), Address.absolute(0x401156))
