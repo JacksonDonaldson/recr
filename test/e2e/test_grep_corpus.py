@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from grep_corpus import _curated_cases, _subjects, extract
+import pytest
+
+from grep_corpus import (
+    CorpusError,
+    _curated_cases,
+    _subjects,
+    _write_case_files,
+    extract,
+)
 
 
 def _texts(data: bytes) -> list[tuple[str, bytes]]:
@@ -78,6 +86,45 @@ def test_subjects_drop_directives_and_invalid_utf() -> None:
         b"\xff\xfe",
     ]
     assert _subjects(data, utf=True) == [b"subject one"]
+
+
+def test_write_case_files_supports_hex_and_args(tmp_path) -> None:
+    cases = [
+        {
+            "kind": "special",
+            "mode": "utf",
+            "patterns": ["a"],
+            "subjects_hex": ["61ff0a"],
+            "args": ["-P"],
+        }
+    ]
+
+    (entry,) = _write_case_files(cases, tmp_path, "special", "special")
+
+    mode, pattern, subject, args = entry
+    assert mode == "utf"
+    assert pattern.read_bytes() == b"a\n"
+    assert subject.read_bytes() == b"a\xff\n"
+    assert args == ("-P",)
+    assert pattern.name == "special-0.pat"
+    assert subject.name == "special-0.subj"
+
+
+def test_write_case_files_rejects_bad_cases(tmp_path) -> None:
+    with pytest.raises(CorpusError):
+        _write_case_files(
+            [{"kind": "special", "mode": "bogus", "patterns": ["a"]}],
+            tmp_path,
+            "special",
+            "special",
+        )
+    with pytest.raises(CorpusError):
+        _write_case_files(
+            [{"kind": "special", "mode": "plain", "patterns": ["a", "b"]}],
+            tmp_path,
+            "special",
+            "special",
+        )
 
 
 def test_curated_cases_are_well_formed() -> None:

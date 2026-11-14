@@ -475,6 +475,1810 @@
         "--include=("
       ],
       "note": "s27: command-line --include error message uses ordin(), which the -f path avoids; original prints the error and still matches, mutant crashes"
+    },
+    {
+      "id": "r2-n03",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "b"
+      ],
+      "note": "The mutated byte turns the `jne` of the UTF firstline scan loop (pcre2_match.c:7616) into `05 85 2d ff ff` (add eax,imm32) followed by `ff e9` (invalid FF /5), so the mutant dies with SIGILL. -M sets PCRE2_FIRSTLINE and -N ANY makes IS_NEWLINE take the nltype != NLTYPE_FIXED path that contains this ",
+      "subjects": [
+        "abc"
+      ],
+      "args": [
+        "-M",
+        "-N",
+        "ANY"
+      ]
+    },
+    {
+      "id": "r2-n05",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "a+\\h{2,}"
+      ],
+      "note": "The mutated displacement makes the SCHECK_PARTIAL mb load in the OP_HSPACE mandatory-repeat loop (pcre2_match.c:3620) read -0x8230(%rbp) instead of -0x330(%rbp); the slot is zero, so the following `movzwl 0x68(%rax),%eax` dereferences NULL and the mutant SIGSEGVs. `a+\\h{2,}` on \"aaa \" leaves one cha",
+      "subjects": [
+        "aaa "
+      ]
+    },
+    {
+      "id": "r2-n07",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)\\p{Xps}*?x"
+      ],
+      "note": "0x43d819 is the `(c & 0x10) == 0` dispatch of GETUTF8INC inside GETCHARINCTEST(fc, Feptr) at pcre2_match.c:3912, the lazy PT_PXSPACE repeat loop. The mutated ModRM turns the lead-byte load into `mov 0x10(%rdx),%ebp` followed by `std; ff ff`, so the very first 3- or 4-byte UTF-8 subject character dec",
+      "subjects": [
+        " x"
+      ]
+    },
+    {
+      "id": "r2-n09",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(?s).{2,5}"
+      ],
+      "note": "pcre2_match.c:4750 is the `for (i = Lmin; i < Lmax; i++)` loop of the OP_ALLANY (DOTALL `.`) maximum-repeat case in the UTF repeated-type matcher. The mutant increments the wrong stack slot (-0x2d9 instead of -0x2f4), so `i` never advances: the repeat runs to the end of the subject instead of stoppi",
+      "subjects": [
+        "abcdefgh"
+      ]
+    },
+    {
+      "id": "r2-n10",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "[\\p{L&}a]+"
+      ],
+      "note": "pcre2_compile_class.c:787 computes `set_bit = (chartype == ucp_Lu || ucp_Ll || ucp_Lt)` in _pcre2_update_classbits_8. The mutated `mov $0x3c,%eax` makes the false arm return 60 instead of 0, so every code unit < 256 whose chartype is not Lu/Ll/Lt gets its bit set in the 8-bit class map. `[\\p{L&}a]+`",
+      "subjects": [
+        "1"
+      ]
+    },
+    {
+      "id": "r2-n13",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_START_OPT)\\V{2}"
+      ],
+      "note": "pcre2_match.c:3643 is the switch(*Feptr++) inside the non-UTF minimum-repeat loop for OP_NOT_VSPACE (\\V{2}). The mutated 0x83 -> 0x4f turns `cmp $0xd,%eax` into `cmp $0xd,%r8` (64-bit), and r8 holds match_data, a large pointer, so every character takes the default arm: \\V then matches vertical white",
+      "subjects": [
+        "\u000b\u000b"
+      ]
+    },
+    {
+      "id": "r2-n18",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)\\S+?z"
+      ],
+      "note": "pcre2_match.c:4333 is the `if (MAX_255(fc) && (mb->ctypes[fc] & ctype_space) != 0)` test in the non-UTF minimizing type-repeat loop (reptype == REPTYPE_MIN). The mutated last rel32 byte (0x00 -> 0x48) sends the `je` for a non-whitespace character to 0x445452 instead of 0x440c52, i.e. into the middle",
+      "subjects": [
+        "abz"
+      ]
+    },
+    {
+      "id": "r2-n19",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{sc=Hiragana}{0,3}"
+      ],
+      "note": "pcre2_match.c:4438 is GETCHARLENTEST in the maximising PT_SC (\\p{sc=...}) repeat loop. The mutated REX.W prefix 0x48 becomes 0xc9 (leave) at the start of the 3-byte UTF-8 decode, so the match frame is torn down and the following loads run on the caller's frame; the process SIGSEGVs. Any 3-byte chara",
+      "subjects": [
+        "ああ"
+      ]
+    },
+    {
+      "id": "r2-n20",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?[ [\\p{Lu}] ^ [\\p{Ll}] ]){2,5}Z"
+      ],
+      "note": "pcre2_match.c:2466 advances Fecode by 1 + 2*IMM2_SIZE after an OP_ECLASS OP_CRRANGE repeat. The mutated disp8 0x05 -> 0xaf moves Fecode 81 bytes backwards into the compiled pattern, so the remainder of the expression is matched from the wrong opcode. The class must stay OP_ECLASS, which a non-foldab",
+      "subjects": [
+        "ABcdEZ"
+      ]
+    },
+    {
+      "id": "r2-n21",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "A\\p{L}{0,3}?Z"
+      ],
+      "note": "pcre2_match.c:3816 compares UCD_CATEGORY(fc) with Lpropvalue in the PT_GC lazy-repeat loop. The mutated 0x39 (cmp) becomes 0xde (an x87 FADDP with ModRM 0xc2), so the following setne reads stale flags that are always 1 and the loop always returns MATCH_NOMATCH instead of extending over a matching le",
+      "subjects": [
+        "AxxZ"
+      ]
+    },
+    {
+      "id": "r2-n23",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(a)\\1{0,5}?b"
+      ],
+      "note": "pcre2_match.c:5365 is `if (Lmin++ >= Lmax)` in the minimising backreference repeat. The mutated 0x8b (mov F->Lmin) becomes 0x31 0x40 0x38 (xor eax,0x38(rax)), so Lmin is overwritten with the low word of the frame pointer; the comparison then sees a huge Lmin and returns MATCH_NOMATCH at the first fa",
+      "subjects": [
+        "aaab"
+      ]
+    },
+    {
+      "id": "r2-n28",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "^\\H*\\H*\\x{a0}"
+      ],
+      "note": "pcre2_auto_possess.c:1051 is the `case OP_NOT_HSPACE:` test in compare_opcodes, reached for a small character list containing U+00A0. The mutation changes the NBSP comparison constant 0xa0 to 0xa000a0, so the original treats U+00A0 as horizontal space (no overlap with \\H) and auto-possessifies a fol",
+      "subjects": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
+      "id": "r2-n30",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[a-z]{2,3}?[a-z\\x{101}]"
+      ],
+      "note": "0x42db4b loads F->op for the `if (Fop == OP_CLASS) RRETURN(MATCH_NOMATCH);` test in the UTF minimizing class-repeat loop (pcre2_match.c:2161). The mutant reads F+0xa3 (inside the ovector) instead of F+0x19, so it never sees OP_CLASS and accepts a >255 character as a class match; a lazy [a-z] repeat ",
+      "subjects": [
+        "aaĀā"
+      ]
+    },
+    {
+      "id": "r2-n31",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?<=(?(DEFINE)(?(DEFINE)a)bc))X"
+      ],
+      "note": "parsed_skip's switch dispatch compares META_CODE(*pptr) against the mutated immediate 0x801000bf, which can never equal a META code (low 16 bits are always zero), so META_COND_DEFINE (0x80100000) no longer increments nestlevel (pcre2_compile.c:9465-9483). A (?(DEFINE) nested inside a DEFINE group in",
+      "subjects": [
+        "X"
+      ]
+    },
+    {
+      "id": "r2-n32",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "abc(*MARK:m)de(*SKIP:m)z|b"
+      ],
+      "note": "pcre2_match.c:6789 compares the MARK name at Fecode+2 with mb->verb_skip_ptr; the mutated add makes it Fecode+0x39, so a (*MARK:m) never recognises the MATCH_SKIP_ARG returned by a failing (*SKIP:m). The skip is then ignored at top level (pcre2_match.c:7976-7979) instead of jumping to the MARK posit",
+      "subjects": [
+        "abcdeX"
+      ]
+    },
+    {
+      "id": "r2-n37",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "(?<aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>b)x"
+      ],
+      "note": "pcre2_compile.c:2673 stores ERR48 into *errorcodeptr when a subpattern name exceeds MAX_NAME_SIZE. The mutation turns `mov 0x18(%rbp),%rax` (load errorcodeptr) into `mov 0x18(%rbp),%rbx`, so the following `movl $0x94,(%rax)` writes ERR48 into the pattern text (RAX still holds *nameptr) and the real ",
+      "subjects": [
+        "bx"
+      ]
+    },
+    {
+      "id": "r2-n39",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "[\\d-\\d]"
+      ],
+      "note": "pcre2_compile.c:4602 rolls the pattern pointer back to the hyphen and sets ERR50 for `[\\d-\\d]` (RANGE_FORBID_STARTED followed by another multi-character escape). The mutation changes `48 89 85 ...` (mov %rax,-0x1a8(%rbp)) into `48 c3`, a return in mid-function. parse_regex returns to pcre2_compile_8",
+      "subjects": [
+        "a"
+      ]
+    },
+    {
+      "id": "r2-n40",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)[^ab]{2,}"
+      ],
+      "note": "pcre2_match.c:2104 GETCHARINC in the UTF branch of the repeated OP_NCLASS minimum loop. The mutated REX.W byte turns `lea 0x1(%rax),%rcx` into `lea 0x1(%rax),%ecx`, so the new Feptr stored in match_block is truncated to 32 bits. With the default small buffer the heap lives below 4 GB and the truncat",
+      "subjects": [
+        "éé"
+      ],
+      "args": [
+        "--buffer-size=1M"
+      ]
+    },
+    {
+      "id": "r3-q004",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{Xwd}+?X"
+      ],
+      "note": "pcre2_match.c:3942 is the PT_WORD (\\p{Xwd}) minimising repeat loop. The mutated disp32 reads chartype from -0x1c5(%rbp) instead of -0x188(%rbp), so PRIV(ucp_gentype)[chartype] is indexed with stack garbage and the mutant segfaults when the lazy loop consumes a second word character.",
+      "subjects": [
+        "abX"
+      ]
+    },
+    {
+      "id": "r3-q005",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(?i)k+?X"
+      ],
+      "note": "pcre2_match.c:3963 is GETCHARINCTEST in the PT_CLIST minimising repeat loop. The mutant turns the first continuation-byte load into `test %dh,-0x3f49f100(%rsi)`, a wild read, so the mutant segfaults when the lazy loop decodes a three-byte character.",
+      "subjects": [
+        "kKX"
+      ]
+    },
+    {
+      "id": "r3-q007",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?J)(?<x>\\x{c0}\\x{c0})(?<x>de)\\k<x>"
+      ],
+      "note": "pcre2_study.c:523 recurses from an OP_DNREF study with the `utf` argument. The mutated load reads -0xed(%rbp) (stale stack) instead of -0xcc(%rbp) (utf=0), so a plain-mode study walks the referenced group as UTF-8 and skips compiled bytes at a 0xC0 literal; study then returns non-zero and pcre2grep ",
+      "subjects_hex": [
+        "c0c06465c0c0"
+      ]
+    },
+    {
+      "id": "r3-q010",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?[ \\p{L} + \\p{N} ])++"
+      ],
+      "note": "pcre2_match.c:2540 is `if (reptype == REPTYPE_POS) continue;` after the OP_ECLASS maximising loop. The mutated rel32 turns `jmp 0x42642b` into `jmp 0x4742642b`, far outside the image, so a possessive extended-class repeat segfaults.",
+      "subjects": [
+        "b"
+      ]
+    },
+    {
+      "id": "r3-q016",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?m)xy\\r\\n^b"
+      ],
+      "note": "pcre2_match.c:6643 is the WAS_NEWLINE check of OP_CIRCM. The mutated disp byte turns the mb->nl[1] load into `movzbl 0x6900f5(%rax),%eax`, far outside the match block, so the mutant segfaults when a multiline ^ is evaluated after a CRLF.",
+      "subjects": [
+        "xy\r\nb"
+      ],
+      "args": [
+        "-M",
+        "-N",
+        "crlf"
+      ]
+    },
+    {
+      "id": "r3-q020",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?i)[^a]+"
+      ],
+      "note": "pcre2_match.c:1849 is the caseless OP_NOTI maximising loop (`Lc == d || Loc == d`). The mutated load reads F-0x39 instead of F->fields.charnot_repeat.c (F+0x30), so a subject character equal to the literal no longer stops the run and the match grows.",
+      "subjects": [
+        "bcabc"
+      ]
+    },
+    {
+      "id": "r3-q024",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?i)(?:\\x{1e9e}|\\x{130})"
+      ],
+      "note": "pcre2_study.c:813 set_table_bit decodes the literal's UTF-8 with GETUTF8INC; the mutated `or %edx,%eax` becomes `not %eax`, so the 3-byte character value loses its payload bits. UCD_OTHERCASE then produces garbage and the caseless other-case lead byte is missing from the start bitmap, so a match for",
+      "subjects": [
+        "ß"
+      ]
+    },
+    {
+      "id": "r3-q029",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "[\\p{sc=Latin}0]"
+      ],
+      "note": "pcre2_compile_class.c:783 switch(ptype) in _pcre2_update_classbits_8: the mutated comparison makes the PT_SC value 3 compare against 9, so script properties fall through to the LCOV_EXCL default arm (PT_PXXDIGIT hex-digit test). The 8-bit class bitmap for [\\p{sc=Latin}0] then lacks non-hex Latin let",
+      "subjects": [
+        "G"
+      ]
+    },
+    {
+      "id": "r3-q033",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "^(?:ab|cd)"
+      ],
+      "note": "pcre2_match.c:7776 WAS_NEWLINE in the non-UTF startline scan of pcre2_match_8 calls _pcre2_was_newline_8; the mutated rel32 makes the call land mid-instruction in _pcre2_is_newline_8, where `add %eax,(%rax)` and a bogus `ret` frame crash the process. -N anycrlf makes NLBLOCK->nltype non-fixed, which",
+      "subjects": [
+        "abab"
+      ],
+      "args": [
+        "-M",
+        "-N",
+        "anycrlf"
+      ]
+    },
+    {
+      "id": "r3-q036",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)\\p{scx=Greek}+?x"
+      ],
+      "note": "pcre2_match.c:3868 GETCHARINCTEST in the lazy PT_SCX repeat loop. The mutated disp32 loads -0x1e0(%rbp) instead of -0x160(%rbp) for mb, so the following `mov 0x40(%rax),%rax` dereferences a non-pointer stack slot and the mutant crashes when a 4-byte character is decoded by that arm.",
+      "subjects": [
+        "α😀x"
+      ]
+    },
+    {
+      "id": "r3-q038",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "^(?:ab|cd)"
+      ],
+      "note": "pcre2_newline.c:175 GETCHAR in _pcre2_was_newline_8; the mutated short jne (2-byte-lead dispatch) becomes `jne` backwards into the middle of the `and $0xc0` immediate, producing a garbage instruction stream and a crash. It is taken for a 3-byte UTF-8 character preceding the scan position when WAS_NE",
+      "subjects": [
+        "abကzzz"
+      ],
+      "args": [
+        "-M",
+        "-N",
+        "anycrlf"
+      ]
+    },
+    {
+      "id": "r3-q042",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?:ab|cdef){0,1}g"
+      ],
+      "note": "pcre2_study.c:294 find_minlength skips the alternatives of a {0,...} group with `do cc += GET(cc,1); while (*cc == OP_ALT);`. The mutated comparison no longer tests OP_ALT (0x79), so the scan stops on the second branch and counts it as mandatory, producing a too-large minimum length that makes pcre2",
+      "subjects": [
+        "g"
+      ]
+    },
+    {
+      "id": "r3-q046",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "[\\Q\\Eabc]"
+      ],
+      "note": "0x40f974 is the `ptr += 3` store of parse_regex's skipped \\Q\\E in the leading region of a character class (pcre2_compile.c:4197). The mutated ModRM (0x85->0xc1) turns `mov -0x1a8(%rbp),%rax` into `mov %rcx,%rax` followed by `pop %rax; .byte 0xfe,0xff` (invalid), so the compiler dies with SIGILL the ",
+      "subjects": [
+        "abc"
+      ]
+    },
+    {
+      "id": "r3-q052",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[^\\x{20ac}]"
+      ],
+      "note": "0x4286e5 is `(c & 0x0f) << 12` (compiled as `shl $0xc,%eax; movzwl %ax,%edx`) in the 3-byte arm of GETUTF8INC for the literal character stored in the compiled pattern, in the OP_NOT case of match() (pcre2_match.c:1237). The mutant shifts by 14, so the decoded pattern character of `[^\\x{20ac}]` becom",
+      "subjects": [
+        "€"
+      ]
+    },
+    {
+      "id": "r3-q060",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?J)(?<n>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\k<n>)(?<n>z)"
+      ],
+      "note": "0x453350 is `GET(ce,1)`'s high-byte copy in find_minlength's OP_DNREF/OP_DNREFI case (pcre2_study.c:501). The mutant `mov %ecx,0x48(%rbp)` leaves %edx stale, so the end of the first duplicate-named group is computed from its low link byte only. With a group whose compiled length exceeds 255 and a du",
+      "subjects": [
+        "abc"
+      ]
+    },
+    {
+      "id": "r3-q065",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?i)[^a]+"
+      ],
+      "note": "0x42b2ca is the `Loc == *Feptr` half of the caseless negated-character minimum loop (`if (Lc == *Feptr || Loc == *Feptr) RRETURN(MATCH_NOMATCH);`, pcre2_match.c:1781). The mutant replaces `jne` with `lea (%rdi),%ecx`, so a subject character that is neither case of the pattern character immediately r",
+      "subjects": [
+        "b"
+      ]
+    },
+    {
+      "id": "r3-q073",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{L&}+"
+      ],
+      "note": "0x440f7c is the eptr[1]<<12 step of the 4-byte GETUTF8LEN arm of GETCHARLENTEST in the PT_LAMP (\\p{L&}) maximising repeat at pcre2_match.c:4389. `add $1,%rax` is rewritten as `mov %rax,%rax; add %ecx,(%rdi); ...`, so it skips the eptr[1] load and adds ecx into the compiled pattern at rdi (gdb: rdi=0",
+      "subjects": [
+        "𐐀𐐨"
+      ]
+    },
+    {
+      "id": "r3-q083",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "\\o{}"
+      ],
+      "note": "0x40b350 is the `ptr >= ptrend` half of the `if (ptr >= ptrend || *ptr == '}')` test that raises ERR78 for a malformed \\o{...} escape (_pcre2_check_escape_8, pcre2_compile.c:1979). The mutated bytes are `push %rdi; or %ecx,0x45(%rax)`, which corrupts the following instruction stream. With pattern `\\",
+      "subjects": [
+        "A x"
+      ]
+    },
+    {
+      "id": "r3-q085",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "(?<=a(?1))(b+)"
+      ],
+      "note": "0x41b750 is the `return -1` jump taken by get_branchlength (pcre2_compile.c:9885) when a recursive group inside a lookbehind cannot be length-computed and the error code is already set. The mutated rel32 sends the jump to an unmapped address. With `(?<=a(?1))(b+)` the original reports rc 2 'length o",
+      "subjects": [
+        "xb"
+      ]
+    },
+    {
+      "id": "r3-q091",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(?s).{0,2}?Z"
+      ],
+      "note": "0x43f987 loads Lmin from the type_repeat slot (F+0x28); the mutant reads F+0x51 (byte 1 of F->mark, zero without (*MARK)), so the counter is reset to 1 every iteration and the `Lmin++ >= Lmax` bound in the UTF lazy loop for non-property char types (pcre2_match.c:4092) is never reached. With Lmax=2 t",
+      "subjects": [
+        "abcdZ"
+      ]
+    },
+    {
+      "id": "r3-q092",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?[[abc]|[\\x{1F600}]])"
+      ],
+      "note": "0x422ca9 is the back-edge of `for (int i=0;i<8;i++)` in compile_class_operand (pcre2_compile_class.c:2253). Changing jle to je makes only classwords[0] (bytes 0-31) checked, so the nested class [abc] leaves context->needs_bitmap FALSE. The extended class then unwraps to OP_XCLASS without XCL_MAP, so",
+      "subjects": [
+        "a"
+      ]
+    },
+    {
+      "id": "r3-q094",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{Xan}+?"
+      ],
+      "note": "The mutated byte 0x435bfe is the third byte of the imm32 of `movl $1,-0x2f4(%rbp)` (real instruction start 0x435bf6), the loop index initialiser for `for (i=1;i<=Lmin;i++)` in the PT_ALNUM minimum loop (pcre2_match.c:3079). It turns imm32 1 into 0x50001, so no mandatory minimum match is performed; `",
+      "subjects": [
+        "a"
+      ]
+    },
+    {
+      "id": "r3-q098",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{Xuc}+"
+      ],
+      "note": "0x443997 is the third byte of the imm32 of `cmpl $0xdfff,-0x2f0(%rbp)` in the PT_UCNC (\\p{Xuc}) maximizing repeat (pcre2_match.c:4581); the mutated byte makes the bound 0x5bdfff. Code points U+E000..U+5BDFFF are valid UTF-8 (e.g. private-use U+E000) and flip from 'matches UCNC' to 'does not', so the",
+      "subjects": [
+        ""
+      ]
+    },
+    {
+      "id": "r3-q100",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{Xan}+?X"
+      ],
+      "note": "0x43d3ea is the first-continuation-byte load of the four-byte UTF-8 arm of GETCHARINCTEST in the PT_ALNUM lazy loop (pcre2_match.c:3889). The mutation turns `movzbl (%rax),%eax` into `adc 0xc0b60f00(%rsi),%esi`; decoding the second 4-byte alphanumeric character faults.",
+      "subjects": [
+        "𝐀𝐀X"
+      ]
+    },
+    {
+      "id": "r3-q102",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\V{93}"
+      ],
+      "note": "0x4396bc is the first-continuation-byte load of the four-byte UTF-8 arm of GETCHARINC in the OP_NOT_VSPACE minimum repeat (pcre2_match.c:3379). The mutant decodes that byte from the low 6 bits of the eptr address. For U+10029 (f0 90 80 a9) the corrupted code point is ((eptr&0x3f)<<12)|0x29, which eq",
+      "subjects": [
+        "x𐀩xxxxxxxxxx𐀩xxxxxxxxxxxx𐀩xxxxxxxxxxxx𐀩xxxxxxxxxxxx𐀩xxxxxxxxxxxxxx𐀩xxxxxxxxxxxx𐀩xxxxxxxxxxxx𐀩"
+      ]
+    },
+    {
+      "id": "r3-q103",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*ACCEPT:foo)bar"
+      ],
+      "note": "0x40daba loads add_after_mark from -0x15c(%rbp) for `*parsed_pattern++ = add_after_mark` at pcre2_compile.c:3378. The mutated disp8 reads -0x16e instead (inside another local), so a verb with an optional argument that is rewritten as a preceding (*MARK) gets a corrupted parsed token. `(*ACCEPT:foo)b",
+      "subjects": [
+        "bar"
+      ]
+    },
+    {
+      "id": "r3-q105",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*CRLF)(?m)^\\d"
+      ],
+      "note": "0x4502f3 is the `*(p-nllen+1)==nl[1]` && mb reload of WAS_NEWLINE in the startline bumpalong loop for a fixed multi-byte newline (pcre2_match.c:7776). It executes when startline skipping crosses a CRLF. With -N NUL the whole file is one subject, so the CRLFs are inside it; the mutated displacement l",
+      "subjects_hex": [
+        "6162630d0a6465660d0a"
+      ],
+      "args": [
+        "-N",
+        "NUL"
+      ]
+    },
+    {
+      "id": "r3-q106",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*TURKISH_CASING)(?i)[iI]"
+      ],
+      "note": "0x414f7e is the `UCD_ANY_I(c)` test (`c|0x20==0x69`) in the two-character class case-partner optimisation (pcre2_compile.c:6426). With Turkish casing and c='i' the je must skip the optimisation; the mutated rel32 instead jumps into the middle of an instruction in parsed_skip, derailing compilation.",
+      "subjects": [
+        "i"
+      ]
+    },
+    {
+      "id": "r3-q108",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)(?i)a*?b(*PRUNE)Z"
+      ],
+      "note": "0x429fe1 is `if (rrc != MATCH_NOMATCH) RRETURN(rrc)` in the caseless single-character minimizing repeat (pcre2_match.c:1538). Ordinary success returns directly from OP_END (pcre2_match.c:1054, NOT RRETURN), but a special backtracking return propagates through this check; the mutated rel32 turns that",
+      "subjects": [
+        "ab"
+      ]
+    },
+    {
+      "id": "r3-q109",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)\\h+?Z"
+      ],
+      "note": "0x43fecc is the `Lctype == OP_HSPACE` dispatch of the switch in the UTF lazy loop for non-property character types (pcre2_match.c:4100). The mutated rel32 sends the \\h handler to an unrelated address, and the mutant dies with SIGILL while matching the second space.",
+      "subjects": [
+        "  "
+      ]
+    },
+    {
+      "id": "r3-q111",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{L}*"
+      ],
+      "note": "The mutated displacement makes the Feptr frame load in the PT_GC maximizing repeat loop read the saved outer frame (rbp-0x158) instead of the current heap frame; the loop then dereferences a different frame pointer and the mutant dies with SIGSEGV.",
+      "subjects": [
+        "AB"
+      ]
+    },
+    {
+      "id": "r3-q112",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(a|(?1))"
+      ],
+      "note": "pcre2_match.c:5725 compares N->group_frame_type with (GF_RECURSE|number); the mutant reads -0xf6ec(%rbp) instead of the recursion number, so the recursion-loop guard no longer matches and the mutant loops until the timeout where the original returns PCRE2_ERROR_RECURSELOOP.",
+      "subjects": [
+        "b"
+      ]
+    },
+    {
+      "id": "r3-q114",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)\\R"
+      ],
+      "note": "The mutated displacement makes the 3/4-byte split of the OP_ANYNL GETCHARINCTEST read uninitialised stack instead of the lead byte; for a 4-byte subject character the mutant takes the 3-byte arm and decodes U+2028, so \\R matches where the original does not.",
+      "subjects": [
+        "򀨀"
+      ]
+    },
+    {
+      "id": "r3-q115",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\X{2}"
+      ],
+      "note": "The mutated displacement in the 2-byte UTF-8 arm of GETCHARINCTEST (the \\X minimum-repeat loop) reads uninitialised stack instead of the lead byte, producing a different first character for extuni. With U+06DD (a Prepend character) followed by 'a', the original treats the pair as one grapheme cluste",
+      "subjects": [
+        "۝a"
+      ]
+    },
+    {
+      "id": "r3-q117",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?<𐐀>x)(?#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaDaaaaaaaaaaaaaaaaaaaa)"
+      ],
+      "note": "The mutated `add $0x1,%rax` becomes `add $0x7c,%rax` in the 4-byte GETCHARINC that peeks at a UTF group name, so the third byte is read from pattern offset 128. With the padded pattern the substituted byte makes the codepoint a non-letter, and the mutant rejects a group name that the original accept",
+      "subjects": [
+        "x"
+      ]
+    },
+    {
+      "id": "r3-q118",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[\\x{10000}-\\x{10001}\\x{40000}-\\x{40001}]"
+      ],
+      "note": "The mutated disp32 in the 4-byte GETCHARINC of _pcre2_xclass_8 reads uninitialised stack instead of the lead byte of the range start. For the second range, [\\x{40000}-\\x{40001}], the mutant decodes its start as 0, so U+20000 (between the two ranges) matches in the mutant but not in the original.",
+      "subjects": [
+        "𠀀"
+      ]
+    },
+    {
+      "id": "r3-q119",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(?i)k{0,2}?X"
+      ],
+      "note": "The mutated disp32 in the 3-byte GETCHARINCTEST of the PT_CLIST lazy-repeat loop makes the mutant read the frame pointer from +0x7ffea0(%rbp); when the loop decodes a 3-byte character the mutant faults.",
+      "subjects": [
+        "€X"
+      ]
+    },
+    {
+      "id": "r3-q121",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*UCP)\\p{Xuc}{2}"
+      ],
+      "note": "The mutated rel32 makes the `if (utf)` branch of the PT_UCNC minimum loop jump to a bogus instruction when utf is false; in plain mode the mutant takes a garbage path that reports a match for `(*UCP)\\p{Xuc}{2}` on `ab` while the original correctly reports no match.",
+      "subjects": [
+        "ab"
+      ]
+    },
+    {
+      "id": "r3-q124",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()\\R*X"
+      ],
+      "note": "The mutated `mov %rdx` is truncated to 32 bits, but the opcode prefix byte becomes CLD. When the heapframe vector is mmap'd above 4 GiB (forced by a pattern with 1000 capture groups), truncating the heapframe pointer corrupts the Lstart_eptr load in the \\R backtracking loop and the mutant faults.",
+      "subjects_hex": [
+        "0a0a62580a"
+      ],
+      "args": [
+        "-N",
+        "NUL"
+      ]
+    },
+    {
+      "id": "r3-q129",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[\\x{10000} \\x{10002} \\x{10004} \\x{10006} \\x{10008} \\x{1000a} \\x{1000c} \\x{1000e} \\x{10010} \\x{10012}]"
+      ],
+      "note": "The mutated displacement makes `code += LINK_SIZE` in _pcre2_compile_class_not_nested_8 increment the wrong stack slot, so the stored XCLASS item length is 2 bytes short. For a class large enough to use char-lists the following compiled item is misaligned and the mutant no longer matches a character",
+      "subjects": [
+        "𐀂"
+      ]
+    },
+    {
+      "id": "r3-q131",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "a{60001}|(?<=a{60000})b"
+      ],
+      "note": "The mutated `mov -0x24(%rbp),%edx` reads the saved return address instead of branchlength, so cb->max_lookbehind becomes ~0xc3c3 instead of 60000. On a later match call with startoffset=60001 the truncated lookbehind limit makes the mutant's OP_REVERSE fail, so it misses the second match.",
+      "subjects": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+      ]
+    },
+    {
+      "id": "r3-q133",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?>\\p{Xan}+)!"
+      ],
+      "note": "pcre2_match.c:4476 is the PT_ALNUM (\\p{Xan}) maximising repeat loop in the non-minimising branch. The mutated false arm is `mov $0xfa0000,%eax` instead of `mov $0,%eax`, so `(...) == notmatch` is never true for a non-alphanumeric character and the loop never breaks at '!'. Inside an atomic group the",
+      "subjects": [
+        "abc!"
+      ]
+    },
+    {
+      "id": "r3-q137",
+      "kind": "error",
+      "mode": "utf",
+      "patterns": [
+        "(?<=\\X)a"
+      ],
+      "note": "pcre2_compile.c:9712 (`if (escape == ESC_X) return -1;`) in get_branchlength is what makes \\X illegal inside a lookbehind. The mutant changes the disp8 of the escape comparison from -0x6c to -0xa, so the ESC_X test never fires and \\X is treated as an ordinary one-character escape: the lookbehind is ",
+      "subjects": [
+        "xa"
+      ]
+    },
+    {
+      "id": "r3-q139",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)\\X+\\p{M}"
+      ],
+      "note": "pcre2_match.c:4706 is GETCHAR(fc,fptr) in the inner grapheme-break merge loop of the repeated \\X backtracking code. The mutant disp32 -0x2f0 -> -0x402f0 reads a stale zero stack slot, so a four-byte character above U+3FFFF (lead 0xF1-0xF4) loses its (c&7)<<18 bits and is decoded as its continuation ",
+      "subjects": [
+        "a񀀀́"
+      ]
+    },
+    {
+      "id": "r3-q145",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\w{2}z"
+      ],
+      "note": "pcre2_match.c:3488 is the mandatory-minimum loop of the UTF-mode OP_WORDCHAR type repeat (`\\w{2}` is OP_TYPEEXACT with Lmin=Lmax=2, reached with -u -P so \\w stays OP_WORDCHAR). The mutant `addl $0x3e,-0x2f4(%rbp)` increments i by 62 instead of 1, so the loop exits after one character; since Lmin==Lm",
+      "subjects": [
+        "abz"
+      ],
+      "args": [
+        "-P"
+      ]
+    },
+    {
+      "id": "r3-q146",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?J)(?<aaaaaaaa>1)(?<nnnnnnnn>x)?(?<nnnnnnnn>y)?(?(<nnnnnnnn>)c|d)"
+      ],
+      "note": "pcre2_match.c:7414 loads re->name_entry_size into mb->name_entry_size. The mutated `0f b7` becomes `0f 1b` (bndstx, a no-op on this CPU), so EDX keeps the previous load, re->name_count. GDB shows name_entry_size becomes 3 instead of 11. The duplicate-name conditional scan in OP_DNCREF then strides b",
+      "subjects": [
+        "1xc"
+      ]
+    },
+    {
+      "id": "r3-q149",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*UCP)[^x]"
+      ],
+      "note": "pcre2_match.c:1259 is `ch = Fecode[1]` in the UCP-without-UTF arm of OP_NOT/OP_NOTI, reachable from the CLI because the pattern verb (*UCP) sets PCRE2_UCP while plain pcre2grep leaves utf false. The mutant turns the redundant `movzbl %al,%eax` into `lsl %eax,%eax`; for selectors that name a present ",
+      "subjects": [
+        "x"
+      ]
+    },
+    {
+      "id": "r3-q152",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{L&}+?z"
+      ],
+      "note": "pcre2_match.c:3795 is GETCHARINCTEST in the PT_LAMP minimising loop; 0x43bc60 is the four-byte arm's `eptr += 3`. The mutant byte turns `48 8d 50 03` into `48 f0 50 03` (lock push, #UD) and the process dies with SIGILL when the second (four-byte) L& character is read after the first failed 'z' attem",
+      "subjects": [
+        "𐐀𐐨z"
+      ]
+    },
+    {
+      "id": "r3-q153",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "a\\b"
+      ],
+      "note": "pcre2_match.c:6746 is GETCHAR(fc,Feptr) for the current character in the word-boundary code; 0x44d71d is the two-byte arm's store of the decoded fc. The mutant disp8 0x10 -> 0xde writes fc to -0x222 instead of -0x2f0, so cur_is_word is computed from -0x2f0, which still holds the raw lead byte (0xC3 ",
+      "subjects": [
+        "a×"
+      ]
+    },
+    {
+      "id": "r3-q157",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(*UTF)\\h*?Q"
+      ],
+      "note": "pcre2_match.c:4151-4152 is the switch(fc) of OP_HSPACE in the UTF minimising repeat loop (the \\h*? in `(*UTF)\\h*?Q`). 0x44021b is the second `cmpl $0x3000,-0x2f0(%rbp)`; the mutant's byte 0x81->0xc4 makes it a VEX prefix with an invalid mmmmm map, so the first non-hspace code point decoded in the lo",
+      "subjects": [
+        " aQ"
+      ]
+    },
+    {
+      "id": "r3-q161",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(x)\\w+?Z"
+      ],
+      "note": "pcre2_match.c:3930-3939 is the minimising PT_WORD repeat loop reached by `\\w+?`. The mutated `mov -0x330(%rbp),%rax` at 0x43dcf2 (byte 1 0x8b->0xd8 turns it into a 3-operand x87 FADD) no longer reloads mb, so `mov 0x90(%rax),%rax` reads heapframe->ovector[3] instead of mb->end_subject. With capture ",
+      "subjects": [
+        "xabcZ"
+      ]
+    },
+    {
+      "id": "r3-q163",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*ANYCRLF)(a)\\1\\Z"
+      ],
+      "note": "_pcre2_is_newline_8 (pcre2_newline.c:94) computes the CRLF length. The mutated `cmp %rax,-0x18(%rbp)` at 0x45149b compares endptr-1 with the stack slot rbp-0x77 (byte 3 0xe8->0x89) instead of ptr. With default LF line splitting the CR of a CRLF file line is retained in the subject, so the CR sits at",
+      "subjects": [
+        "aa\r\n"
+      ]
+    },
+    {
+      "id": "r3-q164",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(*UTF)(?i)[^\\x{0}]+"
+      ],
+      "note": "pcre2_match.c:1758-1765 is the caseless UTF minimum loop for `[^...]+` (OP_NOTPLUSI). The mutated disp32 at 0x42af94 (-0xa4c8 instead of -0x2c8, byte 3 0xfd->0x5b) reads stale stack instead of the subject lead byte, so the decoded code point loses the lead-byte bits. With a lead 0xF1 subject charact",
+      "subjects": [
+        "񀀀"
+      ]
+    },
+    {
+      "id": "r3-q165",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{Pd}+"
+      ],
+      "note": "pcre2_match.c:3039 is GETCHARINCTEST in the PT_PC minimum loop. The mutated `movzbl (%rax),%eax` at 0x434fad becomes `cmovl (%rax),%eax`; the flags left by the preceding `shl $0xc` make the cmov never taken, so the decode uses the lead byte instead of the first continuation byte. U+2010 (E2 80 90, c",
+      "subjects": [
+        "‐"
+      ]
+    },
+    {
+      "id": "r3-q166",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_START_OPT).{0,3}?b"
+      ],
+      "note": "pcre2_match.c:4228 is `if (Lctype == OP_ANY && IS_NEWLINE(Feptr))` in the non-UTF minimising type-repeat loop. The mutated `mov $0x0,%eax` at 0x44076a becomes `mov $0xbb,%eax`; the following `and $1` turns the false branch into 1, so the loop returns MATCH_NOMATCH as soon as it must consume a charac",
+      "subjects": [
+        "ab"
+      ]
+    },
+    {
+      "id": "r3-q169",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "\\o{400}"
+      ],
+      "note": "pcre2_compile.c:2006-2009 is the overflow arm of \\o{...} in _pcre2_check_escape_8; the mutated store `c7 00 86 00 00 00` at 0x40b459 (byte 0 0xc7->0x14) becomes `adc $0,%al; xchg %al,(%rax); add %al,(%rax)`, which no longer sets *errorcodeptr to ERR34 but scribbles the low byte. The original reports",
+      "subjects": [
+        "x"
+      ]
+    },
+    {
+      "id": "r3-q170",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*UTF)(*NO_AUTO_POSSESS)\\d*"
+      ],
+      "note": "pcre2_match.c:4878 is GETCHARLEN in the maximising OP_DIGIT loop. The mutated `mov 0x40(%rax),%rax` at 0x44697b (byte 1 0x8b->0x92 -> `xchg %rax,%rdx`) leaves %rax = the accumulated code point; `add $3` then turns it into a wild pointer and the 4-byte UTF-8 arm faults. `(*UTF)(*NO_AUTO_POSSESS)\\d*` ",
+      "subjects": [
+        "1😀"
+      ]
+    },
+    {
+      "id": "r3-q178",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\W+\\w"
+      ],
+      "note": "pcre2_match.c:4915 is the preheader of the UTF OP_NOT_WORDCHAR maximum-repeat loop. With -u -P, \\W stays OP_NOT_WORDCHAR (with UCP it becomes OP_NOTPROP). The mutated rel32 byte sends the preheader `jmp 0x4476fc` to 0x448ffc, which is mid-instruction inside the reference-repeat code; the mutant dies",
+      "subjects": [
+        "!ab"
+      ],
+      "args": [
+        "-P"
+      ]
+    },
+    {
+      "id": "r3-q180",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "[[.a.]]"
+      ],
+      "note": "pcre2_compile.c:4063 is the `ptr = tempptr + 2; errorcode = ERR13` POSIX collating-element rejection. The mutated ModRM turns the ptr store into `mov %rdx,(%rax)` and the leftover bytes decode to `pop %rax; inc %bh; inc %edi`, so the mutant executes an illegal instruction (SIGILL) while the original",
+      "subjects": [
+        "a"
+      ]
+    },
+    {
+      "id": "r3-q181",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{L}+\\p{Xan}"
+      ],
+      "note": "pcre2_auto_possess.c:942 is case 9 (right alphanum vs left general category) of compare_opcodes. The mutated `mov -0xe0(%rbp),%rax` becomes `add -0xe0(%rbp),%al`, which shifts base_list by its own low byte; the wrong base_list[3] makes the `(base_list[3] != p[0] && ...)` chain true, so `accepted` fl",
+      "subjects": [
+        "aaa"
+      ]
+    },
+    {
+      "id": "r3-q182",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{L}+?a"
+      ],
+      "note": "pcre2_match.c:3815 is GETCHARINCTEST inside the lazy PT_GC loop. The mutated 2-byte arm replaces the continuation-byte load with `push %rdx; mov $0,%dh`, so the decoded code point becomes `(lead<<6) | (ptr & 0x3f)` instead of U+00B5. The lazy loop then stops early and the mutant matches only the las",
+      "subjects": [
+        "µµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµµa"
+      ]
+    },
+    {
+      "id": "r3-q187",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)\\R+?Z"
+      ],
+      "note": "pcre2_match.c:4250 is the OP_ANYNL switch in the non-UTF lazy type-repeat loop. The mutated 0x77 (`ja default`) becomes 0x1b (`sbb (%rsp),%esp`), which zero-extends rsp for every non-newline character examined; the function epilogue then crashes (SIGSEGV). -M is required because pcre2grep line subje",
+      "subjects": [
+        "\nAZ"
+      ],
+      "args": [
+        "-M"
+      ]
+    },
+    {
+      "id": "r3-q188",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{sc=Greek}+a"
+      ],
+      "note": "pcre2_auto_possess.c:222 is check_char_prop's PT_SC return. The mutated rel32 jumps to 0x458cf1 (inside compare_opcodes) instead of the function epilogue, so the auto-possess analysis executes `add %eax,(%rax)` with a stale rax and the mutant crashes (SIGSEGV) while compiling the pattern.",
+      "subjects": [
+        "ααa"
+      ]
+    },
+    {
+      "id": "r3-q194",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)é*?b\\z"
+      ],
+      "note": "pcre2_match.c:1445 is the first (`mb->partial != 0`) test of SCHECK_PARTIAL in the minimizing wide-character repeat. The mutated `movzwl 0x68(%rax),%eax` becomes `movups %xmm0,0x68(%rax)`: it stores into the match block and leaves eax holding the low bits of the mb pointer, so the test is true and t",
+      "subjects": [
+        "béé"
+      ]
+    },
+    {
+      "id": "r3-q196",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{Lu}+\\p{Xan}"
+      ],
+      "note": "pcre2_auto_possess.c:962 is case 15 (right alphanum vs left particular category). The mutated `movzbl (%rax),%eax` becomes `movzbl %bl,%edx`, so the first catposstab lookup leaves al as the low byte of the table address (nonzero) instead of the table byte. The chain flips to TRUE, \\p{Lu}+ is wrongly",
+      "subjects": [
+        "AAA"
+      ]
+    },
+    {
+      "id": "r3-q197",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "\\V{2}"
+      ],
+      "note": "pcre2_match.c:3643 is the `switch(*Feptr++)` in the OP_NOT_VSPACE mandatory loop. The mutated immediate turns `cmp $0xd` into `cmp $0x44`, so the compiled decision tree classifies every code unit 0x0a..0x44 as vertical space; the original matches the two ordinary characters and the mutant fails.",
+      "subjects": [
+        "!A"
+      ]
+    },
+    {
+      "id": "r3-q199",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(*NO_START_OPT)\\p{scx=Greek}+?B"
+      ],
+      "note": "pcre2_match.c:3871 PT_SCX minimizing repeat: the mutated false arm of the MAPBIT test returns 91 instead of 0, so a character with no Greek script extension passes the `ok == (Lctype == OP_NOTPROP)` test that should reject it.",
+      "subjects": [
+        "αAB"
+      ]
+    },
+    {
+      "id": "r3-q203",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)\\h{3}"
+      ],
+      "note": "pcre2_match.c:3362 three-byte arm of the OP_HSPACE minimum loop: the last continuation-byte load becomes punpckhbw, so fc keeps only the pointer's low bits; the subject uses three 3-byte HSPACE characters in different 64-blocks, so at least one no longer decodes to a space.",
+      "subjects": [
+        " ᠎　"
+      ]
+    },
+    {
+      "id": "r3-q205",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(*NO_START_OPT)(?[ [\\p{Lu}] ^ [\\p{Ll}] ])+"
+      ],
+      "note": "pcre2_match.c:2530 ECLASS maximizing loop: GETCHARLENTEST's lead test cmp $0xbf becomes cmp $0xafbf, so every byte is < len and a multi-byte character is consumed as one byte. In the witness the 3-byte Greek capital is cut short, producing an invalid-UTF error and a shorter match.",
+      "subjects": [
+        "ŐΑ"
+      ]
+    },
+    {
+      "id": "r3-q209",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\W"
+      ],
+      "note": "pcre2_match.c:2628 three-byte arm of GETCHARINCTEST in OP_NOT_WORDCHAR: the REX.W byte 0x48 becomes 0xd5, so the instruction stream starts with invalid opcode 0xd5 (AAD is not valid in 64-bit mode) and the mutant dies with SIGILL. -P keeps \\W as OP_NOT_WORDCHAR instead of a UCP property.",
+      "subjects": [
+        "€"
+      ],
+      "args": [
+        "-P"
+      ]
+    },
+    {
+      "id": "r3-q210",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_START_OPT)(?!(?:a(*SKIP:m)Z))b"
+      ],
+      "note": "pcre2_match.c:5826 rrc dispatch of OP_ASSERT_NOT: the mutated ja displacement 0x00523b30 sends the MATCH_SKIP_ARG case (rrc=-994, from (*SKIP:m) inside the negative lookahead) to unmapped address 0x96e30f, so the mutant segfaults.",
+      "subjects": [
+        "ab"
+      ]
+    },
+    {
+      "id": "r3-q211",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)\\H"
+      ],
+      "note": "pcre2_match.c:2687 three-byte lead test (c&0x20) in OP_NOT_HSPACE becomes (c&1); a 3-byte character is then decoded by the two-byte arm, so the match stops after two bytes and leaves a stray continuation byte. pcre2grep prints a shorter match and error -36.",
+      "subjects": [
+        "€"
+      ]
+    },
+    {
+      "id": "r3-q213",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{sc=Deseret}+"
+      ],
+      "note": "pcre2_match.c:3053 four-byte arm of GETCHARINCTEST in the PT_SC minimum loop: the mutated REX prefix removes the Feptr reload, so bits 6-11 of fc come from heapframe+1 (byte 1 of F->ecode) instead of the third UTF-8 byte. U+10400 (Deseret) decodes as U+10340 (Gothic), so \\p{sc=Deseret}+ fails.",
+      "subjects": [
+        "𐐀"
+      ]
+    },
+    {
+      "id": "r3-q215",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)\\H+?B"
+      ],
+      "note": "pcre2_match.c:4144 maximizing OP_NOT_HSPACE switch: the second comparison's immediate changes from 0x202f to 0x1c2f, so U+2000-U+200A fall through to the default 'not a space' arm after the minimum repeat has already consumed one character. A lazy \\H+?B therefore consumes U+2000 in the mutant.",
+      "subjects": [
+        "A B"
+      ]
+    },
+    {
+      "id": "r3-q218",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?m)^x"
+      ],
+      "note": "_pcre2_was_newline_8's two-byte GETCHAR arm: 0x0f 0xb6 0x00 becomes `jb -0x4a` (never taken, CF=0 after add) plus `mov $0,%dh`, which clears bits 8-10 of the lead-byte contribution. With -N ANYCRLF, (?m)^x after U+0100 then takes the corrupted code point for a newline and the mutant crashes.",
+      "subjects": [
+        "Āx"
+      ],
+      "args": [
+        "-N",
+        "ANYCRLF"
+      ]
+    },
+    {
+      "id": "r3-q222",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?<=a{2,3})bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc"
+      ],
+      "note": "pcre2_compile.c:9646 is the get_branchlength META dispatch. The mutated 6-byte instruction is sub %eax,0xc20(%rdi) instead of ja 0x41b929; control flow converges (the next ja at 0x41ad19 takes the same target), but the write hits stack_parsed_pattern[218] (pptrptr+0xc20), corrupting a literal in the",
+      "subjects": [
+        "aabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc"
+      ]
+    },
+    {
+      "id": "r3-q223",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_START_OPT)\\h+"
+      ],
+      "note": "pcre2_match.c:3623 is the switch(*Feptr++) of the non-UTF OP_HSPACE minimum-repeat loop. The mutated immediate turns cmp $0xa0,%eax into cmp $0x4a0000a0, so NBSP (0xa0) is no longer recognised as horizontal whitespace and \\h+ fails.",
+      "subjects_hex": [
+        "61a0620a"
+      ]
+    },
+    {
+      "id": "r3-q224",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)\\R+"
+      ],
+      "note": "pcre2_match.c:3312 GETCHARINC in the UTF OP_ANYNL (\\R) minimum loop. The mutated `or %eax,%edx` writes to ecx, dropping the eptr[0]<<12 term. For the valid 4-byte character U+1000A (f0 90 80 8a) the truncated fc becomes 0x0a (LF), so \\R matches a character that is not a newline.",
+      "subjects": [
+        "𐀊\n"
+      ]
+    },
+    {
+      "id": "r3-q226",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(?[\\p{L}&\\p{Lu}]){1,3}?Z"
+      ],
+      "note": "pcre2_match.c:2508 GETCHARINCTEST in the OP_ECLASS minimising loop. The mutated 0x83->0x77 turns `and $0x3f,%eax` into `ja` into the middle of the previous arm; the lazy eclass loop with a 3-byte subject character jumps into garbage and the mutant dies with SIGSEGV.",
+      "subjects": [
+        "B Z\n"
+      ]
+    },
+    {
+      "id": "r3-q229",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_START_OPT)a"
+      ],
+      "note": "pcre2_valid_utf.c:227 writes *erroroffset in the 4-byte branch when the fourth byte is not a continuation. The mutated load -0x38(%rsi),%rdx leaves rax = p-string and stores to a small absolute address, so a subject with F0 80 80 41 crashes instead of being truncated by PCRE2_MATCH_INVALID_UTF (-U).",
+      "subjects_hex": [
+        "61f08080410a"
+      ],
+      "args": [
+        "-U"
+      ]
+    },
+    {
+      "id": "r3-q230",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)\\R{1,3}X"
+      ],
+      "note": "pcre2_match.c:4964 is the OP_ANYNL CR/LF adjustment in the backtracking loop after a maximised \\R repeat. The mutated 0f 85 becomes 0f bc 16 ff ff (bsf then invalid FF /7), so the first backtrack step executes an invalid opcode and the mutant dies with SIGSEGV; the required 'X' keeps pcre2_match fro",
+      "subjects": [
+        "   ZX\n"
+      ]
+    },
+    {
+      "id": "r3-q231",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)[a!]{1,3}"
+      ],
+      "note": "pcre2_match.c:2212 GETCHARLEN in the UTF OP_CLASS/OP_NCLASS maximising loop. The mutated `or %eax,%edx` becomes `or %eax,%ecx`; for lead F0 with a continuation whose low 6 bits are zero the truncated fc falls below 256, so the OP_CLASS byte-map test accepts the 4-byte character instead of breaking o",
+      "subjects": [
+        "a𐀡\n"
+      ]
+    },
+    {
+      "id": "r3-q233",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT).{2}"
+      ],
+      "note": "pcre2_match.c:3271 is IS_NEWLINE(Feptr) in the UTF OP_ANY minimum-repeat loop. The mutated displacement makes the end_subject load mov 0x42000090(%rax),%rdx, an unmapped read. With --newline=any the is_newline() call is taken (mb->nltype != LF) and the mutant dies with SIGSEGV.",
+      "subjects": [
+        "ab\n"
+      ],
+      "args": [
+        "--newline=any"
+      ]
+    },
+    {
+      "id": "r3-q234",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(?:\\H)"
+      ],
+      "note": "pcre2_match.c:2688 is the switch(fc) of OP_NOT_HSPACE; the mutated immediate makes the 0x200a comparison read the unrelated -0x4ff0(%rbp) slot (match frame is only 0x330, so this is stale stack). The witness is made deterministic in two independent ways. (a) Priming: the non-capturing group makes co",
+      "subjects": [
+        "a ​ b\n"
+      ]
+    },
+    {
+      "id": "r3-q238",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)\\V"
+      ],
+      "note": "pcre2_match.c:2717 is GETCHARINCTEST in the OP_NOT_VSPACE single-character case; 0x432b29 is the 4-byte UTF-8 arm (add $2). The mutated `mov 0x40(%rax),%rax` becomes `add 0x40(%rax),%rax`, so the continuation byte is read from Feptr+frame instead of the subject and the match state is corrupted.",
+      "subjects": [
+        "😀\n"
+      ]
+    },
+    {
+      "id": "r3-q245",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{sc=Greek}"
+      ],
+      "note": "0x433734 is the `prop->script` load for the single-character PT_SC test in match() (pcre2_match.c:2783). The mutant turns `mov -0x60(%rbp),%rax` into `and -0x60(%rbp),%al`, so the property byte is fetched from a corrupted copy of Fecode+2 and \\p{sc=Greek} stops matching Greek text.",
+      "subjects": [
+        "α"
+      ]
+    },
+    {
+      "id": "r3-q246",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?(?=b|a)a|c)"
+      ],
+      "note": "0x44b6de is the `*Lstart_branch == OP_ALT` test of the conditional-group assertion branch loop (pcre2_match.c:6129). The mutant loads (%rdi) into ebx instead of *Lstart_branch into eax, so `cmp $0x79,%al` compares the low byte of the branch pointer; the loop then stops after the first failed asserti",
+      "subjects": [
+        "a"
+      ]
+    },
+    {
+      "id": "r3-q252",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?:(?i)q)(?i)k"
+      ],
+      "note": "0x4117b3 loads the parser's `xoptions` for the nest-stack save at pcre2_compile.c:5006. The mutant reads a misaligned 4-byte slot (-0x1ba, the high half of the has_lookbehind pointer) instead of -0x1b0, so when a (?i) nest entry is popped the tracked extra options are restored from stack-pointer bit",
+      "subjects": [
+        "qK"
+      ],
+      "args": [
+        "-E"
+      ]
+    },
+    {
+      "id": "r3-q253",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?<=a{1,3})b"
+      ],
+      "note": "0x41ba89 is the READPLUSOFFSET zero-extension in set_lookbehind_lengths (pcre2_compile.c:10047). `89 c0` becomes `89 5b 48` (mov %ebx,0x48(%rbx)) followed by a 32-bit or, so the 8-byte offset is built differently and the function also writes the low half of rbx into [rbx+0x48]. rbx is still main's a",
+      "subjects": [
+        "ab"
+      ],
+      "args": [
+        "-n",
+        "-H"
+      ]
+    },
+    {
+      "id": "r3-q255",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{Xan}*?X"
+      ],
+      "note": "0x43d439 is the Feptr update of the FOUR-byte arm of GETCHARINCTEST in the PT_ALNUM (\\p{Xan}) minimising loop (pcre2_match.c:3889). The mutated disp32 (-0x160 -> -0x9c60) makes the reload read a garbage frame word, which is then dereferenced. A lazy \\p{Xan} repeat that has to consume a 4-byte charac",
+      "subjects": [
+        "𐀀X"
+      ]
+    },
+    {
+      "id": "r3-q261",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\h"
+      ],
+      "note": "0x432837 is the first `switch(fc)` equality test of the single-character OP_HSPACE case (pcre2_match.c:2703). The mutant disp32 reads -0x2c02f0(%rbp) instead of -0x2f0(%rbp), so the U+3000 case test fails and control falls into the `ja` for 0x205F, which sends fc=0x3000 to the default NOMATCH. \\h no",
+      "subjects": [
+        "　"
+      ]
+    },
+    {
+      "id": "r3-q268",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "a"
+      ],
+      "note": "pcre2grep.c:3806 is `if (n >= 11 && n <= 13) n = 0;` in ordin(). The mutated bound 0x0d -> 0x39 makes every count%100 in 14..57 use the 'th' suffix, so a compile error in the 21st -e pattern prints '21th' instead of '21st'.",
+      "subjects": [
+        "a"
+      ],
+      "args": [
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "a",
+        "-e",
+        "("
+      ]
+    },
+    {
+      "id": "r3-q271",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{L&}+"
+      ],
+      "note": "0x440f06 is `movzwl %ax,%edx` in the three-byte UTF-8 arm of GETCHARLENTEST inside the PT_LAMP (\\p{L&}) maximizing repeat loop (pcre2_match.c:4389). The mutated ModRM turns it into a memory subtract with a bogus disp32, which segfaults as soon as a three-byte letter is tested.",
+      "subjects": [
+        "ἀἀἀ"
+      ]
+    },
+    {
+      "id": "r3-q272",
+      "kind": "default",
+      "mode": "utf",
+      "patterns": [
+        "(?(?=a)a{1,3}|(?!))(?s).{2}(?!)"
+      ],
+      "note": "0x4385d4 stores MATCH_NOMATCH (0) into rrc for the RRETURN of the OP_ALLANY minimum-repeat loop (pcre2_match.c:3292); the mutant writes the zero to -0x247 instead. rrc is normally already 0, but the conditional-assertion path `case MATCH_MATCH:` (pcre2_match.c:6119-6121) continues with rrc == MATCH_",
+      "subjects": [
+        "aaaa"
+      ]
+    },
+    {
+      "id": "r3-q273",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "[\\A]"
+      ],
+      "note": "pcre2_compile.c:4479 is the class-item `switch(escape)`. The mutant rewrites `cmpl $4` into `je` plus a bogus mov and an invalid `ff /7`, so an escape value 1/2/3 (\\A, \\G, \\K) in a class falls through into SIGILL instead of reaching the 'escape sequence is invalid in character class' error.",
+      "subjects": [
+        "A"
+      ]
+    },
+    {
+      "id": "r3-q274",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?<=(?=[[:^alpha:]]))x"
+      ],
+      "note": "0x41bfd5 is the `je` for META_POSIX_NEG (0x80210000) in the check_lookbehinds switch (pcre2_compile.c:10140). The mutated rel32 sends the branch 0x55000000 bytes away (unmapped), so any POSIX class scanned inside a lookbehind segfaults at compile time. A bare `(?<=[[:^alpha:]])` is not enough becaus",
+      "subjects": [
+        "1x"
+      ]
+    },
+    {
+      "id": "r3-q276",
+      "kind": "default",
+      "mode": "plain",
+      "patterns": [
+        "a"
+      ],
+      "note": "0x4043c4 is the switch default of decode_dollar_escape (pcre2grep.c:1965) for characters such as '!' that are not named escapes. The mutant turns the default jump into `push` plus fallthrough into the `case 0` error path, so `-O 'X$!Y'` prints 'X!Y' with the original but reports 'no character after ",
+      "subjects": [
+        "a"
+      ],
+      "args": [
+        "-O",
+        "X$!Y"
+      ]
+    },
+    {
+      "id": "r3-q279",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "(?<=(?1))x"
+      ],
+      "note": "pcre2_compile.c:9853 stores ERR15 into *errcodeptr when get_branchlength sees a recursion/backref to a group beyond bracount inside a lookbehind. The mutated immediate 0x6c000073 is not a known error code, so pcre2_get_error_message leaves pcre2grep's buffer empty and the mutant prints an empty mess",
+      "subjects": [
+        "x"
+      ]
+    },
+    {
+      "id": "r3-q282",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?<=(?:a{3}|b{2}))c"
+      ],
+      "note": "0x44ba2a initialises the loop counter i=0 in the UTF branch of OP_VREVERSE (pcre2_match.c:6244). The mutated displacement writes the zero to an unrelated stack slot, so i keeps the previous value. With a variable-length lookbehind whose body needs the full maximum back-off, a second match on the sam",
+      "subjects": [
+        "aaacaaac"
+      ]
+    },
+    {
+      "id": "r3-q283",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{scx=Greek}+"
+      ],
+      "note": "0x435809 reloads the decoded lead code unit for the 2-/3-byte split inside the PT_SCX (\\p{scx=...}) minimum-repeat loop (pcre2_match.c:3069). The mutated disp reads -0xf6f0(%rbp) instead, so a three-byte Greek character is decoded with the two-byte arm and no longer satisfies scx=Greek.",
+      "subjects": [
+        "ἀἀ"
+      ]
+    },
+    {
+      "id": "r3-q284",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[a\\p{Xps}]"
+      ],
+      "note": "0x4204ef is `sete %al` for `set_bit = (ucp_gentype[chartype] == ucp_Z)` in the PT_SPACE/PT_PXSPACE default arm of _pcre2_update_classbits_8 (pcre2_compile_class.c:822). The mutant `movsbl %al,%eax` returns the gentype itself, so every character's <256 bit is set in the class bitmap; a class that mix",
+      "subjects": [
+        "b"
+      ]
+    },
+    {
+      "id": "r3-q287",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(*NO_START_OPT)\\p{L&}*?X"
+      ],
+      "note": "pcre2_match.c:3795 is the PT_LAMP minimising repeat. 0x43bc40 is the 4-byte UTF-8 arm's `add $2,%rax` that loads the last continuation byte; the mutant adds 0x34, so the low 6 bits of fc come from subject[0x35]. With '@' (0x40) there, U+104B0 (Lu) decodes as U+10480 (Lo) and the LAMP test fails.",
+      "subjects": [
+        "𐒰Xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@"
+      ]
+    },
+    {
+      "id": "r3-q289",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "[\\X]"
+      ],
+      "note": "parse_regex's class escape switch dispatches ESC_X (0x16) at 0x4104c4 (pcre2_compile.c:4479-4510) to the shared ERR7 block at 0x4105d6. The mutated rel32 sends it to 0x410605, the middle of the `*parsed_pattern++ = META_ESCAPE + escape` block, with stale %rax/%rdx, and the compiler segfaults. Origin",
+      "subjects": [
+        "X"
+      ]
+    },
+    {
+      "id": "r3-q290",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?J)(?<a>.)(?<b>.)(?<b>.)\\k<b>"
+      ],
+      "note": "pcre2_compile_cgroup.c:221 tests `i < cb->names_found`. The mutant compares the uninitialised red-zone slot -0x62(%rbp) (always >= names_found here) instead of i, so the name-table scan is skipped and index stays 0. With duplicate names and an earlier different name, the compiled \\k<b> points at nam",
+      "subjects": [
+        "xyyx"
+      ]
+    },
+    {
+      "id": "r3-q291",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "[[.ch.]]"
+      ],
+      "note": "parse_regex assigns ERR13 for POSIX collating syntax `[.ch.]`/`[=ch=]` (pcre2_compile.c:4064; ERR13=0x71). The mutant stores 0x7b, a different error code, so pcre2grep reports a different message and error offset.",
+      "subjects": [
+        "x"
+      ]
+    },
+    {
+      "id": "r3-q293",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\V"
+      ],
+      "note": "pcre2_match.c:2718 is the VSPACE_CASES switch of OP_NOT_VSPACE. 0x432d08 compares fc with 0x85 (NEL); the mutant immediate becomes 0xC8000085, so U+0085 is no longer treated as vertical space and \\V matches it.",
+      "subjects": [
+        ""
+      ]
+    },
+    {
+      "id": "r3-q302",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "\\w(?R)*\\w"
+      ],
+      "note": "0x44bfed is the `case OP_BRA` comparison of the OP_KET switch (pcre2_match.c:6358). The mutant compares 0x8d (OP_COND), so a whole-pattern recursion end no longer runs the capture/frame restore block; the match result/length changes.",
+      "subjects": [
+        "grtgt"
+      ]
+    },
+    {
+      "id": "r3-q306",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\D"
+      ],
+      "note": "0x4303a7 is the two-byte UTF-8 arm of GETCHARINCTEST for OP_NOT_DIGIT (pcre2_match.c:2580). The mutant `mov 0x40(%rax),%r8d` leaves RAX pointing at the match_block, so mb->eptr is set to mb+1 and the decoded character comes from the match_block; pcre2grep then reads far beyond the subject. -P is nee",
+      "subjects": [
+        "é"
+      ],
+      "args": [
+        "-P"
+      ]
+    },
+    {
+      "id": "r3-q308",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(?[\\x{10000}-\\x{20000}])"
+      ],
+      "note": "0x42f734 is the `mov -0x160(%rbp),%rax` that reloads the match_block before storing the advanced eptr at the end of the four-byte UTF-8 arm of GETCHARINCTEST in the OP_ECLASS minimum loop (pcre2_match.c:2483). The mutant `48 8b` -> `48 a3` becomes `movabs %rax,<moffs64>` with an address taken from t",
+      "subjects": [
+        "𐐀"
+      ]
+    },
+    {
+      "id": "r3-q309",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\X{2}"
+      ],
+      "note": "0x437ebc is the final `mov %rdx,0x40(%rax)` (Feptr = old+3) of the four-byte UTF-8 arm of GETCHARINCTEST inside the OP_EXTUNI minimum-repeat loop (pcre2_match.c:3248). The mutated disp8 0x40 -> 0x09 stores the advanced pointer at frame+9 instead of frame->eptr, so the reload at 0x438063 hands PRIV(e",
+      "subjects": [
+        "😀😀"
+      ]
+    },
+    {
+      "id": "r3-q311",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[[:print:]]"
+      ],
+      "note": "0x456b72 is the `mov $0x1,%eax` that materialises the TRUE result of the PT_PXPRINT test in _pcre2_xclass_8 (pcre2_xclass.c:216-224: `(chartype != ucp_Zl && chartype != ucp_Zp && (...))`). The mutant immediate 0x5d000001 can never equal isprop (0 or 1) at the following `cmp`, so every printable char",
+      "subjects": [
+        "abc"
+      ]
+    },
+    {
+      "id": "r3-q317",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\p{L&}{1,3}?Z"
+      ],
+      "note": "pcre2_match.c:3795 is GETCHARINCTEST(fc, Feptr) in the PT_LAMP (\\p{L&}) minimizing loop. The mutated `mov 0x40(%rax),%rax` becomes `mov 0x30(%rax),%rax`, which loads fields.type_repeat.ctype from the heap frame instead of frame->eptr; the following `lea 1(%rax)` then writes that small integer + 1 in",
+      "subjects": [
+        "abZ"
+      ]
+    },
+    {
+      "id": "r3-q318",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(?i)K{1,3}?Z"
+      ],
+      "note": "pcre2_match.c:3963 is GETCHARINCTEST in the PT_CLIST minimizing loop. The one-byte arm's `movzbl (%rax),%eax` becomes `movzbl 0x11(%rax),%eax`, so the caseless-set test at 0x43e2xx classifies the byte 17 positions ahead while frame->eptr still advances by one. With the rest of the expression one cha",
+      "subjects": [
+        "kkZaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
+      "id": "r3-q325",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)\\p{Lu}{1,3}?Z"
+      ],
+      "note": "pcre2_match.c:3832 is GETCHARINCTEST in the PT_PC minimizing loop. 0x43c554 is the trampoline `jmp 43c76e` at the end of the three-byte UTF-8 arm; the mutated last rel32 byte makes it jump to 0x91c5776e, an unmapped address. A three-byte uppercase letter in the lazily-taken extra repetition (U+FF21 ",
+      "subjects": [
+        "ＡＡZ"
+      ]
+    },
+    {
+      "id": "r3-q331",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[\\x{100}-\\x{1042ff}]"
+      ],
+      "note": "pcre2_compile_class.c:1162 tests ranges[last] == GET_MAX_CHAR_VALUE(utf) (0x10ffff) to set XCLASS_HIGH_ANY. The mutant constant 0x1042ff makes a class whose top endpoint is exactly U+1042FF satisfy that test, so the compiler wrongly treats everything above 256 as in the class (should_flip_negation).",
+      "subjects": [
+        "􄌀"
+      ]
+    },
+    {
+      "id": "r3-q335",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)\\S{2,}X"
+      ],
+      "note": "pcre2_match.c:4885 is the increment of the maximizing OP_NOT_WHITESPACE repeat loop. The mutant turns `addl $1,-0x2f4(%rbp)` into `and $0xc,%ecx; std; incl (%rcx)`, so the loop counter is not advanced and the mutant executes a memory increment through a masked pointer and sets DF. A greedy \\S repeat",
+      "subjects": [
+        "abX"
+      ],
+      "args": [
+        "-P"
+      ]
+    },
+    {
+      "id": "r3-q336",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)\\d{2,}?X"
+      ],
+      "note": "pcre2_match.c:4328 is the OP_DIGIT test of the non-UTF minimizing type-repeat loop. The mutant replaces `and $0x8,%eax` with the invalid long-mode opcode 0x37 (AAA), so the mutant gets SIGILL as soon as the lazy \\d repeat consumes an extra digit. `(*NO_AUTO_POSSESS)\\d{2,}?X` on '123X' consumes the t",
+      "subjects": [
+        "123X"
+      ]
+    },
+    {
+      "id": "r3-q340",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?x)a #comment"
+      ],
+      "note": "pcre2_match.c:3463 is IS_NEWLINE inside the (?x) '#'-comment scan. With a non-fixed newline type the macro calls _pcre2_is_newline_8 and then masks the result; the mutant replaces `and $1,%eax` with `movsb; loopne`, which copies a byte through rsi/rdi and faults. -N ANY forces the call path, so `(?x",
+      "subjects": [
+        "a"
+      ],
+      "args": [
+        "-N",
+        "ANY"
+      ]
+    },
+    {
+      "id": "r3-q342",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)\\H+?X"
+      ],
+      "note": "pcre2_match.c:4144 is the OP_NOT_HSPACE switch in the UTF minimizing type-repeat loop. The mutant turns the `cmpl $0x202f,-0x2f0(%rbp)` of the HSPACE decision tree into `movsl %ds:(%rsi),%es:(%rdi)` followed by a bogus `mov ebp`, so any character tested by a lazy \\H loop executes the string move and",
+      "subjects": [
+        "abX"
+      ]
+    },
+    {
+      "id": "r3-q344",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\D{2}"
+      ],
+      "note": "pcre2_match.c:3413 is GETCHARINC in the UTF OP_NOT_DIGIT minimum-repeat loop. The mutated `jbe` target moves from 0x43a0d1 to 0x4463d1, so the ASCII fast path of the UTF-8 decoder for a non-digit character jumps into the middle of other match code. \\D{2} on 'aa' takes that path and the mutant dies w",
+      "subjects": [
+        "aa"
+      ],
+      "args": [
+        "-P"
+      ]
+    },
+    {
+      "id": "r3-q346",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_START_OPT)(?(?=a)a|b).*\\d{2}Q"
+      ],
+      "note": "pcre2_match.c:3695 is RRETURN(MATCH_NOMATCH) in the non-UTF OP_DIGIT minimum-repeat loop; the compiler stores 0 (MATCH_NOMATCH) into the rrc slot -0x2fc. The mutant stores 0 to -0x5afc instead, leaving rrc holding the previous return code. A conditional assertion that leaves rrc=1 (MATCH_MATCH) befo",
+      "subjects": [
+        "xa1"
+      ]
+    },
+    {
+      "id": "r3-q207",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\b\\w(?<A>(?(<a>)(?(<b>)|(?<b>)\\b(?&A))|(?<a>)(?&A)))"
+      ],
+      "note": "pcre2_match.c:6745 FORWARDCHARTEST: the mutated jump skips the boundary check/continuation skip, so the \b value is Feptr+1 (or +2 on the quoted-address path) instead of Feptr+charlen. In the witness the mutant takes the +2 path for the \b at 0x484bbe and produces 0x484bc0, which coincides with the va",
+      "subjects": [
+        "                                                                                                                                                                              x "
+      ],
+      "args": [
+        "-P"
+      ]
     }
   ]
 }

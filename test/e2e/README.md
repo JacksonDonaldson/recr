@@ -63,15 +63,16 @@ added where pcre2grep has no per-pattern option.
 Each candidate pattern is compiled and run against the whole subject corpus
 using a reference binary. Patterns that fail, write to stderr, or take longer
 than half a second are dropped. `test/e2e/survivor_cases.json` holds verified
-single-pattern cases for code that the bulk corpus cannot reach: 32 special
-cases (normal `-o` output, sometimes with an extra option such as `-v` or
-`-P`), 4 compile-error cases (run separately so one bad pattern does not abort
-the corpus), and 2 default-output cases (run without `-o`). The result is
+single-pattern cases for code that the bulk corpus cannot reach: 158 special
+cases (normal `-o` output, sometimes with an extra option such as `-v`,
+`-P`, or `-U`), 16 compile-error cases (run separately so one bad pattern does
+not abort the corpus), and 4 default-output cases (run without `-o`). Cases
+can also supply raw `subjects_hex` bytes. The result is
 cached under `test/build/e2e/grep-corpus/<digest>/`, keyed by the testdata,
 the reference binary, the curated cases, and the filter limits, so the build
 happens once per checkout. The bulk corpus has roughly 3,000 plain and 1,800
 UTF patterns over about 4,000 subject lines; running both modes takes roughly
-10-15 seconds, and the special cases add less than a second.
+10-15 seconds, and the special cases add a few seconds.
 
 `run_e2e.py` captures the corpus output before codezip and requires the
 codezipped `pcre2grep` to produce identical stdout, stderr, and exit status.
@@ -98,13 +99,17 @@ regions dilute the measurement.
 The sensible expectation is not 100%, and single-byte detection has a hard
 ceiling. Even `pcre2test`'s `RunTest`, which executes about 97% of the match
 engine, notices only 64% of single-byte flips (22 of 33 flips inside `match`
-are semantically inert). The library corpus raises `pcre2grep` from about 22%
-to 52% in a 100-trial run at one flip. A separate 57-flip sample of survivors
-was then triaged one by one; the curated cases now catch 38 of those 57. The
-remaining 19 are equivalent mutants, unreachable internal-error/UTF paths, or
-need a library API that `pcre2grep` does not expose (partial matching, offset
-limits, invalid-UTF checking). Increasing `--flips` makes the corruption large
-enough to reach observable state. Use
+are semantically inert). The bulk library corpus raises `pcre2grep` from about
+22% to 52% in a 100-trial run at one flip. Three survivor samples have since
+been triaged one by one. The 57 survivors of the first sample produced 38
+witnesses and the 42 survivors of a second 100-trial sample (seed 2) produced
+18 more. A third sample, eight 100-trial runs (seeds 3-10), left 346
+survivors; triage produced 122 more witnesses, taking that sample from 56.8%
+to 72%. The 267 mutations still uncaught across the three samples are
+equivalent mutants, unreachable internal-error/UTF paths, or need a library
+API that `pcre2grep` does not expose (partial matching, offset limits,
+invalid-UTF checking, copied subjects, alternate compile contexts). Increasing
+`--flips` makes the corruption large enough to reach observable state. Use
 `--region code --flips 1` for the strictest measurement of the bytes the
 programs execute, or `--flips 8` for a coarser check.
 

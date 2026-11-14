@@ -17,7 +17,7 @@ GHIDRA_PROJECT_DIR ?= /tmp/opencode/ghidra_projects
 GHIDRA_PROJECT ?= codezip_sample
 GHIDRA_XML := $(BUILD_DIR)/sample_ghidra.xml
 
-.PHONY: all run ghidra-xml e2e clean
+.PHONY: all run ghidra-xml e2e e2e-mutation clean
 
 all: $(TARGET)
 
@@ -41,9 +41,15 @@ ghidra-xml: $(TARGET)
 		-deleteProject
 
 # Opt-in end-to-end check: builds pinned pcre2, rewrites its test executables
-# with codezip, and re-runs pcre2's suite.  See test/e2e/README.md.
+# with codezip, and re-runs pcre2's suite plus the pcre2grep library corpus.
+# See test/e2e/README.md.
 e2e:
 	$(CURDIR)/e2e/run_e2e.py
+
+# Opt-in mutation check: flip bytes in the codezipped binaries and require the
+# pcre2 suite to notice.  Needs the artifacts from `make e2e`.
+e2e-mutation:
+	$(CURDIR)/e2e/mutation_check.py
 
 clean:
 	rm -rf $(BUILD_DIR)
