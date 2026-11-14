@@ -52,10 +52,6 @@ CFLAGS = (
     "-fno-inline",
     "-fno-omit-frame-pointer",
     "-falign-functions=1",
-    # The uplifter currently rejects decoded instructions that are unreachable
-    # from the entry point.  GCC emits switch jump tables even at -O0, so the
-    # fixture keeps switch dispatch in straight-line code.
-    "-fno-jump-tables",
 )
 LDFLAGS = ("-no-pie",)
 BINARIES = ("pcre2test", "pcre2grep")
@@ -442,7 +438,7 @@ def _codezip_all() -> dict[str, dict[str, int]]:
         output = RESULT_DIR / f"{name}.codezip"
         receipt = RESULT_DIR / f"{name}.receipt.yaml"
 
-        print(f"codezipping {name} (this takes several minutes)")
+        print(f"codezipping {name} (this can take a while)")
         _run(
             [
                 sys.executable,
@@ -587,7 +583,7 @@ def _write_summary(
 def main() -> int:
     print(
         "Building pinned pcre2, running its suite before and after codezip. "
-        "Expect roughly 15 minutes."
+        "Expect about 4 minutes."
     )
     _check_tools()
     _prepare_dirs()

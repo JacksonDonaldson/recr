@@ -15,7 +15,7 @@ GHIDRA_XML = Path(__file__).parent / "fixtures" / "sample_ghidra.xml"
 # Declared extents of the sample's unreferenced functions, from the fixture.
 FREE_RANGES = (
     (0x4010A0, 0x5),
-    (0x401AF7, 0x34),
+    (0x401B68, 0x34),
 )
 
 
@@ -65,13 +65,13 @@ def test_pipeline_writes_binary_with_free_space_filled(
     assert result == 0
     assert "function main @ 0x40182b" in capsys.readouterr().out
 
-    assert "uplifted 40/40 function(s)" in caplog.text
+    assert "uplifted 41/41 function(s)" in caplog.text
     assert "recovering cross-references" in caplog.text
     assert "incoming reference(s)" in caplog.text
     assert "removing unreferenced functions" in caplog.text
     assert "marked 2 function(s) as free space" in caplog.text
     assert (
-        "free space 0x401af7 (0x34 bytes): "
+        "free space 0x401b68 (0x34 bytes): "
         "unreferenced function unreferenced_function"
     ) in caplog.text
     assert "filling 2 free space range(s) with 0xff" in caplog.text
@@ -110,7 +110,7 @@ def test_receipt_records_freed_ranges(
         "freed:\n"
         "  - address: 0x4010a0\n"
         "    length: 0x5\n"
-        "  - address: 0x401af7\n"
+        "  - address: 0x401b68\n"
         "    length: 0x34\n"
     )
 

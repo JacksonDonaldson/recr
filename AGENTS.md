@@ -159,10 +159,16 @@ Implemented:
   `flows_from` and `outgoing_references`, and basic-block construction where
   branches and returns end blocks and calls fall through. Decode overruns,
   in-function targets that are not instruction boundaries, and instructions
-  unreachable from the entry are rejected. `Function.pretty_print()` renders
-  the result, including incoming and outgoing references, to stdout.
+  unreachable from the entry are rejected, except that a reachable unresolved
+  local flow (such as an indirect switch jump) lets the remaining decoded bytes
+  become additional entry regions. Those functions keep an `UNK_LOCAL`
+  outgoing reference, and `Function.has_unk_local_reference()` reports it so
+  CFG-dependent passes can skip them. `Function.pretty_print()` renders the
+  result, including incoming and outgoing references, to stdout.
   `test/uplift_sample.py` uplifts and prints every sample function;
-  `test/test_uplifter.py` covers the sample and rejection paths.
+  `test/test_uplifter.py` covers the sample, the sample's real GCC jump-table
+  switch (`switch_dispatch`), a hand-authored indirect-jump case, and
+  rejection paths.
 - `Uplifter.build_xrefs()` scans every mapped virtual address for 64-bit and
   32-bit values and successfully decoded control-flow instructions that target a
   known function entry, then records unique incoming references. The
@@ -201,16 +207,35 @@ Implemented:
   `test/test_codezip.py` covers the CLI flags, verbose output, receipt
   contents, output bytes, and exit codes.
 - End-to-end check (`test/e2e/run_e2e.py`, `make -C test e2e`) builds pinned
-  pcre2 10.49 with `-O0 -g3 -fno-pie ... -fno-jump-tables`, exports its
+  pcre2 10.49 with `-O0 -g3 -fno-pie ...`, exports its
   functions with Ghidra, codezips `pcre2test` and `pcre2grep`, and requires
-  pcre2's `make check` to pass before and after. It is opt-in, needs Ghidra
-  and network access, and records the freed ranges and byte count under
+  pcre2's `make check` to pass before and after. It also extracts patterns and
+  subjects from pcre2's `testdata` and runs them through `pcre2grep` in plain
+  and UTF modes to exercise the statically linked library; curated cases in
+  `test/e2e/survivor_cases.json` cover rare subject escapes, compile-error
+  paths, and default line-output paths. The corpus is filtered against a
+  reference binary and cached under `test/build/e2e/grep-corpus/`. The check
+  is opt-in, needs Ghidra and network access, and records the freed ranges and
+  byte count under
   `test/build/e2e/results/`. The built `pcre2test`/`pcre2grep` binaries are
   cached in `test/build/e2e/baseline/`, and Ghidra exports are reused when
   their binary and script hashes match, so only changed inputs are rebuilt or
-  re-exported. Without `-fno-jump-tables`, 37 `pcre2test`
-  functions fail uplift because the uplifter rejects decoded instructions
-  unreachable through absolute switch flow.
+  re-exported. Switch jump tables are uplifted conservatively as unresolved
+  local flow, so the build does not disable them.
+- Mutation sensitivity check (`test/e2e/mutation_check.py`, `make -C test
+  e2e-mutation`) flips random bytes in the cached codezipped binaries and runs
+  the matching pcre2 test script, plus the library corpus for `pcre2grep`. It
+  defaults to one executable byte per trial, 20 trials per binary, and a 40%
+  minimum detection rate; `--region`, `--flips`, and `--trials` adjust the
+  measurement. Per-trial logs and `mutation.json` go under
+  `test/build/e2e/`. The bulk corpus raises single-byte detection for
+  `pcre2grep` from roughly 22% to 52% before survivor triage. The 178 curated
+  cases in `test/e2e/survivor_cases.json` come from three triaged samples:
+  they catch 38 of 57 flips in the first, 18 of 42 in the second, and 122 of
+  346 in the third (eight seeds of 100 trials). The 267 remaining mutations
+  are equivalent, unreachable internal-error/UTF paths, or need a library API
+  that `pcre2grep` does not expose. Those cannot be killed by an output-based
+  CLI test, so 90% remains out of reach.
 
 Still stubs:
 
@@ -262,7 +287,7 @@ Ghidra 12.2 requires JDK 25. On the current development machine:
 Override `GHIDRA_HOME` on the make command line if Ghidra lives elsewhere.
 
 Run the opt-in end-to-end pcre2 check (Ghidra, network on first run, about
-15 minutes):
+4 minutes):
 
 ```sh
 make -C test e2e

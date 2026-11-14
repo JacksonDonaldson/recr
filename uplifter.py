@@ -44,6 +44,13 @@ class Uplifter:
         rejected if an instruction does not decode, an instruction crosses the
         declared end, a flow target lands in the middle of an instruction, or
         decoded bytes are unreachable from the entry.
+
+        An unresolved local flow (for example an indirect switch jump) can hide
+        its successors from static recovery.  When a reachable instruction has
+        such a flow, the remaining decoded bytes are treated as additional
+        entry regions instead of being rejected.  The function keeps its
+        :attr:`~ir.AddressKind.UNK_LOCAL` outgoing reference, so passes that
+        require a complete CFG can skip it.
         """
         if function.length <= 0:
             raise ValueError(
@@ -176,8 +183,28 @@ class Uplifter:
         leaders = {start}
         visited: set[int] = set()
         pending = deque([start])
+        accepted_unknown_local = False
 
-        while pending:
+        while pending or accepted_unknown_local:
+            if not pending:
+                next_root = next(
+                    (
+                        address
+                        for address in sorted(instructions)
+                        if address not in visited
+                    ),
+                    None,
+                )
+                if next_root is None:
+                    break
+
+                # An unresolved local jump can reach any of these bytes.  The
+                # earliest unvisited instruction has no unvisited predecessor,
+                # so it starts a region; walk from there to recover its internal
+                # edges and keep its basic blocks maximal.
+                leaders.add(next_root)
+                pending.append(next_root)
+
             address = pending.popleft()
             if address in visited:
                 continue
@@ -188,6 +215,8 @@ class Uplifter:
 
             for target in instruction.flows_to:
                 if target.kind is not AddressKind.ABSOLUTE:
+                    if target.kind is AddressKind.UNK_LOCAL:
+                        accepted_unknown_local = True
                     _append_unique(
                         outgoing_references, Reference(source, target)
                     )

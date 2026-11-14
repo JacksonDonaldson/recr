@@ -45,7 +45,7 @@ def _instructions(function: Function) -> list[Instruction]:
 def test_every_sample_function_is_uplifted(uplifted_sample) -> None:
     parsed, _, uplifter = uplifted_sample
 
-    assert len(parsed.functions) == 40
+    assert len(parsed.functions) == 41
     assert len(uplifter.function_map) == len(parsed.functions)
 
     for function in parsed.functions:
@@ -258,6 +258,114 @@ def test_uplift_rejects_unreachable_instructions(uplifted_sample) -> None:
     with pytest.raises(ValueError, match="unreachable from entry"):
         uplifter.uplift_function(function)
     assert function.basic_blocks == []
+
+
+class _CodeBinary:
+    """Minimal in-memory binary for decoding a hand-authored function."""
+
+    def __init__(self, base: int, data: bytes) -> None:
+        self.base = base
+        self.data = data
+
+    def read(self, address: int, length: int) -> bytes:
+        offset = address - self.base
+        if offset < 0 or offset + length > len(self.data):
+            raise ValueError(f"virtual address {address:#x} is not mapped")
+        return self.data[offset : offset + length]
+
+
+def test_uplift_accepts_case_bodies_after_an_indirect_switch_jump(
+    monkeypatch, x86_64_isa
+) -> None:
+    # cmp edi, 2; ja default; mov eax, edi; jmp rax; (case body) ...
+    code = bytes.fromhex(
+        "83ff02"
+        "770b"
+        "8bc7"
+        "ffe0"
+        "90"
+        "b82a000000"
+        "c3"
+        "b8ffffffff"
+        "c3"
+    )
+    monkeypatch.setattr("uplifter.create_isa", lambda name: x86_64_isa)
+    uplifter = Uplifter("x86_64", _CodeBinary(0x1000, code))
+    function = Function(
+        name="switch",
+        file_offset=-1,
+        start_address=0x1000,
+        length=len(code),
+    )
+
+    uplifter.uplift_function(function)
+
+    instructions = _instructions(function)
+    assert [instruction.address for instruction in instructions] == [
+        0x1000,
+        0x1003,
+        0x1005,
+        0x1007,
+        0x1009,
+        0x100A,
+        0x100F,
+        0x1010,
+        0x1015,
+    ]
+    assert [block.start_location for block in function.basic_blocks] == [
+        Address.absolute(0x1000),
+        Address.absolute(0x1005),
+        Address.absolute(0x1009),
+        Address.absolute(0x1010),
+    ]
+
+    indirect = instructions[3]
+    assert indirect.type is InstructionType.BRANCH
+    assert indirect.flows_to == [Address.unknown_local()]
+    assert function.outgoing_references == [
+        Reference(Address.absolute(0x1007), Address.unknown_local())
+    ]
+    assert function.has_unk_local_reference()
+
+
+def test_sample_jump_table_function_is_uplifted(uplifted_sample) -> None:
+    parsed, _, _ = uplifted_sample
+    function = _function(parsed, "switch_dispatch")
+
+    assert function.start_address == 0x401B11
+    assert function.has_unk_local_reference()
+    assert function.outgoing_references == [
+        Reference(Address.absolute(0x401B2D), Address.unknown_local())
+    ]
+
+    # The indirect jump hides every case body, including the default.  Each
+    # one is recovered as its own entry region.
+    assert [block.start_location for block in function.basic_blocks] == [
+        Address.absolute(address)
+        for address in (
+            0x401B11,
+            0x401B22,
+            0x401B30,
+            0x401B37,
+            0x401B3E,
+            0x401B45,
+            0x401B4C,
+            0x401B53,
+            0x401B5A,
+            0x401B61,
+            0x401B66,
+        )
+    ]
+
+
+def test_has_unk_local_reference_distinguishes_functions(
+    uplifted_sample,
+) -> None:
+    parsed, _, _ = uplifted_sample
+
+    assert _function(parsed, "<EXTERNAL>::printf").has_unk_local_reference()
+    assert _function(parsed, "switch_dispatch").has_unk_local_reference()
+    assert not _function(parsed, "add").has_unk_local_reference()
 
 
 def test_uplift_rejects_flow_into_the_middle_of_an_instruction(

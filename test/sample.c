@@ -1,5 +1,5 @@
 /*
- * A small, self-contained C program with 32 functions, including main.
+ * A small, self-contained C program with 33 functions, including main.
  *
  * It is intentionally compiled at -O0 so every function survives as its own
  * symbol, making it useful as a codezip test input.  The functions cover
@@ -8,6 +8,8 @@
 
 #include <stdint.h>
 #include <stdio.h>
+
+int switch_dispatch(int value);
 
 int add(int a, int b)
 {
@@ -308,12 +310,41 @@ int main(void)
     reverse_array(values, count);
     bubble_sort(values, count);
     total += binary_search(values, count, 5);
+    total += switch_dispatch(3);
+    total += switch_dispatch(99);
 
     fact = factorial(6);
     printf("total=%d factorial=%llu first=%d last=%d\n",
            total, fact, values[0], values[count - 1]);
 
     return 0;
+}
+
+/*
+ * A dense switch makes GCC emit an indirect jump through a jump table even at
+ * -O0.  The case bodies are not reachable through an absolute flow edge, so
+ * this exercises the uplifter's unresolved-local-flow handling.
+ */
+int switch_dispatch(int value)
+{
+    switch (value) {
+    case 0:
+        return 101;
+    case 1:
+        return 203;
+    case 2:
+        return 307;
+    case 3:
+        return 401;
+    case 4:
+        return 503;
+    case 5:
+        return 601;
+    case 6:
+        return 701;
+    default:
+        return -1;
+    }
 }
 
 /*

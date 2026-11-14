@@ -4,7 +4,8 @@
 runs pcre2's own test suite, rewrites `pcre2test` and `pcre2grep` with codezip,
 and requires the same suite to pass again. It is intentionally outside the
 default pytest run: it needs network access on the first invocation and takes
-roughly 15 minutes. `mutation_check.py` then measures whether that suite would
+about 4 minutes on the development machine. The first run also clones pcre2 and
+builds the corpus. `mutation_check.py` then measures whether that suite would
 actually notice a corrupted rewrite.
 
 ```sh
@@ -29,7 +30,7 @@ make -C test e2e
    ```text
    --disable-shared --disable-jit
    CFLAGS=-O0 -g3 -fno-pie -fno-inline -fno-omit-frame-pointer
-          -falign-functions=1 -fno-jump-tables
+          -falign-functions=1
    LDFLAGS=-no-pie
    ```
 
@@ -122,14 +123,12 @@ every mutation and outcome, under `test/build/e2e/`. It requires the
 
 ## Build flag notes
 
-`-fno-jump-tables` is required by the current uplifter. GCC emits switch jump
-tables even at `-O0`, and the uplifter rejects decoded instructions that are
-not reachable from the function entry through an absolute flow edge. Without
-the flag, 37 of `pcre2test`'s functions failed to uplift on the development
-build (for example `pcre2_printint_8`), so codezip exited before writing an
-output. Handling indirect switch flow is a separate pipeline change; this
-fixture deliberately keeps dispatch straight-line so the end-to-end check
-exercises function removal rather than that known gap.
+GCC emits switch jump tables even at `-O0`. The uplifter cannot resolve the
+targets of the resulting indirect jump, so when a reachable instruction has an
+unresolved local flow it treats the remaining decoded bytes as additional entry
+regions. The function keeps its `UNK_LOCAL` outgoing reference, which lets
+passes that need a complete CFG skip it. The fixture therefore does not need
+`-fno-jump-tables`.
 
 ## Recorded result
 

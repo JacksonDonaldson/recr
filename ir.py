@@ -122,7 +122,10 @@ class Function:
 
     def has_unk_local_reference(self) -> bool:
         """Return whether any outgoing reference is :attr:`AddressKind.UNK_LOCAL`."""
-        raise NotImplementedError
+        return any(
+            reference.to.kind is AddressKind.UNK_LOCAL
+            for reference in self.outgoing_references
+        )
 
     def uses_red_zone(self) -> bool:
         """Return whether the function accesses the stack below the stack pointer."""

@@ -43,6 +43,7 @@ EXPECTED_USER_FUNCTIONS = {
     "bubble_sort",
     "binary_search",
     "main",
+    "switch_dispatch",
     "unreferenced_function",
 }
 
@@ -70,7 +71,7 @@ def test_sample_ghidra_xml_parses() -> None:
         0x405000 <= function.start_address < 0x405020
         for function in result.functions
     )
-    assert len(result.functions) == 40
+    assert len(result.functions) == 41
 
 
 def test_ghidra_function_metadata() -> None:
@@ -84,14 +85,18 @@ def test_ghidra_function_metadata() -> None:
 
     main = functions["main"]
     assert main.start_address == 0x40182B
-    assert main.length == 0x2CC
+    assert main.length == 0x2E6
 
     binary_search = functions["binary_search"]
     assert binary_search.start_address == 0x401790
     assert binary_search.length == 0x9B
 
+    switch_dispatch = functions["switch_dispatch"]
+    assert switch_dispatch.start_address == 0x401B11
+    assert switch_dispatch.length == 0x57
+
     unreferenced = functions["unreferenced_function"]
-    assert unreferenced.start_address == 0x401AF7
+    assert unreferenced.start_address == 0x401B68
     assert unreferenced.length == 0x34
 
     # This is a real PLT stub in .plt.sec, not part of the artificial external

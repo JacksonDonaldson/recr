@@ -102,11 +102,19 @@ python test/uplift_sample.py
 ```
 
 An opt-in end-to-end check builds pinned pcre2, rewrites its test executables
-with codezip, and re-runs pcre2's suite (requires Ghidra and network access,
-about 15 minutes):
+with codezip, re-runs pcre2's suite, and runs pcre2's pattern corpus through
+`pcre2grep` to exercise its statically linked library (requires Ghidra and
+network access, about 4 minutes):
 
 ```sh
 make -C test e2e
+```
+
+To check that the suite would notice a corrupted rewrite, run the mutation
+sensitivity check after it:
+
+```sh
+make -C test e2e-mutation
 ```
 
 The optimization pipeline still stops before outlining.

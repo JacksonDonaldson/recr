@@ -187,6 +187,11 @@ uplifter.py:
               declared end, a flow target is not an instruction boundary, or
               decoded bytes are unreachable from the entry
 
+            - exception: if a reachable instruction has an UNK_LOCAL flow, the
+              remaining decoded bytes are treated as additional entry regions
+              instead of being rejected.  The function keeps its UNK_LOCAL
+              outgoing reference so CFG-dependent passes can skip it
+
             - add f to the function map
         
         function build_xrefs():
