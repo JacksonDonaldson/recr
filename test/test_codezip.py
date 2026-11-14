@@ -40,10 +40,16 @@ def test_pipeline_uplifts_everything_then_exits_with_error(
     assert "function divide_safe @ 0x40119b" in output
     assert "incoming references" in output
 
-    assert "uplifted 39/39 function(s)" in caplog.text
+    assert "uplifted 40/40 function(s)" in caplog.text
     assert "recovering cross-references" in caplog.text
     assert "incoming reference(s)" in caplog.text
-    assert "optimization and verification are not implemented" in caplog.text
+    assert "removing unreferenced functions" in caplog.text
+    assert "marked 3 function(s) as free space" in caplog.text
+    assert (
+        "free space 0x401af7 (0x34 bytes): "
+        "unreferenced function unreferenced_function"
+    ) in caplog.text
+    assert "outlining and verification are not implemented" in caplog.text
 
 
 def test_non_verbose_mode_does_not_pretty_print(capsys, sample_elf: Path) -> None:

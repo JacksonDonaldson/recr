@@ -45,7 +45,7 @@ def _instructions(function: Function) -> list[Instruction]:
 def test_every_sample_function_is_uplifted(uplifted_sample) -> None:
     parsed, _, uplifter = uplifted_sample
 
-    assert len(parsed.functions) == 39
+    assert len(parsed.functions) == 40
     assert len(uplifter.function_map) == len(parsed.functions)
 
     for function in parsed.functions:

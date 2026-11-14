@@ -2,8 +2,10 @@
 """Codezip command-line orchestrator.
 
 Drives the parse -> uplift -> optimize -> verify pipeline.  The implemented
-stages parse a reverse-engineering export, open the binary, and uplift every
-function; the pipeline intentionally stops there until the later stages exist.
+stages parse a reverse-engineering export, open the binary, uplift every
+function, recover cross-references, and detect unreferenced-function free
+space.  The pipeline intentionally stops before later optimization and
+verification stages.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 
 from binary.binary import Binary
 from input_parser import ParseError, parse_re_file
+from optimizers import function_remover
 from uplifter import Uplifter
 
 LOGGER = logging.getLogger("codezip")
@@ -72,10 +75,10 @@ def _configure_logging(verbose: bool) -> None:
 
 
 def run_pipeline(args: argparse.Namespace) -> int:
-    """Parse, open, and uplift every function, then report the unimplemented tail.
+    """Parse, uplift, recover references, and detect free space.
 
-    The optimizer and verifier are still stubs, so a successful uplift run is
-    still a failure from the pipeline's point of view.
+    The outliner and verifier are still stubs, so a successful free-space
+    detection run is still a failure from the pipeline's point of view.
     """
     _configure_logging(args.verbose)
 
@@ -151,6 +154,19 @@ def run_pipeline(args: argparse.Namespace) -> int:
         )
         LOGGER.info("recovered %d incoming reference(s)", xref_count)
 
+        LOGGER.info("removing unreferenced functions")
+        free_space = function_remover.run_optimizer(
+            binary, uplifter, uplifter.isa
+        )
+        LOGGER.info("marked %d function(s) as free space", len(free_space))
+        for space in free_space:
+            LOGGER.debug(
+                "free space %#x (%#x bytes): %s",
+                space.start.value,
+                space.size,
+                space.diagnostic,
+            )
+
     if args.verbose:
         for function in parsed.functions:
             if not function.basic_blocks:
@@ -163,8 +179,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
         return 1
 
     LOGGER.error(
-        "pipeline stops after cross-reference recovery: "
-        "optimization and verification are not implemented"
+        "pipeline stops after free-space detection: "
+        "outlining and verification are not implemented"
     )
     return 1
 

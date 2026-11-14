@@ -1,5 +1,5 @@
 /*
- * A small, self-contained C program with 30 distinct functions.
+ * A small, self-contained C program with 32 functions, including main.
  *
  * It is intentionally compiled at -O0 so every function survives as its own
  * symbol, making it useful as a codezip test input.  The functions cover
@@ -314,4 +314,18 @@ int main(void)
            total, fact, values[0], values[count - 1]);
 
     return 0;
+}
+
+/*
+ * Deliberately never called.  The unreferenced-function optimizer must
+ * identify this function and mark its whole extent as free space.
+ */
+int unreferenced_function(int value)
+{
+    int total = 0;
+
+    for (int i = 0; i < value; ++i) {
+        total += i * 2;
+    }
+    return total;
 }

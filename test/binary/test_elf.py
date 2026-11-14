@@ -58,8 +58,8 @@ def test_mapped_ranges_reports_load_segments(sample_elf: Path) -> None:
 
     assert binary.mapped_ranges() == [
         (0x400000, 0x558),
-        (0x401000, 0xB05),
-        (0x402000, 0x5CC),
+        (0x401000, 0xB39),
+        (0x402000, 0x5F4),
         (0x403DF8, 0x230),
     ]
 

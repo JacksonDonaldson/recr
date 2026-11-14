@@ -7,9 +7,10 @@ fixed; instructions may move within a function, and data is never appended.
 ## Status
 
 The input parsers, ELF backend, x86-64 disassembler, function uplifter,
-cross-reference recovery, and CLI wiring through that stage are implemented.
-The optimization passes and verification are still stubs that raise
-`NotImplementedError`, so no binary modification behavior is implemented yet.
+cross-reference recovery, unreferenced-function free-space detection, and CLI
+wiring through that stage are implemented. The outliner and verification are
+still stubs that raise `NotImplementedError`, so no binary modification
+behavior is implemented yet.
 
 ## Planned pipeline
 
@@ -18,13 +19,14 @@ The optimization passes and verification are still stubs that raise
 2. **Uplift** each function into instructions, basic blocks, cross-references,
    and a control-flow graph.
 3. **Optimize**:
-   - remove unreferenced functions;
+   - remove unreferenced functions (detection only for now);
    - outline repeated instruction regions aggressively.
 4. **Verify** the result statically and dynamically, reverting any function
    that fails a check.
 
-The current CLI performs steps 1 and 2, then exits with an error because the
-remaining stages are not implemented.
+The current CLI performs steps 1 and 2 and the free-space detection part of
+step 3, then exits with an error because the remaining stages are not
+implemented.
 
 ## Layout
 
@@ -73,8 +75,9 @@ python codezip.py ./a.out ./functions.yaml -o ./a.out.codezip
 ```
 
 Add `-v` or `--verbose` to log pipeline progress and pretty-print every
-uplifted function. The command currently stops after cross-reference recovery
-and exits nonzero because optimization and verification are not implemented.
+uplifted function. The command currently stops after unreferenced-function
+detection and exits nonzero because outlining and verification are not
+implemented.
 
 ## Development
 

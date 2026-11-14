@@ -43,6 +43,7 @@ EXPECTED_USER_FUNCTIONS = {
     "bubble_sort",
     "binary_search",
     "main",
+    "unreferenced_function",
 }
 
 
@@ -69,7 +70,7 @@ def test_sample_ghidra_xml_parses() -> None:
         0x405000 <= function.start_address < 0x405020
         for function in result.functions
     )
-    assert len(result.functions) == 39
+    assert len(result.functions) == 40
 
 
 def test_ghidra_function_metadata() -> None:
@@ -88,6 +89,10 @@ def test_ghidra_function_metadata() -> None:
     binary_search = functions["binary_search"]
     assert binary_search.start_address == 0x401790
     assert binary_search.length == 0x9B
+
+    unreferenced = functions["unreferenced_function"]
+    assert unreferenced.start_address == 0x401AF7
+    assert unreferenced.length == 0x34
 
     # This is a real PLT stub in .plt.sec, not part of the artificial external
     # block, so it must be retained despite its Ghidra-assigned name.

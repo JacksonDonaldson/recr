@@ -148,18 +148,24 @@ Implemented:
   values and successfully decoded control-flow instructions that target a known
   function entry, then records unique incoming references. Ordinary
   fallthrough edges are not cross-references.
-- `codezip.py` parses the export, opens the binary, uplifts every function, and
-  recovers cross-references. It then exits nonzero because optimization and
-  verification are still unimplemented. `-v/--verbose` logs pipeline progress,
-  parser warnings, and per-function results, and pretty-prints every uplifted
-  function. `test/test_codezip.py` covers the CLI flags, verbose output, and
-  exit codes.
+- `optimizers/function_remover.py` implements `run_optimizer`: any function with
+  no incoming references is dropped from the uplifter's function map and its
+  whole declared extent is reported as one `FreeSpace` block with a diagnostic.
+  No bytes are rewritten yet. `test/optimizers/test_function_remover.py` covers
+  the detection, preservation of referenced functions, exact free-space extents,
+  and idempotence; the sample's `unreferenced_function` is the live fixture.
+- `codezip.py` parses the export, opens the binary, uplifts every function,
+  recovers cross-references, and runs the unreferenced-function pass. It then
+  exits nonzero because outlining and verification are still unimplemented.
+  `-v/--verbose` logs pipeline progress, parser warnings, free-space results,
+  and per-function results, and pretty-prints every uplifted function.
+  `test/test_codezip.py` covers the CLI flags, verbose output, and exit codes.
 
 Still stubs:
 
 - YAML parser
 - PE and raw binary backends
-- Function remover and outliner
+- Outliner
 - Verification passes
 
 Do not assume an unimplemented module works. Add tests as each stub is filled in.
