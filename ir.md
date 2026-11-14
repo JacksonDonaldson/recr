@@ -91,6 +91,7 @@ ISA contract:
 
     class ISA:
         function disassemble(binary, address) -> Instruction
+        function decode_flows(binary, address) -> DecodedFlow
         function is_outlinable(instruction) -> bool
         function add_extra_stack_space(instruction, pointer_size) -> Instruction
         function relocate_instruction(instruction, new_base_address) -> Instruction
@@ -103,6 +104,13 @@ ISA contract:
         values at offset, and returns every Address that could be read.  A
         width whose read would cross unmapped memory is omitted, so an offset
         near the end of a mapped range can still yield a 32-bit address.
+
+        decode_flows returns the address, length, type, and flows_to of the
+        instruction at address without computing modifies or depends_on.  Those
+        state effects dominate decode cost, and a whole-image cross-reference
+        scan only needs control flow.  The reported fields are identical to
+        disassemble's, and the same ValueError is raised when no instruction
+        decodes.
 
         disassemble fills flows_to:
             straight-line instruction: [address + length]

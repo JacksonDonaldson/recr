@@ -102,6 +102,13 @@ def test_intel_form(
         form, case["assembly"], 0, len(original)
     ), form
 
+    flow = sleigher.parse_flow(original, address=0)
+    assert flow is not None, form
+    assert flow.address == instruction.address, form
+    assert flow.length == instruction.length, form
+    assert flow.type is instruction.type, form
+    assert list(flow.flows_to) == instruction.flows_to, form
+
     relocated = sleigher.reassemble(instruction, NEW_ORIGIN)
     assert relocated is not None
     assert relocated.original_data == expected

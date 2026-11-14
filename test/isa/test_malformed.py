@@ -55,6 +55,15 @@ def test_invalid_bytes_are_rejected(
 
 
 @pytest.mark.parametrize(
+    "data", INVALID.values(), ids=list(INVALID)
+)
+def test_invalid_bytes_are_rejected_by_flow_decode(
+    data: bytes, sleigher: X86Sleigher
+) -> None:
+    assert sleigher.parse_flow(data) is None
+
+
+@pytest.mark.parametrize(
     "form",
     [form for form in FORMS if form not in GHIDRA_GAPS],
 )

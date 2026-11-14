@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ir import Address, Instruction
+from ir import Address, Instruction, InstructionType
 from isa.sleigher import X86Sleigher
 
 
@@ -245,6 +245,77 @@ def test_returns_have_no_flow_targets(
     instruction = _decode(sleigher, encoded, 0x1000)
 
     assert instruction.flows_to == [], name
+
+
+def test_flow_only_decode_reports_hand_checked_flows(
+    sleigher: X86Sleigher,
+) -> None:
+    # call rel32 from 0x4000 targets 0x4015 and falls through to 0x4005.
+    call = sleigher.parse_flow(bytes.fromhex("e810000000"), address=0x4000)
+    assert call is not None
+    assert call.address == 0x4000
+    assert call.length == 5
+    assert call.type is InstructionType.CALL
+    assert call.flows_to == (
+        Address.absolute(0x4015),
+        Address.absolute(0x4005),
+    )
+
+    # jne rel32 from 0x5000 targets 0x5010 and falls through to 0x5006.
+    branch = sleigher.parse_flow(
+        bytes.fromhex("0f850a000000"), address=0x5000
+    )
+    assert branch is not None
+    assert branch.type is InstructionType.BRANCH
+    assert branch.flows_to == (
+        Address.absolute(0x5010),
+        Address.absolute(0x5006),
+    )
+
+    # jmp [rax] is an unresolved local target with no fallthrough edge.
+    indirect = sleigher.parse_flow(bytes.fromhex("ff20"), address=0x1000)
+    assert indirect is not None
+    assert indirect.flows_to == (Address.unknown_local(),)
+
+    # ret ends the flow entirely.
+    ret = sleigher.parse_flow(bytes.fromhex("c3"), address=0x1000)
+    assert ret is not None
+    assert ret.type is InstructionType.RET
+    assert ret.flows_to == ()
+
+    # nop falls through to the next instruction.
+    nop = sleigher.parse_flow(bytes.fromhex("90"), address=0x1000)
+    assert nop is not None
+    assert nop.type is InstructionType.NOP
+    assert nop.flows_to == (Address.absolute(0x1001),)
+
+
+FLOW_ONLY_CASES = (
+    [("90", 0x1000), ("83c020", 0x400000), ("488b0510000000", 0x1000)]
+    + [(encoded, address) for _, encoded, address, _ in UNCONDITIONAL_JUMPS]
+    + [
+        (encoded, address)
+        for _, encoded, address, _, _ in CONDITIONAL_BRANCHES
+    ]
+    + [(encoded, address) for _, encoded, address, _, _ in DIRECT_CALLS]
+    + [(encoded, 0x1000) for _, encoded in INDIRECT_JUMPS]
+    + [(encoded, 0x1000) for _, encoded, _ in INDIRECT_CALLS]
+    + [(encoded, 0x1000) for _, encoded in RETURNS]
+)
+
+
+@pytest.mark.parametrize("encoded,address", FLOW_ONLY_CASES)
+def test_flow_only_decode_matches_full_decode(
+    encoded: str, address: int, sleigher: X86Sleigher
+) -> None:
+    instruction = _decode(sleigher, encoded, address)
+    flow = sleigher.parse_flow(bytes.fromhex(encoded), address=address)
+
+    assert flow is not None, encoded
+    assert flow.address == instruction.address, encoded
+    assert flow.length == instruction.length, encoded
+    assert flow.type is instruction.type, encoded
+    assert list(flow.flows_to) == instruction.flows_to, encoded
 
 
 def test_reassemble_updates_fallthrough_flow(

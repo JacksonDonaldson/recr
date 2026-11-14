@@ -404,6 +404,35 @@ def test_build_xrefs_ignores_fallthrough_edges(
     )
 
 
+def test_build_xrefs_never_computes_state_effects(
+    uplifted_sample, monkeypatch
+) -> None:
+    parsed, _, uplifter = uplifted_sample
+    decoded = []
+    decode_flows = uplifter.isa.decode_flows
+
+    def record_flow(binary, address):
+        decoded.append(address)
+        return decode_flows(binary, address)
+
+    def disassemble(binary, address):
+        raise AssertionError(
+            "build_xrefs must not compute instruction state effects"
+        )
+
+    monkeypatch.setattr(uplifter.isa, "decode_flows", record_flow)
+    monkeypatch.setattr(uplifter.isa, "disassemble", disassemble)
+
+    uplifter.build_xrefs()
+
+    assert decoded
+    add = _function(parsed, "add")
+    assert (
+        Reference(Address.absolute(0x40189E), Address.absolute(0x401156))
+        in add.incoming_references
+    )
+
+
 def test_build_xrefs_is_unique_and_idempotent(cross_referenced_sample) -> None:
     parsed, _, uplifter = cross_referenced_sample
     before = {

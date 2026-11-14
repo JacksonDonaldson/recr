@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from isa.isa import ISA
+from isa.isa import DecodedFlow, ISA
 from isa.x86_64 import X86_64ISA
 
 ISA_REGISTRY = {
     "x86_64": X86_64ISA,
 }
 
-__all__ = ["ISA", "ISA_REGISTRY", "X86_64ISA", "create_isa"]
+__all__ = ["DecodedFlow", "ISA", "ISA_REGISTRY", "X86_64ISA", "create_isa"]
 
 
 def create_isa(name: str) -> ISA:

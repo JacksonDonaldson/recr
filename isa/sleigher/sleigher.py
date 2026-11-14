@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import ClassVar
 
 from ir import Instruction
-from isa.sleigher.sla import SlaSpec
+from isa.isa import DecodedFlow
+from isa.sleigher.sla import ResolvedConstructor, SlaSpec
 
 
 class Sleigher:
@@ -21,16 +22,42 @@ class Sleigher:
 
     def parse(self, data: bytes, address: int = 0) -> Instruction | None:
         """Return the first instruction in ``data``, or ``None`` if unknown."""
-        if not data:
-            return None
-        data = bytes(data)
-
-        resolved = self.spec.resolve(data[:16], self.context)
+        payload, resolved = self._resolve_first(data)
         if resolved is None:
             return None
-        if resolved.length <= 0 or resolved.length > len(data):
+        return self.spec.make_instruction(
+            payload, address, resolved, self.context
+        )
+
+    def parse_flow(
+        self, data: bytes, address: int = 0
+    ) -> DecodedFlow | None:
+        """Return the first instruction's control flow, or ``None``.
+
+        This skips the state-effect analysis that :meth:`parse` performs; the
+        result is identical for the fields it reports.
+        """
+        payload, resolved = self._resolve_first(data)
+        if resolved is None:
             return None
-        return self.spec.make_instruction(data, address, resolved, self.context)
+        return self.spec.decode_flow(payload, address, resolved)
+
+    def _resolve_first(
+        self, data: bytes
+    ) -> tuple[bytes, ResolvedConstructor | None]:
+        """Return the bytes and constructor of the first instruction."""
+        if not data:
+            return b"", None
+
+        payload = bytes(data)
+        resolved = self.spec.resolve(payload[:16], self.context)
+        if (
+            resolved is None
+            or resolved.length <= 0
+            or resolved.length > len(payload)
+        ):
+            return payload, None
+        return payload, resolved
 
     def reassemble(
         self, instruction: Instruction, new_address: int

@@ -22,6 +22,7 @@ from ir import (
     StateSpace,
     StateSpaceKind,
 )
+from isa.isa import DecodedFlow
 
 
 class SlaError(ValueError):
@@ -1884,6 +1885,24 @@ class SlaSpec:
 
         return [next_address]
 
+    def decode_flow(
+        self,
+        data: bytes,
+        address: int,
+        resolved: ResolvedConstructor,
+    ) -> DecodedFlow:
+        """Return the control-flow facts of a resolved constructor."""
+        instruction_type = self.instruction_type(resolved)
+        flows_to = self.flow_targets(
+            resolved, data, address, instruction_type
+        )
+        return DecodedFlow(
+            address=address,
+            length=resolved.length,
+            type=instruction_type,
+            flows_to=tuple(flows_to),
+        )
+
     def make_instruction(
         self,
         data: bytes,
@@ -1974,21 +1993,18 @@ class SlaSpec:
                 if state not in depends_on:
                     depends_on.append(state)
 
-        length = resolved.length
-        instruction_type = self.instruction_type(resolved)
-        flows_to = self.flow_targets(
-            resolved, data, address, instruction_type
-        )
+        flow = self.decode_flow(data, address, resolved)
 
-        unknown_transfer = instruction_type in _UNKNOWN_TRANSFER_TYPES or any(
-            target.kind is not AddressKind.ABSOLUTE for target in flows_to
+        unknown_transfer = flow.type in _UNKNOWN_TRANSFER_TYPES or any(
+            target.kind is not AddressKind.ABSOLUTE
+            for target in flow.flows_to
         )
         if unknown_transfer:
             for state in self.unknown_transfer_clobbers():
                 if state not in modifies:
                     modifies.append(state)
 
-        if instruction_type in (
+        if flow.type in (
             InstructionType.CALL,
             InstructionType.CALL_INDIRECT,
             InstructionType.OUTLINE_RESULT_CALL,
@@ -1998,13 +2014,13 @@ class SlaSpec:
                     depends_on.append(state)
 
         return Instruction(
-            original_data=data[:length],
-            type=instruction_type,
-            length=length,
+            original_data=data[: flow.length],
+            type=flow.type,
+            length=flow.length,
             address=address,
             modifies=modifies,
             depends_on=depends_on,
-            flows_to=flows_to,
+            flows_to=list(flow.flows_to),
         )
 
     def _state_space(

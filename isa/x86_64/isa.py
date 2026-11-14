@@ -18,7 +18,7 @@ from ir import (
     InstructionType,
     StateSpaceKind,
 )
-from isa.isa import ISA
+from isa.isa import DecodedFlow, ISA
 from isa.sleigher import X86Sleigher
 from isa.sleigher.sla import ResolvedConstructor, ResolvedOperand
 
@@ -119,6 +119,13 @@ class X86_64ISA(ISA):
         if instruction is None:
             raise ValueError(f"cannot decode instruction at {address:#x}")
         return instruction
+
+    def decode_flows(self, binary: "Binary", address: int) -> DecodedFlow:
+        data = self._read_instruction_bytes(binary, address)
+        flow = self._sleigher.parse_flow(data, address)
+        if flow is None:
+            raise ValueError(f"cannot decode instruction at {address:#x}")
+        return flow
 
     def is_outlinable(self, instruction: Instruction) -> bool:
         if instruction.type in self._NON_OUTLINABLE_TYPES:

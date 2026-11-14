@@ -69,6 +69,9 @@ class Uplifter:
         memory rather than trusting the input function list, which may be
         incomplete: both pointer-sized values and successfully decoded
         instructions are checked for references to known function entries.
+
+        Only control flow is decoded here, not state effects, because the
+        scan visits every byte of mapped memory.
         """
         if not self.function_map:
             return
@@ -95,13 +98,13 @@ class Uplifter:
 
     def _record_flow_references(self, address: int) -> None:
         try:
-            instruction = self.isa.disassemble(self.binary, address)
+            flow = self.isa.decode_flows(self.binary, address)
         except ValueError:
             return
 
         source = Address.absolute(address)
-        fallthrough = instruction.address + instruction.length
-        for target in instruction.flows_to:
+        fallthrough = flow.address + flow.length
+        for target in flow.flows_to:
             if target.kind is not AddressKind.ABSOLUTE:
                 continue
 
@@ -111,7 +114,7 @@ class Uplifter:
             # between functions as an incoming reference would keep otherwise
             # unreferenced functions alive.
             if (
-                instruction.type is not InstructionType.BRANCH
+                flow.type is not InstructionType.BRANCH
                 and target.value == fallthrough
             ):
                 continue

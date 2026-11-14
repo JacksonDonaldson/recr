@@ -7,12 +7,28 @@ concrete ISA implements; see :mod:`isa.x86_64` for the first implementation.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
-from ir import Address, Instruction
+from ir import Address, Instruction, InstructionType
 
 if TYPE_CHECKING:
     from binary.binary import Binary
+
+
+@dataclass(frozen=True)
+class DecodedFlow:
+    """Control-flow facts about one decoded instruction.
+
+    :meth:`ISA.decode_flows` returns these instead of an
+    :class:`~ir.Instruction` because state effects dominate decode time and a
+    whole-image scan only needs the control flow.
+    """
+
+    address: int
+    length: int
+    type: InstructionType
+    flows_to: tuple[Address, ...]
 
 
 class ISA(ABC):
@@ -24,6 +40,16 @@ class ISA(ABC):
     @abstractmethod
     def disassemble(self, binary: "Binary", address: int) -> Instruction:
         """Decode one instruction at ``address`` and fill in its dependencies."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def decode_flows(self, binary: "Binary", address: int) -> DecodedFlow:
+        """Decode one instruction's control flow at ``address``.
+
+        Return the same address, length, type, and flow targets as
+        :meth:`disassemble` without computing state effects.  Raise
+        :class:`ValueError` if no instruction decodes at ``address``.
+        """
         raise NotImplementedError
 
     @abstractmethod

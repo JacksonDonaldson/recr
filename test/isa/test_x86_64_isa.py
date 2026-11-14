@@ -43,6 +43,45 @@ def test_disassemble_rejects_unmapped_address(
         x86_64_isa.disassemble(_BoundedBinary(b"\x90"), 1)
 
 
+def test_decode_flows_clamps_read_to_mapped_memory(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    instruction_bytes = bytes.fromhex("488b442408")
+    data = b"\x90" * 13 + instruction_bytes
+
+    flow = x86_64_isa.decode_flows(_BoundedBinary(data), 13)
+
+    assert flow.address == 13
+    assert flow.length == len(instruction_bytes)
+    assert flow.type is InstructionType.ARITHMETIC
+    assert flow.flows_to == (Address.absolute(13 + len(instruction_bytes)),)
+
+
+def test_decode_flows_rejects_unmapped_address(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    with pytest.raises(ValueError, match="cannot read instruction bytes"):
+        x86_64_isa.decode_flows(_BoundedBinary(b"\x90"), 1)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"\x48", b"\x66", b"\x0f", b"\x62", bytes.fromhex("83c0")],
+    ids=[
+        "lone-rex",
+        "lone-operand-size",
+        "lone-opcode-0f",
+        "lone-evex",
+        "truncated-add",
+    ],
+)
+def test_decode_flows_rejects_undecodable_bytes(
+    data: bytes, x86_64_isa: X86_64ISA
+) -> None:
+    with pytest.raises(ValueError, match="cannot decode instruction"):
+        x86_64_isa.decode_flows(_BoundedBinary(data), 0)
+
+
 def _decode(x86_64_isa: X86_64ISA, data: bytes) -> Instruction:
     return x86_64_isa.disassemble(_BoundedBinary(data), 0)
 

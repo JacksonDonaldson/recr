@@ -105,7 +105,10 @@ Implemented:
 - x86-64 package (`isa/x86_64/`) contains the pinned Ghidra 12.2 SLEIGH files
   and NASM fixtures. `X86_64ISA` decodes through the SLEIGH backend, exposes
   `is_outlinable` and `add_extra_stack_space`, and delegates relocation to the
-  SLEIGH backend. RSP-relative operands are shifted by the outline call;
+  SLEIGH backend. `decode_flows` returns only address, length, type, and
+  `flows_to`, skipping the state-effect analysis that dominates decode cost;
+  its reported fields match `disassemble`. RSP-relative operands are shifted
+  by the outline call;
   RBP-relative operands are left unchanged because RBP is callee-saved. Forms
   with no displacement field, disp8 overflow, RSP value use, and EVEX
   compressed disp8 (including after legacy prefixes) are conservatively
@@ -151,8 +154,9 @@ Implemented:
   `test/test_uplifter.py` covers the sample and rejection paths.
 - `Uplifter.build_xrefs()` scans every mapped virtual address for 64-bit and
   32-bit values and successfully decoded control-flow instructions that target a
-  known function entry, then records unique incoming references. Ordinary
-  fallthrough edges are not cross-references.
+  known function entry, then records unique incoming references. The
+  instruction scan uses the ISA's flow-only decode, so it does not compute
+  state effects. Ordinary fallthrough edges are not cross-references.
 - `optimizers/function_remover.py` implements `run_optimizer`: any function with
   no incoming references is dropped from the uplifter's function map and its
   whole declared extent is reported as one `FreeSpace` block with a diagnostic.
