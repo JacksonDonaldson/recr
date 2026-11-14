@@ -6,10 +6,10 @@ fixed; instructions may move within a function, and data is never appended.
 
 ## Status
 
-The input parsers, ELF backend, x86-64 disassembler, and function uplifter are
-implemented. Cross-reference recovery, the optimization passes, and
-verification are still stubs that raise `NotImplementedError`, so no binary
-modification behavior is implemented yet.
+The input parsers, ELF backend, x86-64 disassembler, function uplifter, and CLI
+wiring through the uplift stage are implemented. Cross-reference recovery, the
+optimization passes, and verification are still stubs that raise
+`NotImplementedError`, so no binary modification behavior is implemented yet.
 
 ## Planned pipeline
 
@@ -22,6 +22,9 @@ modification behavior is implemented yet.
    - outline repeated instruction regions aggressively.
 4. **Verify** the result statically and dynamically, reverting any function
    that fails a check.
+
+The current CLI performs steps 1 and 2, then exits with an error because the
+remaining stages are not implemented.
 
 ## Layout
 
@@ -63,11 +66,15 @@ functions:
 Ghidra XML: see `test/fixtures/sample_ghidra.xml`. Ghidra exports virtual
 addresses; the active `Binary` implementation maps them to file offsets.
 
-## Usage (planned)
+## Usage
 
 ```sh
 python codezip.py ./a.out ./functions.yaml -o ./a.out.codezip
 ```
+
+Add `-v` or `--verbose` to log pipeline progress and pretty-print every
+uplifted function. The command currently stops after uplifting and exits
+nonzero because optimization and verification are not implemented.
 
 ## Development
 

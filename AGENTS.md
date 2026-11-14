@@ -142,6 +142,11 @@ Implemented:
   the result to stdout. `test/uplift_sample.py` uplifts and prints every
   sample function; `test/test_uplifter.py` covers the sample and rejection
   paths.
+- `codezip.py` parses the export, opens the binary, and uplifts every function.
+  It then exits nonzero because optimization and verification are still
+  unimplemented. `-v/--verbose` logs pipeline progress, parser warnings, and
+  per-function results, and pretty-prints every uplifted function.
+  `test/test_codezip.py` covers the CLI flags, verbose output, and exit codes.
 
 Still stubs:
 
