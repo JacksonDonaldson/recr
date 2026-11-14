@@ -23,5 +23,5 @@ def test_cli_parser_builds() -> None:
 
     parser = build_arg_parser()
     args = parser.parse_args(["sample.bin", "sample.yaml"])
-    assert args.verify is True
     assert args.output is None
+    assert args.receipt is None

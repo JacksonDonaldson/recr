@@ -534,4 +534,4 @@ binary/raw.py:
     implements Binary for raw binaries.
 
 codezip.py:
-    parses CLI arguments, drives the parse -> uplift -> optimize -> verify pipeline, and writes the modified binary plus a report.
+    parses CLI arguments, drives the parse -> uplift -> optimize -> verify pipeline, and writes the modified binary plus an optional YAML receipt of the freed ranges.

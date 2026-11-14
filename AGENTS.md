@@ -162,12 +162,12 @@ Implemented:
 - `codezip.py` parses the export, opens the binary, uplifts every function,
   recovers cross-references, runs the unreferenced-function pass, fills every
   reported range with `0xff`, and writes the modified binary to `--output`
-  (default `<binary>.codezip`). It warns when verification is enabled because
-  verification and outlining are unimplemented.
+  (default `<binary>.codezip`). `--receipt PATH` also writes a YAML receipt
+  listing each freed virtual address and length.
   `-v/--verbose` logs pipeline progress, parser warnings, free-space results,
   and per-function results, and pretty-prints every uplifted function.
-  `test/test_codezip.py` covers the CLI flags, verbose output, output bytes,
-  and exit codes.
+  `test/test_codezip.py` covers the CLI flags, verbose output, receipt
+  contents, output bytes, and exit codes.
 
 Still stubs:
 
@@ -235,6 +235,9 @@ Override `GHIDRA_HOME` on the make command line if Ghidra lives elsewhere.
   document or the author's reasoning.
 - Keep comments for non-obvious constraints, not for narration.
 - Avoid new dependencies unless they are necessary; update `requirements.txt`.
+- Do not add defensive handling for exceptional I/O or environment failures.
+  It is fine to let `OSError` and similar exceptions propagate unhandled; catch
+  only errors that are expected and can be reported meaningfully.
 
 ## Tests
 

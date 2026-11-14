@@ -4,7 +4,8 @@
 Drives the parse -> uplift -> optimize -> write pipeline.  The implemented
 stages parse a reverse-engineering export, open the binary, uplift every
 function, recover cross-references, detect unreferenced-function free space,
-fill that space with 0xff, and write the modified binary.  Outlining still unimplemented.
+fill that space with 0xff, write the modified binary, and optionally write a
+YAML receipt of the freed ranges.  Outlining is still unimplemented.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 
 from binary.binary import Binary
 from input_parser import ParseError, parse_re_file
-from ir import AddressKind
+from ir import FreeSpace
 from optimizers import function_remover
 from uplifter import Uplifter
 
@@ -44,6 +45,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="where to write the modified binary (default: <binary>.codezip)",
     )
     parser.add_argument(
+        "-r",
+        "--receipt",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="write a YAML receipt of the freed ranges to PATH",
+    )
+    parser.add_argument(
         "--isa",
         default=None,
         help="override the ISA named by the input export",
@@ -68,10 +77,22 @@ def _configure_logging(verbose: bool) -> None:
     LOGGER.setLevel(level)
 
 
+def _render_receipt(free_space: list[FreeSpace]) -> str:
+    """Render the freed ranges as a YAML document."""
+    if not free_space:
+        return "freed: []\n"
+
+    lines = ["freed:"]
+    for space in sorted(free_space, key=lambda space: space.start.value):
+        lines.append(f"  - address: {space.start.value:#x}")
+        lines.append(f"    length: {space.size:#x}")
+    return "\n".join(lines) + "\n"
+
+
 def run_pipeline(args: argparse.Namespace) -> int:
     """Parse, uplift, recover references, fill free space, and write output.
 
-    Outlining and still a stub
+    Outlining is still unimplemented.
     """
     _configure_logging(args.verbose)
 
@@ -176,9 +197,11 @@ def run_pipeline(args: argparse.Namespace) -> int:
         output = args.binary.with_name(args.binary.name + ".codezip")
 
     LOGGER.info("writing modified binary to %s", output)
-    
     binary.write_to_disk(output)
 
+    if args.receipt is not None:
+        LOGGER.info("writing receipt to %s", args.receipt)
+        args.receipt.write_text(_render_receipt(free_space), encoding="utf-8")
 
     return 0
 

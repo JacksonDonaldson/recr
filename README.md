@@ -9,8 +9,9 @@ fixed; instructions may move within a function, and data is never appended.
 The input parsers, ELF backend, x86-64 disassembler, function uplifter,
 cross-reference recovery, unreferenced-function free-space detection, and CLI
 wiring through writing the modified binary are implemented. The pipeline fills
-every freed range with `0xff` and writes the result to the output path. The
-outliner and verification are still stubs, so the written binary is unverified.
+every freed range with `0xff`, writes the result to the output path, and can
+write a YAML receipt of the freed ranges. The outliner and verification are
+still stubs, so the written binary is unverified.
 
 ## Planned pipeline
 
@@ -31,7 +32,7 @@ writes the modified binary without verifying it.
 
 | Path | Purpose |
 | --- | --- |
-| `codezip.py` | CLI orchestrator driving parse → uplift → optimize → verify |
+| `codezip.py` | CLI orchestrator driving parse → uplift → optimize → write |
 | `input_parser.py` | Parser selection and entry point |
 | `parsers/yaml.py` | YAML function export parser |
 | `parsers/ghidra_xml.py` | Ghidra XML function export parser |
@@ -75,8 +76,17 @@ python codezip.py ./a.out ./functions.yaml -o ./a.out.codezip
 
 Add `-v` or `--verbose` to log pipeline progress and pretty-print every
 uplifted function. The command writes the modified binary to `-o` (default:
-`<binary>.codezip`). Verification is not implemented yet, so runs with the
-default `--verify` warn that the output is unverified.
+`<binary>.codezip`). Verification is not implemented yet.
+
+Pass `--receipt PATH` to also write a YAML receipt of the freed ranges:
+
+```yaml
+freed:
+  - address: 0x4010a0
+    length: 0x5
+  - address: 0x401af7
+    length: 0x34
+```
 
 ## Development
 

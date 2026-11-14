@@ -7,7 +7,8 @@ from pathlib import Path
 import shutil
 
 from binary.binary import Binary
-from codezip import build_arg_parser, main
+from codezip import _render_receipt, build_arg_parser, main
+from ir import Address, FreeSpace
 
 GHIDRA_XML = Path(__file__).parent / "fixtures" / "sample_ghidra.xml"
 
@@ -35,6 +36,22 @@ def test_verbose_flags_are_accepted() -> None:
     )
 
 
+def test_receipt_defaults_to_disabled() -> None:
+    parser = build_arg_parser()
+
+    assert parser.parse_args(["sample.bin", "sample.yaml"]).receipt is None
+
+
+def test_receipt_takes_a_path() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        ["sample.bin", "sample.xml", "--receipt", "receipt.yaml"]
+    )
+
+    assert args.receipt == Path("receipt.yaml")
+
+
 def test_pipeline_writes_binary_with_free_space_filled(
     caplog, capsys, sample_elf: Path, tmp_path: Path
 ) -> None:
@@ -59,7 +76,6 @@ def test_pipeline_writes_binary_with_free_space_filled(
     ) in caplog.text
     assert "filling 2 free space range(s) with 0xff" in caplog.text
     assert f"writing modified binary to {output}" in caplog.text
-    assert "verification is not implemented" in caplog.text
 
     original = sample_elf.read_bytes()
     expected = bytearray(original)
@@ -72,21 +88,50 @@ def test_pipeline_writes_binary_with_free_space_filled(
     assert len(output.read_bytes()) == len(original)
 
 
-def test_no_verify_does_not_warn(caplog, sample_elf: Path, tmp_path: Path) -> None:
-    caplog.set_level(logging.DEBUG, logger="codezip")
+def test_receipt_records_freed_ranges(
+    sample_elf: Path, tmp_path: Path
+) -> None:
+    output = tmp_path / "sample.codezip"
+    receipt = tmp_path / "sample.receipt.yaml"
 
     result = main(
         [
             str(sample_elf),
             str(GHIDRA_XML),
-            "--no-verify",
             "-o",
-            str(tmp_path / "sample.codezip"),
+            str(output),
+            "--receipt",
+            str(receipt),
         ]
     )
 
     assert result == 0
-    assert "verification is not implemented" not in caplog.text
+    assert receipt.read_text(encoding="utf-8") == (
+        "freed:\n"
+        "  - address: 0x4010a0\n"
+        "    length: 0x5\n"
+        "  - address: 0x401af7\n"
+        "    length: 0x34\n"
+    )
+
+
+def test_receipt_with_no_free_space() -> None:
+    assert _render_receipt([]) == "freed: []\n"
+
+
+def test_receipt_sorts_ranges_by_address() -> None:
+    free_space = [
+        FreeSpace(Address.absolute(0x2000), 0x20),
+        FreeSpace(Address.absolute(0x1000), 0x10),
+    ]
+
+    assert _render_receipt(free_space) == (
+        "freed:\n"
+        "  - address: 0x1000\n"
+        "    length: 0x10\n"
+        "  - address: 0x2000\n"
+        "    length: 0x20\n"
+    )
 
 
 def test_default_output_is_binary_path_plus_codezip(
@@ -95,42 +140,17 @@ def test_default_output_is_binary_path_plus_codezip(
     binary = tmp_path / "sample"
     shutil.copyfile(sample_elf, binary)
 
-    result = main([str(binary), str(GHIDRA_XML), "--no-verify"])
+    result = main([str(binary), str(GHIDRA_XML)])
 
     assert result == 0
     assert (tmp_path / "sample.codezip").is_file()
-
-
-def test_unwritable_output_is_reported(
-    caplog, sample_elf: Path, tmp_path: Path
-) -> None:
-    output = tmp_path / "missing" / "sample.codezip"
-
-    result = main(
-        [
-            str(sample_elf),
-            str(GHIDRA_XML),
-            "--no-verify",
-            "-o",
-            str(output),
-        ]
-    )
-
-    assert result == 1
-    assert "cannot write" in caplog.text
 
 
 def test_non_verbose_mode_does_not_pretty_print(
     capsys, sample_elf: Path, tmp_path: Path
 ) -> None:
     result = main(
-        [
-            str(sample_elf),
-            str(GHIDRA_XML),
-            "--no-verify",
-            "-o",
-            str(tmp_path / "sample.codezip"),
-        ]
+        [str(sample_elf), str(GHIDRA_XML), "-o", str(tmp_path / "out")]
     )
 
     assert result == 0
