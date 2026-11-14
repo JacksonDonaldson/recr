@@ -9,6 +9,7 @@ runtime model that codezip needs.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 import re
 import zlib
@@ -361,6 +362,10 @@ def _canonical_register_parent(name: str) -> str | None:
 MAX_INSTRUCTION_BYTES = 16
 UINTM_MASK = 0xFFFFFFFF
 
+# Context values repeat heavily during a whole-image scan, so pattern blocks
+# memoize their match result per context.
+_CONTEXT_CACHE_LIMIT = 4096
+
 
 @dataclass
 class SlaElement:
@@ -374,26 +379,34 @@ class SlaElement:
 class _PackedReader:
     """Decode Ghidra's packed element/attribute encoding."""
 
+    __slots__ = ("data", "position", "size")
+
     def __init__(self, data: bytes) -> None:
         self.data = data
         self.position = 0
+        self.size = len(data)
 
     def _byte(self) -> int:
-        if self.position >= len(self.data):
+        position = self.position
+        if position >= self.size:
             raise SlaError("unexpected end of packed SLEIGH data")
-        value = self.data[self.position]
-        self.position += 1
-        return value
+        self.position = position + 1
+        return self.data[position]
 
     def _peek(self) -> int:
-        if self.position >= len(self.data):
+        position = self.position
+        if position >= self.size:
             raise SlaError("unexpected end of packed SLEIGH data")
-        return self.data[self.position]
+        return self.data[position]
 
     def _integer(self, length: int) -> int:
+        end = self.position + length
+        if end > self.size:
+            raise SlaError("unexpected end of packed SLEIGH data")
         value = 0
-        for _ in range(length):
-            value = (value << 7) | (self._byte() & 0x7F)
+        for byte in self.data[self.position : end]:
+            value = (value << 7) | (byte & 0x7F)
+        self.position = end
         return value
 
     def _attribute(self) -> tuple[int, Any]:
@@ -431,33 +444,53 @@ class _PackedReader:
         return attribute_id, value
 
     def element(self) -> SlaElement:
-        header = self._byte()
+        data = self.data
+        size = self.size
+        position = self.position
+        if position >= size:
+            raise SlaError("unexpected end of packed SLEIGH data")
+        header = data[position]
+        position += 1
         if header & 0xC0 != 0x40:
             raise SlaError("expected packed element start")
         element_id = header & 0x1F
         if header & 0x20:
-            element_id = (element_id << 7) | (self._byte() & 0x7F)
+            if position >= size:
+                raise SlaError("unexpected end of packed SLEIGH data")
+            element_id = (element_id << 7) | (data[position] & 0x7F)
+            position += 1
 
         attributes: dict[int, Any] = {}
-        while self._peek() & 0xC0 == 0xC0:
+        while position < size and data[position] & 0xC0 == 0xC0:
+            self.position = position
             attribute_id, value = self._attribute()
+            position = self.position
             attributes[attribute_id] = value
 
         children: list[SlaElement] = []
-        while self._peek() & 0xC0 == 0x40:
+        while position < size and data[position] & 0xC0 == 0x40:
+            self.position = position
             children.append(self.element())
+            position = self.position
 
-        end_header = self._byte()
+        if position >= size:
+            raise SlaError("unexpected end of packed SLEIGH data")
+        end_header = data[position]
+        position += 1
         if end_header & 0xC0 != 0x80:
             raise SlaError("expected packed element end")
         end_id = end_header & 0x1F
         if end_header & 0x20:
-            end_id = (end_id << 7) | (self._byte() & 0x7F)
+            if position >= size:
+                raise SlaError("unexpected end of packed SLEIGH data")
+            end_id = (end_id << 7) | (data[position] & 0x7F)
+            position += 1
         if end_id != element_id:
             raise SlaError(
                 f"packed element close mismatch: {element_id} != {end_id}"
             )
 
+        self.position = position
         return SlaElement(element_id, attributes, children)
 
 
@@ -598,6 +631,9 @@ class PatternBlock:
     nonzerosize: int = 0
     masks: list[int] = field(default_factory=list)
     values: list[int] = field(default_factory=list)
+    _context_matches: dict[int, bool] = field(
+        default_factory=dict, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         self.normalize()
@@ -668,12 +704,22 @@ class PatternBlock:
     def match_context(self, context: int) -> bool:
         if self.nonzerosize <= 0:
             return self.nonzerosize == 0
+
+        cached = self._context_matches.get(context)
+        if cached is not None:
+            return cached
+
+        result = True
         offset = self.offset
         for mask, value in zip(self.masks, self.values):
             if (_context_bytes(context, offset, 4) & mask) != value:
-                return False
+                result = False
+                break
             offset += 4
-        return True
+        if len(self._context_matches) >= _CONTEXT_CACHE_LIMIT:
+            self._context_matches.clear()
+        self._context_matches[context] = result
+        return result
 
 
 @dataclass
@@ -690,13 +736,15 @@ class Pattern:
             assert self.block is not None
             return self.block.match_context(context)
         if self.kind == "combine":
-            return all(
-                child.match(data, context, base_offset) for child in self.children
-            )
+            for child in self.children:
+                if not child.match(data, context, base_offset):
+                    return False
+            return True
         if self.kind == "or":
-            return any(
-                child.match(data, context, base_offset) for child in self.children
-            )
+            for child in self.children:
+                if child.match(data, context, base_offset):
+                    return True
+            return False
         raise SlaError(f"unknown pattern kind {self.kind}")
 
 
@@ -736,7 +784,7 @@ class Subtable:
     decision: DecisionNode | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class ResolvedConstructor:
     constructor: Constructor
     offset: int
@@ -745,7 +793,7 @@ class ResolvedConstructor:
     operands: list["ResolvedOperand"] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class ResolvedOperand:
     operand: OperandInfo
     offset: int
@@ -1087,6 +1135,11 @@ def _parse_construct_tpl(element: SlaElement) -> ConstructTpl | None:
 class SlaSpec:
     """A decoded SLEIGH specification with instruction-resolution helpers."""
 
+    # Decoding the same bytes in the same context always yields the same
+    # constructor tree and state effects, so both are cached.  The bound keeps
+    # memory proportional to the number of distinct encodings actually seen.
+    _DECODE_CACHE_LIMIT = 16384
+
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.root = decode_sla(self.path)
@@ -1102,9 +1155,18 @@ class SlaSpec:
         self._canonical_registers: dict[int, VarnodeInfo] = {}
         self.userops: list[str] = []
         self._all_state_spaces: tuple[StateSpace, ...] | None = None
+        self._unknown_transfer_clobbers: tuple[StateSpace, ...] | None = None
+        self._call_argument_state: tuple[StateSpace, ...] | None = None
         self.default_space = "ram"
         self.root_subtable: Subtable | None = None
         self._parse()
+        self._resolve_cached = lru_cache(maxsize=self._DECODE_CACHE_LIMIT)(
+            self._resolve_uncached
+        )
+        self._state_effects_cache: dict[
+            tuple[bytes, int],
+            tuple[tuple[StateSpace, ...], tuple[StateSpace, ...]],
+        ] = {}
 
     @classmethod
     def from_path(cls, path: str | Path) -> "SlaSpec":
@@ -1287,25 +1349,29 @@ class SlaSpec:
         is treated as volatile.  This deliberately includes system state
         because a transfer may reach code whose effects are not visible here.
         """
-        return tuple(
-            state
-            for state in self.all_state_spaces()
-            if not (
-                state.kind is StateSpaceKind.REGISTER
-                and state.name in _CALLEE_SAVED_REGISTERS
+        if self._unknown_transfer_clobbers is None:
+            self._unknown_transfer_clobbers = tuple(
+                state
+                for state in self.all_state_spaces()
+                if not (
+                    state.kind is StateSpaceKind.REGISTER
+                    and state.name in _CALLEE_SAVED_REGISTERS
+                )
             )
-        )
+        return self._unknown_transfer_clobbers
 
     def call_argument_state(self) -> tuple[StateSpace, ...]:
         """Return the state that may carry arguments into a call."""
-        states: list[StateSpace] = []
-        for state in self.all_state_spaces():
-            if state.kind is StateSpaceKind.MEMORY or (
-                state.kind is StateSpaceKind.REGISTER
-                and state.name in _CALL_ARGUMENT_REGISTERS
-            ):
-                states.append(state)
-        return tuple(states)
+        if self._call_argument_state is None:
+            states: list[StateSpace] = []
+            for state in self.all_state_spaces():
+                if state.kind is StateSpaceKind.MEMORY or (
+                    state.kind is StateSpaceKind.REGISTER
+                    and state.name in _CALL_ARGUMENT_REGISTERS
+                ):
+                    states.append(state)
+            self._call_argument_state = tuple(states)
+        return self._call_argument_state
 
     def _parse_subtables(self) -> None:
         for symbol_id, symbol in self.symbols.items():
@@ -1386,6 +1452,11 @@ class SlaSpec:
         return context
 
     def resolve(
+        self, data: bytes, context: int, base_offset: int = 0
+    ) -> ResolvedConstructor | None:
+        return self._resolve_cached(bytes(data), context, base_offset)
+
+    def _resolve_uncached(
         self, data: bytes, context: int, base_offset: int = 0
     ) -> ResolvedConstructor | None:
         if self.root_subtable is None:
@@ -1529,16 +1600,17 @@ class SlaSpec:
         data: bytes,
         context: int,
         address: int,
+        memo: dict[int, VarnodeInfo | None] | None = None,
     ) -> VarnodeInfo | None:
         context = owner.context
         space = self._const_value(
-            handle.space, owner, data, context, address
+            handle.space, owner, data, context, address, memo
         )
         offset = self._const_value(
-            handle.ptroffset, owner, data, context, address
+            handle.ptroffset, owner, data, context, address, memo
         )
         size = self._const_value(
-            handle.size, owner, data, context, address
+            handle.size, owner, data, context, address, memo
         )
         if space is None or offset is None or size is None:
             return None
@@ -1550,6 +1622,25 @@ class SlaSpec:
         data: bytes,
         context: int,
         address: int = 0,
+        memo: dict[int, VarnodeInfo | None] | None = None,
+    ) -> VarnodeInfo | None:
+        key = id(operand)
+        if memo is not None and key in memo:
+            return memo[key]
+        result = self._resolve_operand_location(
+            operand, data, context, address, memo
+        )
+        if memo is not None:
+            memo[key] = result
+        return result
+
+    def _resolve_operand_location(
+        self,
+        operand: ResolvedOperand,
+        data: bytes,
+        context: int,
+        address: int,
+        memo: dict[int, VarnodeInfo | None] | None,
     ) -> VarnodeInfo | None:
         symbol_id = operand.operand.subsym_id
         direct = self.varnodes.get(symbol_id)
@@ -1573,13 +1664,13 @@ class SlaSpec:
             template = owner.constructor.template
             if template is not None and template.result is not None:
                 result = self._handle_tpl_location(
-                    template.result, owner, data, owner.context, address
+                    template.result, owner, data, owner.context, address, memo
                 )
                 if result is not None:
                     return result
             for child in owner.operands:
                 result = self._location_for_operand(
-                    child, data, owner.context, address
+                    child, data, owner.context, address, memo
                 )
                 if result is not None:
                     return result
@@ -1592,11 +1683,16 @@ class SlaSpec:
         data: bytes,
         context: int,
         address: int,
+        memo: dict[int, VarnodeInfo | None] | None = None,
     ) -> VarnodeInfo | None:
         if handle_index < 0 or handle_index >= len(resolved.operands):
             return None
         return self._location_for_operand(
-            resolved.operands[handle_index], data, resolved.context, address
+            resolved.operands[handle_index],
+            data,
+            resolved.context,
+            address,
+            memo,
         )
 
     @staticmethod
@@ -1613,6 +1709,7 @@ class SlaSpec:
         operand: ResolvedOperand,
         data: bytes,
         context: int,
+        memo: dict[int, VarnodeInfo | None] | None = None,
     ) -> list[StateSpace]:
         states: list[StateSpace] = []
         symbol_id = operand.operand.subsym_id
@@ -1645,7 +1742,7 @@ class SlaSpec:
             nested_context = operand.resolved.context
             for child in operand.resolved.operands:
                 for state in self._register_states_for_operand(
-                    child, data, nested_context
+                    child, data, nested_context, memo
                 ):
                     if state not in states:
                         states.append(state)
@@ -1658,12 +1755,13 @@ class SlaSpec:
         data: bytes,
         context: int,
         address: int,
+        memo: dict[int, VarnodeInfo | None] | None = None,
     ) -> int | None:
         if const.kind == "real":
             return const.value
         if const.kind == "handle":
             varnode = self._handle_varnode(
-                const.value, resolved, data, context, address
+                const.value, resolved, data, context, address, memo
             )
             if varnode is None:
                 return None
@@ -1702,15 +1800,16 @@ class SlaSpec:
         data: bytes,
         context: int,
         address: int,
+        memo: dict[int, VarnodeInfo | None] | None = None,
     ) -> tuple[int, int, int] | None:
         space = self._const_value(
-            tpl.space, resolved, data, context, address
+            tpl.space, resolved, data, context, address, memo
         )
         offset = self._const_value(
-            tpl.offset, resolved, data, context, address
+            tpl.offset, resolved, data, context, address, memo
         )
         size = self._const_value(
-            tpl.size, resolved, data, context, address
+            tpl.size, resolved, data, context, address, memo
         )
         if space is None or offset is None or size is None:
             return None
@@ -1848,9 +1947,8 @@ class SlaSpec:
         if instruction_type is InstructionType.RET:
             return []
 
-        opcodes = {op.opcode for op, _ in self._semantic_ops(resolved)}
-
         if instruction_type is InstructionType.BRANCH:
+            opcodes = {op.opcode for op, _ in self._semantic_ops(resolved)}
             if OP_BRANCHIND in opcodes:
                 return [Address.unknown_local()]
             if OP_BRANCH not in opcodes and OP_CBRANCH not in opcodes:
@@ -1869,6 +1967,7 @@ class SlaSpec:
             InstructionType.CALL,
             InstructionType.CALL_INDIRECT,
         ):
+            opcodes = {op.opcode for op, _ in self._semantic_ops(resolved)}
             if OP_CALLIND in opcodes:
                 return self._unique_addresses(
                     [Address.unknown_nonlocal(), next_address]
@@ -1910,8 +2009,64 @@ class SlaSpec:
         resolved: ResolvedConstructor,
         context: int,
     ) -> Instruction:
+        flow = self.decode_flow(data, address, resolved)
+        instruction_bytes = data[: flow.length]
+        modifies, depends_on = self._state_effects(
+            data, instruction_bytes, flow, resolved, context, address
+        )
+        return Instruction(
+            original_data=instruction_bytes,
+            type=flow.type,
+            length=flow.length,
+            address=address,
+            modifies=list(modifies),
+            depends_on=list(depends_on),
+            flows_to=list(flow.flows_to),
+        )
+
+    def _state_effects(
+        self,
+        data: bytes,
+        instruction_bytes: bytes,
+        flow: DecodedFlow,
+        resolved: ResolvedConstructor,
+        context: int,
+        address: int,
+    ) -> tuple[tuple[StateSpace, ...], tuple[StateSpace, ...]]:
+        """Return the modified and read state spaces of one instruction.
+
+        State spaces name register, flag, and memory classes; they never carry
+        an address.  The result is therefore a function of the encoded bytes
+        and the root context alone, and identical encodings share one cached
+        result.
+        """
+        key = (instruction_bytes, context)
+        cached = self._state_effects_cache.get(key)
+        if cached is not None:
+            return cached
+
+        effects = self._compute_state_effects(
+            data, flow, resolved, address
+        )
+        if len(self._state_effects_cache) >= self._DECODE_CACHE_LIMIT:
+            del self._state_effects_cache[next(iter(self._state_effects_cache))]
+        self._state_effects_cache[key] = effects
+        return effects
+
+    def _compute_state_effects(
+        self,
+        data: bytes,
+        flow: DecodedFlow,
+        resolved: ResolvedConstructor,
+        address: int,
+    ) -> tuple[tuple[StateSpace, ...], tuple[StateSpace, ...]]:
         modifies: list[StateSpace] = []
         depends_on: list[StateSpace] = []
+        modified: set[StateSpace] = set()
+        depended: set[StateSpace] = set()
+        # A resolved operand has one location per instruction, but the same
+        # operand is reached through several P-code varnodes.
+        memo: dict[int, VarnodeInfo | None] = {}
         opaque = False
 
         for op, owner in self._semantic_ops(resolved):
@@ -1925,11 +2080,12 @@ class SlaSpec:
                     opaque = True
             if op.output is not None:
                 location = self._resolve_varnode_tpl(
-                    op.output, owner, data, owner_context, address
+                    op.output, owner, data, owner_context, address, memo
                 )
                 if location is not None:
                     state = self._state_space(location)
-                    if state is not None and state not in modifies:
+                    if state is not None and state not in modified:
+                        modified.add(state)
                         modifies.append(state)
                     if state is not None and state.kind is StateSpaceKind.MEMORY:
                         handle_index = self._first_handle_index(op.output)
@@ -1941,17 +2097,21 @@ class SlaSpec:
                                 owner.operands[handle_index],
                                 data,
                                 owner_context,
+                                memo,
                             ):
-                                if source not in depends_on:
+                                if source not in depended:
+                                    depended.add(source)
                                     depends_on.append(source)
             elif op.opcode == OP_STORE:
                 state = StateSpace(StateSpaceKind.MEMORY, self.default_space, 1)
-                if state not in modifies:
+                if state not in modified:
+                    modified.add(state)
                     modifies.append(state)
 
             if op.opcode == OP_LOAD:
                 state = StateSpace(StateSpaceKind.MEMORY, self.default_space, 1)
-                if state not in depends_on:
+                if state not in depended:
+                    depended.add(state)
                     depends_on.append(state)
 
             for index, input_tpl in enumerate(op.inputs):
@@ -1965,11 +2125,12 @@ class SlaSpec:
                     # First CALLOTHER input is the userop index.
                     continue
                 location = self._resolve_varnode_tpl(
-                    input_tpl, owner, data, owner_context, address
+                    input_tpl, owner, data, owner_context, address, memo
                 )
                 if location is not None:
                     state = self._state_space(location)
-                    if state is not None and state not in depends_on:
+                    if state is not None and state not in depended:
+                        depended.add(state)
                         depends_on.append(state)
 
                 handle_index = self._first_handle_index(input_tpl)
@@ -1978,9 +2139,13 @@ class SlaSpec:
                     and handle_index < len(owner.operands)
                 ):
                     for state in self._register_states_for_operand(
-                        owner.operands[handle_index], data, owner_context
+                        owner.operands[handle_index],
+                        data,
+                        owner_context,
+                        memo,
                     ):
-                        if state not in depends_on:
+                        if state not in depended:
+                            depended.add(state)
                             depends_on.append(state)
 
         if opaque:
@@ -1988,12 +2153,12 @@ class SlaSpec:
             # opaque operation as reading and writing every tracked state
             # space rather than guessing which ones it clobbers.
             for state in self.all_state_spaces():
-                if state not in modifies:
+                if state not in modified:
+                    modified.add(state)
                     modifies.append(state)
-                if state not in depends_on:
+                if state not in depended:
+                    depended.add(state)
                     depends_on.append(state)
-
-        flow = self.decode_flow(data, address, resolved)
 
         unknown_transfer = flow.type in _UNKNOWN_TRANSFER_TYPES or any(
             target.kind is not AddressKind.ABSOLUTE
@@ -2001,7 +2166,8 @@ class SlaSpec:
         )
         if unknown_transfer:
             for state in self.unknown_transfer_clobbers():
-                if state not in modifies:
+                if state not in modified:
+                    modified.add(state)
                     modifies.append(state)
 
         if flow.type in (
@@ -2010,18 +2176,11 @@ class SlaSpec:
             InstructionType.OUTLINE_RESULT_CALL,
         ):
             for state in self.call_argument_state():
-                if state not in depends_on:
+                if state not in depended:
+                    depended.add(state)
                     depends_on.append(state)
 
-        return Instruction(
-            original_data=data[: flow.length],
-            type=flow.type,
-            length=flow.length,
-            address=address,
-            modifies=modifies,
-            depends_on=depends_on,
-            flows_to=list(flow.flows_to),
-        )
+        return tuple(modifies), tuple(depends_on)
 
     def _state_space(
         self, location: tuple[int, int, int]

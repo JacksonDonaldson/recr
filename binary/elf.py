@@ -38,6 +38,7 @@ class ELF(Binary):
         self.path = Path(path)
         self._data = bytearray(self.path.read_bytes())
         self._segments = self._parse_segments()
+        self._last_segment: _LoadSegment | None = None
 
     @classmethod
     def open(cls, path: str | Path) -> "ELF":
@@ -89,8 +90,12 @@ class ELF(Binary):
         return segments
 
     def _segment_containing(self, address: int) -> _LoadSegment | None:
+        last = self._last_segment
+        if last is not None and last.contains(address):
+            return last
         for segment in self._segments:
             if segment.contains(address):
+                self._last_segment = segment
                 return segment
         return None
 
@@ -107,6 +112,21 @@ class ELF(Binary):
             raise ValueError("read length must be non-negative")
         if length == 0:
             return b""
+
+        segment = self._segment_containing(address)
+        if segment is None:
+            raise ValueError(f"virtual address {address:#x} is not mapped")
+
+        offset = address - segment.virtual_address
+        if offset + length <= segment.memory_size:
+            # The read stays inside one segment; BSS bytes past the file image
+            # read as zero.
+            file_length = max(0, min(length, segment.file_size - offset))
+            start = segment.file_offset + offset
+            data = bytes(self._data[start : start + file_length])
+            if file_length < length:
+                data += b"\0" * (length - file_length)
+            return data
 
         result = bytearray()
         current = address

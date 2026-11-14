@@ -170,6 +170,55 @@ def test_state_effects(
     assert decoded.flows_to == [Address.absolute(decoded.length)], instruction
 
 
+ADDRESS_SENSITIVE_ENCODINGS = [
+    ("rip-relative load", "8b0510000000"),
+    ("rip-relative store", "890510000000"),
+    ("direct call", "e810000000"),
+    ("push rbp", "55"),
+    ("rsp-relative load", "8b442408"),
+    ("sse rip-relative load", "f30f100540000000"),
+    ("ret", "c3"),
+]
+
+
+@pytest.mark.parametrize(
+    "name,encoded",
+    ADDRESS_SENSITIVE_ENCODINGS,
+    ids=[case[0] for case in ADDRESS_SENSITIVE_ENCODINGS],
+)
+def test_state_effects_are_address_independent(
+    name: str, encoded: str, sleigher: X86Sleigher
+) -> None:
+    data = bytes.fromhex(encoded)
+
+    low = sleigher.parse(data, address=0x1000)
+    high = sleigher.parse(data, address=0x7FFF00000000)
+
+    assert low is not None and high is not None, name
+    assert low.length == high.length, name
+    assert low.type is high.type, name
+    assert low.modifies == high.modifies, name
+    assert low.depends_on == high.depends_on, name
+
+
+def test_repeated_decode_returns_independent_state_lists(
+    sleigher: X86Sleigher,
+) -> None:
+    data = bytes.fromhex("488b442408")
+
+    first = sleigher.parse(data, address=0x1000)
+    second = sleigher.parse(data, address=0x2000)
+
+    assert first is not None and second is not None
+    assert first.modifies == second.modifies
+    assert first.depends_on == second.depends_on
+
+    first.modifies.append(first.depends_on[0])
+    first.depends_on.clear()
+    assert first.modifies != second.modifies
+    assert second.depends_on != []
+
+
 @pytest.mark.parametrize(
     "instruction",
     ["call 0x1234", "call rax", "ret", "jmp rax"],

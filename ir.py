@@ -20,7 +20,7 @@ class AddressKind(Enum):
     UNK_NONLOCAL = auto()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Address:
     """A resolved or unresolved location.
 
@@ -49,7 +49,7 @@ class StateSpaceKind(Enum):
     MEMORY = auto()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StateSpace:
     """A unit of machine state used for dependency tracking.
 

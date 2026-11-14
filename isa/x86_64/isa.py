@@ -224,13 +224,29 @@ class X86_64ISA(ISA):
         if offset < 0:
             return pointers
 
-        for size in (self.pointer_size, 4):
-            try:
-                data = binary.read(offset, size)
-            except ValueError:
-                continue
-            if len(data) != size:
-                continue
+        try:
+            data = binary.read(offset, self.pointer_size)
+        except ValueError:
+            data = None
+        if data is not None and len(data) == self.pointer_size:
+            pointers.add(
+                Address.absolute(int.from_bytes(data, "little", signed=False))
+            )
+            # The 32-bit reading is the low half of the same bytes.
+            pointers.add(
+                Address.absolute(
+                    int.from_bytes(data[:4], "little", signed=False)
+                )
+            )
+            return pointers
+
+        # A pointer-sized read that crosses unmapped memory is unreadable, but
+        # the 32-bit value may still fit.
+        try:
+            data = binary.read(offset, 4)
+        except ValueError:
+            return pointers
+        if len(data) == 4:
             pointers.add(
                 Address.absolute(int.from_bytes(data, "little", signed=False))
             )

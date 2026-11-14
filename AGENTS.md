@@ -135,6 +135,9 @@ Implemented:
   Unknown transfers (calls, returns, and indirect branches) depend on the
   System V AMD64 argument state where applicable and clobber every tracked
   state space except callee-saved RBX, RBP, R12-R15.
+  Constructor resolution and state effects are cached per (instruction bytes,
+  context); state spaces name register, flag, and memory classes and never
+  carry an address, so the state-effect cache is address-independent.
   Tests cover an opcode matrix, hand-authored state-effect categories for
   partial registers/SIMD/x87/memory/segments, a committed state-effect golden
   for every decodable Intel form, hand-coded audit regressions, malformed or
