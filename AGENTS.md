@@ -130,12 +130,21 @@ Implemented:
   origin. Five Intel forms are strict xfail for the external bug documented in
   `other_peoples_bugs.md`: EVEX forms missing an immediate in Ghidra 12.2
   SLEIGH.
+- `uplifter.py` implements `Uplifter.uplift_function`: a strict linear decode of
+  the declared extent, code-flow recovery from the entry that fills
+  `flows_from` and `outgoing_references`, and basic-block construction where
+  branches and returns end blocks and calls fall through. Decode overruns,
+  in-function targets that are not instruction boundaries, and instructions
+  unreachable from the entry are rejected. `Function.pretty_print()` renders
+  the result to stdout. `test/uplift_sample.py` uplifts and prints every
+  sample function; `test/test_uplifter.py` covers the sample and rejection
+  paths.
 
 Still stubs:
 
 - YAML parser
 - PE and raw binary backends
-- Uplifter
+- `Uplifter.build_xrefs`
 - Function remover and outliner
 - Verification passes
 

@@ -183,6 +183,10 @@ uplifter.py:
                 - an outline window is a single-entry, single-exit straight-line region;
                   it is not the same thing as a basic block
 
+            - reject the function if decoding fails, an instruction crosses the
+              declared end, a flow target is not an instruction boundary, or
+              decoded bytes are unreachable from the entry
+
             - add f to the function map
         
         function build_xrefs():

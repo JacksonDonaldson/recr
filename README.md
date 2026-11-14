@@ -6,9 +6,9 @@ fixed; instructions may move within a function, and data is never appended.
 
 ## Status
 
-This is an early scaffold. The project structure, IR data model, module
-interfaces, and ELF reading backend are in place, but the optimization
-pipeline stages are still stubs that raise `NotImplementedError`. No binary
+The input parsers, ELF backend, x86-64 disassembler, and function uplifter are
+implemented. Cross-reference recovery, the optimization passes, and
+verification are still stubs that raise `NotImplementedError`, so no binary
 modification behavior is implemented yet.
 
 ## Planned pipeline
@@ -76,4 +76,10 @@ python -m pip install -r requirements.txt
 pytest
 ```
 
-All commands currently stop at the first unimplemented stage.
+To uplift and pretty-print every function in the sample input:
+
+```sh
+python test/uplift_sample.py
+```
+
+The optimization pipeline still stops at its first unimplemented stage.

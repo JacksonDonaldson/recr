@@ -127,6 +127,89 @@ class Function:
         """Return whether the function accesses the stack below the stack pointer."""
         raise NotImplementedError
 
+    def pretty_print(self) -> None:
+        """Write a human-readable dump of the uplifted function to stdout."""
+        instruction_count = sum(
+            len(block.instructions) for block in self.basic_blocks
+        )
+        print(
+            f"function {self.name} @ {self.start_address:#x} "
+            f"({self.length:#x} bytes, "
+            f"{_format_count(len(self.basic_blocks), 'block')}, "
+            f"{_format_count(instruction_count, 'instruction')})"
+        )
+        if self.file_offset >= 0:
+            print(f"  file offset: {self.file_offset:#x}")
+
+        if self.outgoing_references:
+            print(
+                "  outgoing references "
+                f"({_format_count(len(self.outgoing_references), 'reference')}):"
+            )
+            for reference in self.outgoing_references:
+                print(
+                    f"    {_format_address(reference.from_)} -> "
+                    f"{_format_address(reference.to)}"
+                )
+
+        for index, block in enumerate(self.basic_blocks):
+            if index:
+                print()
+            byte_length = sum(
+                instruction.length for instruction in block.instructions
+            )
+            print(
+                f"  block {index} @ {_format_address(block.start_location)} "
+                f"({_format_count(len(block.instructions), 'instruction')}, "
+                f"{byte_length:#x} bytes)"
+            )
+            for instruction in block.instructions:
+                details: list[str] = []
+                if instruction.modifies:
+                    details.append(
+                        "mod="
+                        + ",".join(state.name for state in instruction.modifies)
+                    )
+                if instruction.depends_on:
+                    details.append(
+                        "dep="
+                        + ",".join(
+                            state.name for state in instruction.depends_on
+                        )
+                    )
+                if instruction.flows_from:
+                    details.append(
+                        "from=" + _format_addresses(instruction.flows_from)
+                    )
+                if instruction.flows_to:
+                    details.append(
+                        "to=" + _format_addresses(instruction.flows_to)
+                    )
+                suffix = "  " + " ".join(details) if details else ""
+                print(
+                    f"    {instruction.address:#x}  "
+                    f"{instruction.original_data.hex():<30} "
+                    f"{instruction.type.name.lower():<14}{suffix}"
+                )
+
+
+def _format_count(count: int, singular: str) -> str:
+    """Render a count with a singular or regular plural noun."""
+    noun = singular if count == 1 else singular + "s"
+    return f"{count} {noun}"
+
+
+def _format_address(address: Address) -> str:
+    """Render an :class:`Address` for diagnostics."""
+    if address.kind is AddressKind.ABSOLUTE:
+        return f"{address.value:#x}"
+    return address.kind.name
+
+
+def _format_addresses(addresses: list[Address]) -> str:
+    """Render a list of addresses for diagnostics."""
+    return "[" + ", ".join(_format_address(address) for address in addresses) + "]"
+
 
 @dataclass(frozen=True)
 class Reference:

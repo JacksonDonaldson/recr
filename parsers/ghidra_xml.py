@@ -46,13 +46,6 @@ def parse(filename: str) -> ParseResult:
         if function is not None:
             functions.append(function)
 
-    if functions:
-        warnings.insert(
-            0,
-            "Ghidra XML does not provide original file offsets; "
-            f"Function.file_offset is {UNKNOWN_FILE_OFFSET} for every function",
-        )
-
     return ParseResult(
         isa=_detect_isa(root),
         functions=functions,
