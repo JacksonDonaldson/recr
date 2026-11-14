@@ -6,6 +6,7 @@ defines the data model; ISA-specific behaviour lives on the ISA implementations.
 
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional
@@ -167,15 +168,11 @@ class Function:
                 details: list[str] = []
                 if instruction.modifies:
                     details.append(
-                        "mod="
-                        + ",".join(state.name for state in instruction.modifies)
+                        "mod=" + _format_states(instruction.modifies)
                     )
                 if instruction.depends_on:
                     details.append(
-                        "dep="
-                        + ",".join(
-                            state.name for state in instruction.depends_on
-                        )
+                        "dep=" + _format_states(instruction.depends_on)
                     )
                 if instruction.flows_from:
                     details.append(
@@ -185,18 +182,49 @@ class Function:
                     details.append(
                         "to=" + _format_addresses(instruction.flows_to)
                     )
-                suffix = "  " + " ".join(details) if details else ""
-                print(
+
+                prefix = (
                     f"    {instruction.address:#x}  "
                     f"{instruction.original_data.hex():<30} "
-                    f"{instruction.type.name.lower():<14}{suffix}"
-                )
+                    f"{instruction.type.name.lower():<14}"
+                ).rstrip()
+                suffix = "  " + " ".join(details) if details else ""
+                if len(prefix) + len(suffix) <= _PRETTY_WIDTH:
+                    print(prefix + suffix)
+                    continue
+                print(prefix)
+                for detail in details:
+                    for line in textwrap.wrap(
+                        detail,
+                        width=_PRETTY_WIDTH,
+                        initial_indent=_DETAIL_INDENT,
+                        subsequent_indent=_DETAIL_INDENT,
+                        break_long_words=False,
+                        break_on_hyphens=False,
+                    ):
+                        print(line)
+
+
+_PRETTY_WIDTH = 110
+_DETAIL_INDENT = "      "
+_STATE_LIST_LIMIT = 20
+_STATE_SAMPLE = 8
 
 
 def _format_count(count: int, singular: str) -> str:
     """Render a count with a singular or regular plural noun."""
     noun = singular if count == 1 else singular + "s"
     return f"{count} {noun}"
+
+
+def _format_states(states: list[StateSpace]) -> str:
+    """Render a state list, summarizing very large conservative sets."""
+    names = [state.name for state in states]
+    if len(names) <= _STATE_LIST_LIMIT:
+        return ", ".join(names)
+    sample = ", ".join(names[:_STATE_SAMPLE])
+    omitted = len(names) - _STATE_SAMPLE
+    return f"{len(names)} states ({sample}, ... +{omitted})"
 
 
 def _format_address(address: Address) -> str:

@@ -109,6 +109,12 @@ ISA contract:
             return: []
             flows_from is left empty; the code-flow recovery pass fills it.
 
+        disassemble models unknown transfers conservatively:
+            calls depend on the System V AMD64 argument state (RDI, RSI, RDX,
+            RCX, R8, R9, ZMM0-ZMM7, RAX for varargs, RSP, and memory)
+            calls, returns, and indirect branches clobber every tracked state
+            space except callee-saved RBX, RBP, R12-R15
+
         is_outlinable returns false if:
             flows are present and flows_to is not a single fallthrough edge
             rsp is in modifies (push / pop / call / leave / add rsp)

@@ -321,3 +321,17 @@ def test_pretty_print_renders_unknown_flow_kinds(
 
     _function(parsed, "_start").pretty_print()
     assert "to=[UNK_NONLOCAL, 0x401095]" in capsys.readouterr().out
+
+
+def test_pretty_print_summarizes_large_state_lists(
+    capsys, uplifted_sample
+) -> None:
+    parsed, _, _ = uplifted_sample
+
+    _function(parsed, "_init").pretty_print()
+    output = capsys.readouterr().out
+
+    assert "mod=152 states (RSP, ram, RAX, RCX" in output
+    assert "mod=152 states (RIP, RSP, RAX, RCX" in output
+    assert "+144)" in output
+    assert "TR_Attributes" not in output

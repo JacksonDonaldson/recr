@@ -18,6 +18,36 @@ def reg(name: str) -> tuple[StateSpaceKind, str]:
     return StateSpaceKind.REGISTER, name
 
 
+CALLEE_SAVED = {"RBX", "RBP", "R12", "R13", "R14", "R15"}
+CALL_ARGUMENTS = frozenset(
+    {
+        RAM,
+        reg("RAX"),
+        reg("RCX"),
+        reg("RDX"),
+        reg("RSI"),
+        reg("RDI"),
+        reg("R8"),
+        reg("R9"),
+        reg("RSP"),
+        *(reg(f"ZMM{index}") for index in range(8)),
+    }
+)
+
+
+def _non_callee_saved_states(
+    sleigher: X86Sleigher,
+) -> frozenset[tuple[StateSpaceKind, str]]:
+    return frozenset(
+        (state.kind, state.name)
+        for state in sleigher.spec.all_state_spaces()
+        if not (
+            state.kind is StateSpaceKind.REGISTER
+            and state.name in CALLEE_SAVED
+        )
+    )
+
+
 @dataclass(frozen=True)
 class RipCase:
     name: str
@@ -25,7 +55,7 @@ class RipCase:
     original_address: int
     relocated_address: int
     relocated: bytes
-    modifies: frozenset[tuple[StateSpaceKind, str]]
+    modifies: frozenset[tuple[StateSpaceKind, str]] | None
     depends_on: frozenset[tuple[StateSpaceKind, str]]
     flow: str = "fallthrough"
 
@@ -86,8 +116,8 @@ CASES = [
         0x1000,
         0x6000,
         bytes.fromhex("ff1550b0ffff"),
-        frozenset({RAM, reg("RSP")}),
-        frozenset({RAM, reg("RSP")}),
+        None,
+        CALL_ARGUMENTS,
         flow="call_indirect",
     ),
     RipCase(
@@ -96,7 +126,7 @@ CASES = [
         0x1000,
         0x7000,
         bytes.fromhex("ff2560a0ffff"),
-        frozenset(),
+        None,
         frozenset({RAM}),
         flow="branch_indirect",
     ),
@@ -149,9 +179,12 @@ def test_rip_relative_reassemble_preserves_target(
     instruction = sleigher.parse(case.original, address=case.original_address)
     assert instruction is not None
 
+    expected_modifies = case.modifies
+    if expected_modifies is None:
+        expected_modifies = _non_callee_saved_states(sleigher)
     assert {
         (state.kind, state.name) for state in instruction.modifies
-    } == case.modifies
+    } == expected_modifies
     assert {
         (state.kind, state.name) for state in instruction.depends_on
     } == case.depends_on

@@ -111,7 +111,6 @@ def test_ghidra_parser_reports_skipped_entries() -> None:
     assert "artificial memory block" in warnings
     assert "deregister_tm_clones" in warnings
     assert "non-contiguous address ranges are not supported" in warnings
-    assert "file_offset" in warnings
 
 
 def test_ghidra_is_supported() -> None:

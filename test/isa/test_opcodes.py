@@ -20,9 +20,44 @@ def reg(name: str) -> tuple[StateSpaceKind, str]:
     return StateSpaceKind.REGISTER, name
 
 
-# name, encoded length, instruction type, modified states, source states
+CALLEE_SAVED = {"RBX", "RBP", "R12", "R13", "R14", "R15"}
+CALL_ARGUMENTS = {
+    RAM,
+    reg("RAX"),
+    reg("RCX"),
+    reg("RDX"),
+    reg("RSI"),
+    reg("RDI"),
+    reg("R8"),
+    reg("R9"),
+    reg("RSP"),
+    *(reg(f"ZMM{index}") for index in range(8)),
+}
+
+
+def _non_callee_saved_states(
+    sleigher: X86Sleigher,
+) -> set[tuple[StateSpaceKind, str]]:
+    return {
+        (state.kind, state.name)
+        for state in sleigher.spec.all_state_spaces()
+        if not (
+            state.kind is StateSpaceKind.REGISTER
+            and state.name in CALLEE_SAVED
+        )
+    }
+
+
+# name, encoded length, instruction type, modified states, source states.
+# ``None`` means every tracked state except callee-saved registers.
 CASES: list[
-    tuple[str, int, InstructionType, set[tuple[StateSpaceKind, str]], set[tuple[StateSpaceKind, str]]]
+    tuple[
+        str,
+        int,
+        InstructionType,
+        set[tuple[StateSpaceKind, str]] | None,
+        set[tuple[StateSpaceKind, str]],
+    ]
 ] = [
     ('add eax, 0x20', 3, InstructionType.ARITHMETIC, {FLAGS, reg("RAX")}, {reg("RAX")}),
     ('add rax, rbx', 3, InstructionType.ARITHMETIC, {FLAGS, reg("RAX")}, {reg("RAX"), reg("RBX")}),
@@ -56,8 +91,8 @@ CASES: list[
     ('leave', 1, InstructionType.ARITHMETIC, {reg("RBP"), reg("RSP")}, {RAM, reg("RBP"), reg("RSP")}),
     ('mov rsp, rbp', 3, InstructionType.ARITHMETIC, {reg("RSP")}, {reg("RBP")}),
     ('add rsp, 8', 4, InstructionType.ARITHMETIC, {FLAGS, reg("RSP")}, {reg("RSP")}),
-    ('ret', 1, InstructionType.RET, {reg("RIP"), reg("RSP")}, {RAM, reg("RIP"), reg("RSP")}),
-    ('call 0x401000', 5, InstructionType.CALL, {RAM, reg("RSP")}, {reg("RSP")}),
+    ('ret', 1, InstructionType.RET, None, {RAM, reg("RIP"), reg("RSP")}),
+    ('call 0x401000', 5, InstructionType.CALL, None, CALL_ARGUMENTS),
     ('jmp 0x401000', 5, InstructionType.BRANCH, set(), set()),
     ('je 0x401000', 6, InstructionType.BRANCH, set(), {FLAGS}),
     ('nop', 1, InstructionType.NOP, set(), set()),
@@ -137,7 +172,7 @@ def test_opcode(
         str,
         int,
         InstructionType,
-        set[tuple[StateSpaceKind, str]],
+        set[tuple[StateSpaceKind, str]] | None,
         set[tuple[StateSpaceKind, str]],
     ],
     opcodes_binary: Path,
@@ -151,6 +186,8 @@ def test_opcode(
     assert instruction.length == length, name
     assert instruction.original_data == data[offset : offset + length], name
     assert instruction.type is instruction_type, name
+    if expected_modifies is None:
+        expected_modifies = _non_callee_saved_states(sleigher)
     assert {
         (state.kind, state.name) for state in instruction.modifies
     } == expected_modifies, name
@@ -174,14 +211,14 @@ def test_reassemble_matches_nasm_at_new_base(
         str,
         int,
         InstructionType,
-        set[tuple[StateSpaceKind, str]],
+        set[tuple[StateSpaceKind, str]] | None,
         set[tuple[StateSpaceKind, str]],
     ],
     opcodes_binary: Path,
     sleigher: X86Sleigher,
     tmp_path: Path,
 ) -> None:
-    name, length, instruction_type, expected_modifies, _ = case
+    name, length, instruction_type, _, _ = case
     data = opcodes_binary.read_bytes()
     instruction = sleigher.parse(data[offset:], address=offset)
     assert instruction is not None, name

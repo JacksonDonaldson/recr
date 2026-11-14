@@ -98,6 +98,37 @@ CASES: list[
 ]
 
 
+CALLEE_SAVED = {"RBX", "RBP", "R12", "R13", "R14", "R15"}
+CALL_ARGUMENTS = {
+    "RAX",
+    "RCX",
+    "RDX",
+    "RSI",
+    "RDI",
+    "R8",
+    "R9",
+    "RSP",
+    *(f"ZMM{index}" for index in range(8)),
+}
+
+
+def _state_keys(states) -> set[tuple[StateSpaceKind, str]]:
+    return {(state.kind, state.name) for state in states}
+
+
+def _non_callee_saved_states(
+    sleigher: X86Sleigher,
+) -> set[tuple[StateSpaceKind, str]]:
+    return {
+        (state.kind, state.name)
+        for state in sleigher.spec.all_state_spaces()
+        if not (
+            state.kind is StateSpaceKind.REGISTER
+            and state.name in CALLEE_SAVED
+        )
+    }
+
+
 def _assemble(instruction: str, tmp_path: Path) -> bytes:
     source = tmp_path / "state.s"
     output = tmp_path / "state.bin"
@@ -137,3 +168,66 @@ def test_state_effects(
     } == expected_sources, instruction
     assert decoded.flows_from == [], instruction
     assert decoded.flows_to == [Address.absolute(decoded.length)], instruction
+
+
+@pytest.mark.parametrize(
+    "instruction",
+    ["call 0x1234", "call rax", "ret", "jmp rax"],
+)
+def test_unknown_transfer_clobbers_non_callee_saved_state(
+    instruction: str,
+    sleigher: X86Sleigher,
+    tmp_path: Path,
+) -> None:
+    decoded = sleigher.parse(_assemble(instruction, tmp_path))
+    assert decoded is not None, instruction
+
+    expected = _non_callee_saved_states(sleigher)
+    assert _state_keys(decoded.modifies) == expected, instruction
+    assert {
+        (state.kind, state.name) for state in decoded.modifies
+    } & {(StateSpaceKind.REGISTER, name) for name in CALLEE_SAVED} == set()
+    assert (StateSpaceKind.REGISTER, "RSP") in expected
+    assert (StateSpaceKind.REGISTER, "RIP") in expected
+    assert FLAGS in expected
+    assert RAM in expected
+
+
+def test_direct_branch_does_not_clobber_state(
+    sleigher: X86Sleigher,
+    tmp_path: Path,
+) -> None:
+    decoded = sleigher.parse(_assemble("jmp 0x1234", tmp_path))
+    assert decoded is not None
+
+    assert decoded.modifies == []
+    assert decoded.depends_on == []
+
+
+@pytest.mark.parametrize("instruction", ["call 0x1234", "call rax"])
+def test_call_depends_on_potential_arguments(
+    instruction: str,
+    sleigher: X86Sleigher,
+    tmp_path: Path,
+) -> None:
+    decoded = sleigher.parse(_assemble(instruction, tmp_path))
+    assert decoded is not None, instruction
+
+    expected = {
+        (StateSpaceKind.REGISTER, name) for name in CALL_ARGUMENTS
+    } | {RAM}
+    assert _state_keys(decoded.depends_on) == expected, instruction
+
+
+def test_return_keeps_precise_dependencies(
+    sleigher: X86Sleigher,
+    tmp_path: Path,
+) -> None:
+    decoded = sleigher.parse(_assemble("ret", tmp_path))
+    assert decoded is not None
+
+    assert _state_keys(decoded.depends_on) == {
+        RAM,
+        (StateSpaceKind.REGISTER, "RIP"),
+        (StateSpaceKind.REGISTER, "RSP"),
+    }

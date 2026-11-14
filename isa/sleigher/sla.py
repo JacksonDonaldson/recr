@@ -16,6 +16,7 @@ from typing import Any
 
 from ir import (
     Address,
+    AddressKind,
     Instruction,
     InstructionType,
     StateSpace,
@@ -245,6 +246,38 @@ _NO_EFFECT_USEROPS = {"LOCK", "UNLOCK", "XACQUIRE", "XRELEASE"}
 
 # Output-bearing userops whose implicit inputs are not represented in p-code.
 _OPAQUE_USEROPS_PREFIXES = ("cpuid",)
+
+# x86-64 System V callee-saved general-purpose registers.  RSP is deliberately
+# not preserved here: the transfer itself changes the stack pointer.
+_CALLEE_SAVED_REGISTERS = frozenset(
+    {"RBX", "RBP", "R12", "R13", "R14", "R15"}
+)
+
+# Registers that may carry System V AMD64 arguments.  RAX carries the varargs
+# vector count, and ZMM0-ZMM7 are the canonical forms of XMM0-XMM7.
+_CALL_ARGUMENT_REGISTERS = frozenset(
+    {
+        "RAX",
+        "RCX",
+        "RDX",
+        "RSI",
+        "RDI",
+        "R8",
+        "R9",
+        "RSP",
+        *(f"ZMM{index}" for index in range(8)),
+    }
+)
+
+# Transfers whose target is not a known instruction in the current function.
+_UNKNOWN_TRANSFER_TYPES = frozenset(
+    {
+        InstructionType.CALL,
+        InstructionType.CALL_INDIRECT,
+        InstructionType.RET,
+        InstructionType.OUTLINE_RESULT_CALL,
+    }
+)
 
 
 def _is_sleigh_temporary(name: str) -> bool:
@@ -1246,6 +1279,33 @@ class SlaSpec:
             self._all_state_spaces = tuple(states.values())
         return self._all_state_spaces
 
+    def unknown_transfer_clobbers(self) -> tuple[StateSpace, ...]:
+        """Return every tracked state an unknown transfer may clobber.
+
+        All architectural state except callee-saved general-purpose registers
+        is treated as volatile.  This deliberately includes system state
+        because a transfer may reach code whose effects are not visible here.
+        """
+        return tuple(
+            state
+            for state in self.all_state_spaces()
+            if not (
+                state.kind is StateSpaceKind.REGISTER
+                and state.name in _CALLEE_SAVED_REGISTERS
+            )
+        )
+
+    def call_argument_state(self) -> tuple[StateSpace, ...]:
+        """Return the state that may carry arguments into a call."""
+        states: list[StateSpace] = []
+        for state in self.all_state_spaces():
+            if state.kind is StateSpaceKind.MEMORY or (
+                state.kind is StateSpaceKind.REGISTER
+                and state.name in _CALL_ARGUMENT_REGISTERS
+            ):
+                states.append(state)
+        return tuple(states)
+
     def _parse_subtables(self) -> None:
         for symbol_id, symbol in self.symbols.items():
             content = symbol.content
@@ -1916,6 +1976,27 @@ class SlaSpec:
 
         length = resolved.length
         instruction_type = self.instruction_type(resolved)
+        flows_to = self.flow_targets(
+            resolved, data, address, instruction_type
+        )
+
+        unknown_transfer = instruction_type in _UNKNOWN_TRANSFER_TYPES or any(
+            target.kind is not AddressKind.ABSOLUTE for target in flows_to
+        )
+        if unknown_transfer:
+            for state in self.unknown_transfer_clobbers():
+                if state not in modifies:
+                    modifies.append(state)
+
+        if instruction_type in (
+            InstructionType.CALL,
+            InstructionType.CALL_INDIRECT,
+            InstructionType.OUTLINE_RESULT_CALL,
+        ):
+            for state in self.call_argument_state():
+                if state not in depends_on:
+                    depends_on.append(state)
+
         return Instruction(
             original_data=data[:length],
             type=instruction_type,
@@ -1923,9 +2004,7 @@ class SlaSpec:
             address=address,
             modifies=modifies,
             depends_on=depends_on,
-            flows_to=self.flow_targets(
-                resolved, data, address, instruction_type
-            ),
+            flows_to=flows_to,
         )
 
     def _state_space(

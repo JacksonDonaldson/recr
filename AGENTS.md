@@ -122,6 +122,9 @@ Implemented:
   fallthrough targets while preserving absolute branch and call targets.
   x87 condition codes map to the flag state, SLEIGH scratch registers are
   excluded, and opaque userops conservatively clobber all tracked state.
+  Unknown transfers (calls, returns, and indirect branches) depend on the
+  System V AMD64 argument state where applicable and clobber every tracked
+  state space except callee-saved RBX, RBP, R12-R15.
   Tests cover an opcode matrix, hand-authored state-effect categories for
   partial registers/SIMD/x87/memory/segments, a committed state-effect golden
   for every decodable Intel form, hand-coded audit regressions, malformed or
