@@ -49,6 +49,11 @@ class Binary(ABC):
         return cls(path)
 
     @abstractmethod
+    def mapped_ranges(self) -> list[tuple[int, int]]:
+        """Return ``(virtual address, size)`` for each mapped range."""
+        raise NotImplementedError
+
+    @abstractmethod
     def read(self, address: int, length: int) -> bytes:
         """Read ``length`` bytes at virtual ``address``."""
         raise NotImplementedError

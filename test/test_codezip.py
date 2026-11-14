@@ -38,8 +38,11 @@ def test_pipeline_uplifts_everything_then_exits_with_error(
     output = capsys.readouterr().out
     assert "function main @ 0x40182b" in output
     assert "function divide_safe @ 0x40119b" in output
+    assert "incoming references" in output
 
     assert "uplifted 39/39 function(s)" in caplog.text
+    assert "recovering cross-references" in caplog.text
+    assert "incoming reference(s)" in caplog.text
     assert "optimization and verification are not implemented" in caplog.text
 
 

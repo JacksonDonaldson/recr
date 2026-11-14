@@ -53,6 +53,18 @@ def test_virtual_to_file_maps_load_segments(sample_elf: Path) -> None:
     assert binary.read(0x401156, 4) == b"\xf3\x0f\x1e\xfa"
 
 
+def test_mapped_ranges_reports_load_segments(sample_elf: Path) -> None:
+    binary = Binary(sample_elf)
+
+    assert binary.mapped_ranges() == [
+        (0x400000, 0x558),
+        (0x401000, 0xB05),
+        (0x402000, 0x5CC),
+        (0x403DF8, 0x230),
+    ]
+
+
+
 def test_read_zero_fills_bss(sample_elf: Path) -> None:
     binary = Binary(sample_elf)
 

@@ -93,6 +93,14 @@ class ELF(Binary):
                 return segment
         return None
 
+    def mapped_ranges(self) -> list[tuple[int, int]]:
+        return [
+            (segment.virtual_address, segment.memory_size)
+            for segment in sorted(
+                self._segments, key=lambda segment: segment.virtual_address
+            )
+        ]
+
     def read(self, address: int, length: int) -> bytes:
         if length < 0:
             raise ValueError("read length must be non-negative")

@@ -22,6 +22,14 @@ def uplifted_sample():
     return uplift_sample()
 
 
+@pytest.fixture(scope="session")
+def cross_referenced_sample(uplifted_sample):
+    """Return the uplifted sample after cross-reference recovery."""
+    parsed, binary, uplifter = uplifted_sample
+    uplifter.build_xrefs()
+    return parsed, binary, uplifter
+
+
 def _function(parsed, name: str) -> Function:
     return next(function for function in parsed.functions if function.name == name)
 
@@ -335,3 +343,75 @@ def test_pretty_print_summarizes_large_state_lists(
     assert "mod=152 states (RIP, RSP, RAX, RCX" in output
     assert "+144)" in output
     assert "TR_Attributes" not in output
+
+
+def test_build_xrefs_records_direct_callers(cross_referenced_sample) -> None:
+    parsed, _, _ = cross_referenced_sample
+
+    add = _function(parsed, "add")
+    divide_safe = _function(parsed, "divide_safe")
+
+    assert (
+        Reference(Address.absolute(0x40189E), Address.absolute(0x401156))
+        in add.incoming_references
+    )
+    assert (
+        Reference(Address.absolute(0x4018D4), Address.absolute(0x40119B))
+        in divide_safe.incoming_references
+    )
+    assert (
+        Reference(Address.absolute(0x4018E6), Address.absolute(0x40119B))
+        in divide_safe.incoming_references
+    )
+
+
+def test_build_xrefs_records_pointer_references(cross_referenced_sample) -> None:
+    parsed, _, _ = cross_referenced_sample
+    frame_dummy = _function(parsed, "frame_dummy")
+
+    assert (
+        Reference(Address.absolute(0x403DF8), Address.absolute(0x401150))
+        in frame_dummy.incoming_references
+    )
+
+
+def test_build_xrefs_ignores_fallthrough_edges(
+    cross_referenced_sample,
+) -> None:
+    parsed, _, _ = cross_referenced_sample
+    printf = _function(parsed, "<EXTERNAL>::printf")
+
+    # 0x40105a is alignment padding after the preceding PLT stub.  Its NOP
+    # falls through into printf, but it is not a reference to printf.
+    assert (
+        Reference(Address.absolute(0x40105A), Address.absolute(0x401060))
+        not in printf.incoming_references
+    )
+
+
+def test_build_xrefs_is_unique_and_idempotent(cross_referenced_sample) -> None:
+    parsed, _, uplifter = cross_referenced_sample
+    before = {
+        function.start_address: list(function.incoming_references)
+        for function in parsed.functions
+    }
+
+    uplifter.build_xrefs()
+
+    for function in parsed.functions:
+        references = function.incoming_references
+        assert len(references) == len(set(references))
+        assert references == before[function.start_address]
+
+
+def test_pretty_print_renders_incoming_references(
+    capsys, cross_referenced_sample
+) -> None:
+    parsed, _, _ = cross_referenced_sample
+
+    _function(parsed, "add").pretty_print()
+    output = capsys.readouterr().out
+
+    assert "incoming references (1 reference):" in output
+    assert "0x40189e -> 0x401156" in output
+

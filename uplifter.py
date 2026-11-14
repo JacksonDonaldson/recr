@@ -65,11 +65,63 @@ class Uplifter:
     def build_xrefs(self) -> None:
         """Recover cross-references across the full binary.
 
-        This runs after every function has been uplifted.  It scans the whole
-        binary rather than trusting the input function list, which may be
-        incomplete.
+        This runs after every function has been uplifted.  It scans mapped
+        memory rather than trusting the input function list, which may be
+        incomplete: both pointer-sized values and successfully decoded
+        instructions are checked for references to known function entries.
         """
-        raise NotImplementedError
+        if not self.function_map:
+            return
+
+        for start, size in sorted(self.binary.mapped_ranges()):
+            for address in range(start, start + size):
+                self._record_pointer_reference(address)
+                self._record_flow_references(address)
+
+    def _record_pointer_reference(self, address: int) -> None:
+        pointer = self.isa.try_interpret_as_pointer(self.binary, address)
+        if pointer is None or pointer.kind is not AddressKind.ABSOLUTE:
+            return
+
+        function = self.function_map.get(pointer)
+        if function is None:
+            return
+
+        _append_unique(
+            function.incoming_references,
+            Reference(Address.absolute(address), pointer),
+        )
+
+    def _record_flow_references(self, address: int) -> None:
+        try:
+            instruction = self.isa.disassemble(self.binary, address)
+        except ValueError:
+            return
+
+        source = Address.absolute(address)
+        fallthrough = instruction.address + instruction.length
+        for target in instruction.flows_to:
+            if target.kind is not AddressKind.ABSOLUTE:
+                continue
+
+            # A straight-line instruction's only flow is its fallthrough.  For
+            # calls and conditional branches the fallthrough is likewise not a
+            # real cross-reference; only branch targets are.  Counting padding
+            # between functions as an incoming reference would keep otherwise
+            # unreferenced functions alive.
+            if (
+                instruction.type is not InstructionType.BRANCH
+                and target.value == fallthrough
+            ):
+                continue
+
+            function = self.function_map.get(target)
+            if function is None:
+                continue
+
+            _append_unique(
+                function.incoming_references, Reference(source, target)
+            )
 
     def _decode_linear(
         self, function: Function, start: int, end: int

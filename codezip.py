@@ -133,6 +133,24 @@ def run_pipeline(args: argparse.Namespace) -> int:
         "uplifted %d/%d function(s)", uplifted, len(parsed.functions)
     )
 
+    if not failures:
+        LOGGER.info("recovering cross-references")
+        try:
+            uplifter.build_xrefs()
+        except NotImplementedError as exc:
+            detail = str(exc) or "cross-reference recovery is not implemented"
+            LOGGER.error("failed to recover cross-references: %s", detail)
+            return 1
+        except ValueError as exc:
+            LOGGER.error("failed to recover cross-references: %s", exc)
+            return 1
+
+        xref_count = sum(
+            len(function.incoming_references)
+            for function in uplifter.function_map.values()
+        )
+        LOGGER.info("recovered %d incoming reference(s)", xref_count)
+
     if args.verbose:
         for function in parsed.functions:
             if not function.basic_blocks:
@@ -145,7 +163,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
         return 1
 
     LOGGER.error(
-        "pipeline stops after uplifting all functions: "
+        "pipeline stops after cross-reference recovery: "
         "optimization and verification are not implemented"
     )
     return 1

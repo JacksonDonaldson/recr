@@ -14,6 +14,9 @@ class PE(Binary):
     def open(cls, path: str | Path) -> "PE":
         raise NotImplementedError
 
+    def mapped_ranges(self) -> list[tuple[int, int]]:
+        raise NotImplementedError
+
     def read(self, address: int, length: int) -> bytes:
         raise NotImplementedError
 

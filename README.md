@@ -6,9 +6,9 @@ fixed; instructions may move within a function, and data is never appended.
 
 ## Status
 
-The input parsers, ELF backend, x86-64 disassembler, function uplifter, and CLI
-wiring through the uplift stage are implemented. Cross-reference recovery, the
-optimization passes, and verification are still stubs that raise
+The input parsers, ELF backend, x86-64 disassembler, function uplifter,
+cross-reference recovery, and CLI wiring through that stage are implemented.
+The optimization passes and verification are still stubs that raise
 `NotImplementedError`, so no binary modification behavior is implemented yet.
 
 ## Planned pipeline
@@ -73,8 +73,8 @@ python codezip.py ./a.out ./functions.yaml -o ./a.out.codezip
 ```
 
 Add `-v` or `--verbose` to log pipeline progress and pretty-print every
-uplifted function. The command currently stops after uplifting and exits
-nonzero because optimization and verification are not implemented.
+uplifted function. The command currently stops after cross-reference recovery
+and exits nonzero because optimization and verification are not implemented.
 
 ## Development
 

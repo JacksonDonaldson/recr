@@ -142,6 +142,17 @@ class Function:
         if self.file_offset >= 0:
             print(f"  file offset: {self.file_offset:#x}")
 
+        if self.incoming_references:
+            print(
+                "  incoming references "
+                f"({_format_count(len(self.incoming_references), 'reference')}):"
+            )
+            for reference in self.incoming_references:
+                print(
+                    f"    {_format_address(reference.from_)} -> "
+                    f"{_format_address(reference.to)}"
+                )
+
         if self.outgoing_references:
             print(
                 "  outgoing references "

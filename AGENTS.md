@@ -92,7 +92,8 @@ Implemented:
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.
 - ELF access (`binary/elf.py`) using `pyelftools`: `PT_LOAD` virtual-to-file
-  mapping, reads with BSS zero-fill, full-file writes, and a no-op `finish()`.
+  mapping, reads with BSS zero-fill, full-file writes, a no-op `finish()`, and
+  `mapped_ranges()` for enumerating loadable virtual-address ranges.
   `Binary(path)` routes by magic bytes; PE and raw inputs raise
   `UnsupportedBinaryFormat` for now.
 - ELF tests (`test/binary/test_elf.py`) build `test/build/sample` with `make`
@@ -108,9 +109,10 @@ Implemented:
   rejected. Trap and control-transfer mnemonics that the decoder classifies as
   arithmetic are rejected explicitly. `disassemble` clamps its read to the
   mapped range so instructions at the end of a segment still decode.
-  NASM-generated tests cover every Intel memory form in the corpus across
-  RSP/ESP/RBP/SIB and disp8/disp32 variants. `set_instruction_target`,
-  `try_interpret_as_pointer`, and the call/ret length helpers are still stubs.
+  `try_interpret_as_pointer` reads a little-endian pointer-sized value and
+  returns `None` for unmapped offsets. NASM-generated tests cover every Intel
+  memory form in the corpus across RSP/ESP/RBP/SIB and disp8/disp32 variants.
+  `set_instruction_target` and the call/ret length helpers are still stubs.
 - `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
   constructors, decision trees, context changes, and P-code templates. The
   x86-64 decoder recovers modified and source register/flag/memory states,
@@ -139,20 +141,24 @@ Implemented:
   branches and returns end blocks and calls fall through. Decode overruns,
   in-function targets that are not instruction boundaries, and instructions
   unreachable from the entry are rejected. `Function.pretty_print()` renders
-  the result to stdout. `test/uplift_sample.py` uplifts and prints every
-  sample function; `test/test_uplifter.py` covers the sample and rejection
-  paths.
-- `codezip.py` parses the export, opens the binary, and uplifts every function.
-  It then exits nonzero because optimization and verification are still
-  unimplemented. `-v/--verbose` logs pipeline progress, parser warnings, and
-  per-function results, and pretty-prints every uplifted function.
-  `test/test_codezip.py` covers the CLI flags, verbose output, and exit codes.
+  the result, including incoming and outgoing references, to stdout.
+  `test/uplift_sample.py` uplifts and prints every sample function;
+  `test/test_uplifter.py` covers the sample and rejection paths.
+- `Uplifter.build_xrefs()` scans every mapped virtual address for pointer-sized
+  values and successfully decoded control-flow instructions that target a known
+  function entry, then records unique incoming references. Ordinary
+  fallthrough edges are not cross-references.
+- `codezip.py` parses the export, opens the binary, uplifts every function, and
+  recovers cross-references. It then exits nonzero because optimization and
+  verification are still unimplemented. `-v/--verbose` logs pipeline progress,
+  parser warnings, and per-function results, and pretty-prints every uplifted
+  function. `test/test_codezip.py` covers the CLI flags, verbose output, and
+  exit codes.
 
 Still stubs:
 
 - YAML parser
 - PE and raw binary backends
-- `Uplifter.build_xrefs`
 - Function remover and outliner
 - Verification passes
 
