@@ -1,0 +1,480 @@
+{
+  "cases": [
+    {
+      "id": "caseless-utf-backref-min-break",
+      "mode": "utf",
+      "patterns": [
+        "(?i)^(\\x{23a})\\1*(?=X)"
+      ],
+      "subjects": [
+        "ȺȺȺⱥⱥ"
+      ],
+      "note": "0x4499cd: Feptr == Lstart break in the rare caseless UTF backreference repeat",
+      "kind": "special"
+    },
+    {
+      "id": "scan-substring-error-path",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "(*scan_substring:1)"
+      ],
+      "subjects": [
+        "abc"
+      ],
+      "note": "s01: parse_capture_list failure path; original rejects, mutant crashes"
+    },
+    {
+      "id": "turkish-casing-error-path",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "(*TURKISH_CASING)abc"
+      ],
+      "subjects": [
+        "abc"
+      ],
+      "note": "s02: Turkish-casing validation; original rejects, mutant accepts"
+    },
+    {
+      "id": "grep-default-output",
+      "kind": "default",
+      "mode": "plain",
+      "patterns": [
+        "abc"
+      ],
+      "subjects": [
+        "xx abc yy"
+      ],
+      "note": "s18: default (not -o) line-printing path; mutant crashes"
+    },
+    {
+      "id": "script-property-repeat",
+      "mode": "utf",
+      "patterns": [
+        "\\p{sc=Greek}+"
+      ],
+      "subjects": [
+        "αβγ"
+      ],
+      "note": "s15: PT_SC repeat; mutant crashes on the second character",
+      "kind": "special"
+    },
+    {
+      "id": "posix-class-compile",
+      "mode": "plain",
+      "patterns": [
+        "[[:alpha:]]+"
+      ],
+      "subjects": [
+        "abc"
+      ],
+      "note": "s19: POSIX class compile path; mutant SIGILL",
+      "kind": "special"
+    },
+    {
+      "id": "alnum-property-repeat",
+      "mode": "utf",
+      "patterns": [
+        "\\p{Xan}+"
+      ],
+      "subjects": [
+        "abc"
+      ],
+      "note": "s20: PT_ALNUM repeat; mutant crashes",
+      "kind": "special"
+    },
+    {
+      "id": "extended-class-large-range",
+      "mode": "utf",
+      "patterns": [
+        "[\\x{100}-\\x{200}]"
+      ],
+      "subjects": [
+        "Ő"
+      ],
+      "note": "s21: xclass large range; mutant misses the match",
+      "kind": "special"
+    },
+    {
+      "id": "extuni-4byte",
+      "mode": "utf",
+      "patterns": [
+        "\\X"
+      ],
+      "subjects": [
+        "😀"
+      ],
+      "note": "s03: \\X on a 4-byte character; mutant crashes",
+      "kind": "special"
+    },
+    {
+      "id": "class-quote-end",
+      "mode": "plain",
+      "patterns": [
+        "[a\\Q\\E]"
+      ],
+      "subjects": [
+        "x"
+      ],
+      "note": "s06: \\Q..\\E in a class; mutant crashes at compile time",
+      "kind": "special"
+    },
+    {
+      "id": "hspace-star-start-bits",
+      "mode": "plain",
+      "patterns": [
+        "\\h*"
+      ],
+      "subjects": [
+        "a"
+      ],
+      "note": "s07: set_start_bits OP_HSPACE; mutant crashes at compile time",
+      "kind": "special"
+    },
+    {
+      "id": "s37",
+      "mode": "utf",
+      "patterns": [
+        "\\R{2,3}"
+      ],
+      "subjects": [
+        "a\r😀"
+      ],
+      "note": "The 4-byte UTF-8 branch of GETCHARINC in OP_ANYNL (line 3312) executes movzbl (%rax),%eax; the mutation turns it into sti; out 0x0,%al, a privileged sequence. A quantified \\R whose mandatory repeats run into a 4-byte character reaches it.",
+      "kind": "special"
+    },
+    {
+      "id": "s38",
+      "mode": "plain",
+      "patterns": [
+        "(?J)()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()()(?<A>x)(?<A>y)\\k<A>"
+      ],
+      "subjects": [
+        "xyx"
+      ],
+      "note": "In the OP_DNREF duplicate-name scan, GET2(slot,0) << 8 becomes shl by 0x3c (masked to 28), so group numbers >= 256 yield a huge Loffset that is skipped; the duplicated name at group 256/257 is then never found and a back reference that should match fails.",
+      "kind": "special"
+    },
+    {
+      "id": "s39",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)\\p{Xsp}{2,}"
+      ],
+      "subjects": [
+        "  𐀀"
+      ],
+      "note": "GETCHARLENTEST's 4-byte UTF-8 decode in the PT_SPACE maximizing loop (line 4496) shifts the first continuation byte by 0xc; the mutation makes it 0x66 (masked to 6), so its top bits land in the wrong position. U+10000 then decodes to 0x2000 (EN QUAD, a space) in the mutant and is consumed as whitesp",
+      "kind": "special"
+    },
+    {
+      "id": "s40",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(*NO_START_OPT)\\R*?X"
+      ],
+      "subjects": [
+        "a\u000bX"
+      ],
+      "note": "The trampoline jmp for line 4141 (the break after the OP_ANYNL switch in the minimizing type-repeat loop, taken for VT/FF/NEL/LS/PS) has its rel32 low byte changed from 0x1d to 0xcc, so it lands at 0x4405f0 inside another opcode's code. A lazy \\R loop over VT reaches it and the mutant matches a diff",
+      "kind": "special"
+    },
+    {
+      "id": "s42",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(*NO_START_OPT)\\p{sc=Greek}*?X"
+      ],
+      "subjects": [
+        "𐀀X"
+      ],
+      "note": "GETCHARINCTEST's 4-byte UTF-8 decode in the PT_SC minimizing loop (line 3849) begins with add $0x1,%rax; the REX.W prefix 0x48 becomes 0xd2, so it decodes as rolb $1,0xb60f01c0(%rbx) and the next bytes are consumed as its displacement. A lazy script-property repeat over a 4-byte character executes i",
+      "kind": "special"
+    },
+    {
+      "id": "s43",
+      "mode": "plain",
+      "patterns": [
+        "zzz"
+      ],
+      "subjects": [
+        "abc"
+      ],
+      "note": "pcre2grep.c:2873 'if (!invert)' compiles to jne 0x4066ea; it is taken only when the -v/--invert-match flag is set while --only-matching is active. The mutant changes the rel32 middle byte (0x0d -> 0xc3), so the taken branch lands at 0x411cea, the middle of a parse_regex instruction, and dies with SI",
+      "kind": "special",
+      "args": [
+        "-v"
+      ]
+    },
+    {
+      "id": "s44",
+      "mode": "plain",
+      "patterns": [
+        "(a)\\1"
+      ],
+      "subjects": [
+        "aa"
+      ],
+      "note": "pcre2_compile.c:8255 PUT2(code, 1+LINK_SIZE, meta_arg) for META_CAPTURE; the mutated instruction no longer sets %edx to meta_arg>>8, so the high byte of the OP_CBRA group number is taken from stale %edx. A backreference then no longer finds the group and pcre2_study() reports an internal error.",
+      "kind": "special"
+    },
+    {
+      "id": "s45",
+      "mode": "plain",
+      "patterns": [
+        "\\d+"
+      ],
+      "subjects": [
+        "abc123"
+      ],
+      "note": "pcre2_match.c:5142 in the OP_DIGIT maximizing loop; the mutated disp32 loads -0xcc60(%rbp) instead of the current heapframe -0x160(%rbp), so the following mb->ctypes lookup dereferences garbage. Any pattern that runs the digit loop reaches it.",
+      "kind": "special"
+    },
+    {
+      "id": "s46",
+      "mode": "plain",
+      "patterns": [
+        "(?i)(?[[a-z]])"
+      ],
+      "subjects": [
+        "A"
+      ],
+      "note": "pcre2_compile_class.c:2192 passes context->options to _pcre2_compile_class_not_nested; the mutant reads a leftover stack slot instead, which never has PCRE2_CASELESS set. Inside a caseless extended class the range [a-z] is therefore no longer case-folded, so '(?i)(?[[a-z]])' matches 'A' in the origi",
+      "kind": "special"
+    },
+    {
+      "id": "s47",
+      "mode": "plain",
+      "patterns": [
+        "zzz"
+      ],
+      "subjects": [
+        "abc"
+      ],
+      "note": "pcre2grep.c:1903 'if (!all_matches || first < 0) return FALSE;' compiles to 'mov $0,%eax'; the mutant changes 0xb8 to 0xcc, turning it into int3 followed by add %al,(%rax). With -o, all_matches is TRUE and any line with no match takes this return, so the mutant dies on SIGTRAP.",
+      "kind": "special"
+    },
+    {
+      "id": "s48",
+      "mode": "plain",
+      "patterns": [
+        "a"
+      ],
+      "subjects": [
+        "a"
+      ],
+      "note": "pcre2_match.c:737 'F = match_data->heapframes;' loads the fifth argument from -0x328(%rbp); the mutant disp32 -0x368(%rbp) reads an unrelated small stack value (observed 0x7fee4) and then dereferences it at +0x30. The frame setup runs on every pcre2_match() call, so any matching pattern crashes.",
+      "kind": "special"
+    },
+    {
+      "id": "s56",
+      "mode": "utf",
+      "patterns": [
+        "[\\w]+"
+      ],
+      "subjects": [
+        "éé\n"
+      ],
+      "note": "In UTF/UCP mode parse_regex reads `options` from a stack slot to pass to handle_escdsw() (pcre2_compile.c:4528). The mutant reads the wrong slot (-0x1d4 instead of -0x1ac), which is 0, so the UCP bit is lost and \\w inside a character class becomes the ASCII-only class. `[\\w]+` then stops matching no",
+      "kind": "special"
+    },
+    {
+      "id": "s57",
+      "mode": "utf",
+      "patterns": [
+        "(?i)[^X]{0,2}?Y"
+      ],
+      "subjects": [
+        "ééY\n"
+      ],
+      "note": "The mutated store is the Feptr update in the UTF-8 two-byte GETCHARINC of the caseless, lazy, repeated negated-character path (pcre2_match.c:1804). It writes Feptr to 0x15(%rdx) instead of 0x40(%rdx), so the subject pointer is not advanced after consuming a two-byte character, and the lazy repeat co",
+      "kind": "special"
+    },
+    {
+      "id": "s08",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "a"
+      ],
+      "subjects": [
+        "a"
+      ],
+      "args": [
+        "--match-limit=12x"
+      ],
+      "note": "decode_number calls pcre2grep_exit(usage(2)) for a malformed numeric option; the mutated immediate changes the exit status from 2 to 243 while stderr is identical. This is an error-path CLI test, not a pattern/subject case, and the original intentionally exits 2, so check.py's clean-baseline rule re"
+    },
+    {
+      "id": "s09",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[a-cx-z]"
+      ],
+      "subjects": [
+        "y"
+      ],
+      "note": "In compile_optimize_class (UTF-mode class optimisation) line 589 saves buffer[i] to the local tmp1. The ModRM mutation 0x45->0x1c turns that save into `mov %ebx,(%rax,%riz,4)`, but the preceding `mov (%rax),%eax` has already replaced RAX with the 32-bit range value, so the store faults; every UTF-mo"
+    },
+    {
+      "id": "s10",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "[\\D]"
+      ],
+      "subjects": [
+        "x"
+      ],
+      "note": "parse_class calls append_non_ascii_range for a negated \\D/\\S/\\W inside a class, but only when the class optimiser runs in UTF mode without UCP (with UCP those escapes become Unicode property tests). The mutated call displacement jumps far outside the image, so `-u -P` with `[\\D]` crashes the mutant ",
+      "args": [
+        "-P"
+      ]
+    },
+    {
+      "id": "s13",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "[^x]{2,5}?z"
+      ],
+      "subjects": [
+        "abcdz"
+      ],
+      "note": "In the non-UTF minimise loop for a repeated negated character (pcre2_match.c:1962) the mutated `mov -0x160(%rbp),%rax` becomes `insd (%rdi),%dx`, which faults with #GP in user mode. A lazy `[^x]{2,5}?z` that has to extend the repeat reaches the instruction, so the original prints the match and the m"
+    },
+    {
+      "id": "s14",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "\\X{2}"
+      ],
+      "subjects": [
+        "ab"
+      ],
+      "note": "The first byte of `mov %edi,%r8d` at pcre2_match.c:3249 (the OP_EXTUNI minimum-repeat loop, reached by a quantified \\X in UTF mode) is changed from REX.B 0x41 to 0xc3, turning it into a `ret` that pops a local stack slot instead of the return address. `\\X{2}` on a two-character UTF subject executes "
+    },
+    {
+      "id": "s22",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_START_OPT)(?aS)\\s"
+      ],
+      "subjects": [
+        "a b"
+      ],
+      "note": "pcre2_match.c:2616 is the inlined GETCHARINCTEST decoder inside the OP_WHITESPACE single-character case. For a 3-byte UTF-8 lead it loads fc from -0x2f0(%rbp) at 0x430fd9; the mutant displacement (0x72fffd10) is non-canonical, so a three-byte whitespace candidate in a UTF (non-UCP) \\s match faults. "
+    },
+    {
+      "id": "s23",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "(*NO_AUTO_POSSESS)(?aS)\\S{2,}"
+      ],
+      "subjects": [
+        "ab"
+      ],
+      "note": "pcre2_match.c:3445 is the minimum-repeat loop for OP_NOT_WHITESPACE inside the UTF-mode repeated-type switch. 0x43a2fa reloads mb from -0x160(%rbp); the mutant reads -0xab60(%rbp), a stale stack slot that is then dereferenced as mb (mov 0x40(%rax) at 0x43a301) and faults. (?aS) makes \\S compile to O"
+    },
+    {
+      "id": "s24",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "a{1}"
+      ],
+      "subjects": [
+        "a"
+      ],
+      "note": "pcre2_compile.c:7375 skips repeat rewriting when a non-parenthesized item has {1} (repeat_min == repeat_max == 1). The original 6-byte `je 0x418553` was mutated to `0f 02 ...` (LAR with a RIP-relative operand), which is 7 bytes, swallows the first byte of the next instruction, and computes an unmapp"
+    },
+    {
+      "id": "s26",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(*NO_START_OPT)(*NO_AUTO_POSSESS)\\v{2,}?X"
+      ],
+      "subjects": [
+        "\u000b\u000bb"
+      ],
+      "note": "pcre2_match.c:4311 is the OP_VSPACE test inside the non-UTF minimizing loop of the repeated-type match (the lazy-quantifier branch reached via reptype == REPTYPE_MIN). 0x440adf compares fc with 0x85 using -0x2f0(%rbp); the mutant adds 0x43fffd10 to rbp, a non-canonical address, and faults. A lazy \\v"
+    },
+    {
+      "id": "s28",
+      "kind": "special",
+      "mode": "utf",
+      "patterns": [
+        "z"
+      ],
+      "subjects_hex": [
+        "61ff620a"
+      ],
+      "args": [
+        "-U"
+      ],
+      "note": "pcre2_match.c:8095 is the invalid-UTF fragment loop in pcre2_match_8: with PCRE2_MATCH_INVALID_UTF (-U) the wrapper truncates end_subject at the first bad code unit and re-enters match() for later fragments. 0x450b21 reloads end_subject into rax, but rax already holds it; the mutation turns the 7-by"
+    },
+    {
+      "id": "s29",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "^(?1(3,2,2,3,2))(?1(3))(?(DEFINE)(a(.)b(.)c))"
+      ],
+      "subjects": [
+        "a1b2cafbgc"
+      ],
+      "note": "pcre2_compile_cgroup.c:622 stores a de-duplicated capture number in the recurse-arguments list. The mutated byte turns the captures pointer load into `ja` followed by garbage (ENTER / wild memory ops), so any subroutine call with two or more capture arguments that sort to an adjacent unequal pair cr"
+    },
+    {
+      "id": "s30",
+      "kind": "default",
+      "mode": "plain",
+      "patterns": [
+        "bbbb"
+      ],
+      "subjects": [
+        "aaaa\nbbbb\ncccc"
+      ],
+      "args": [
+        "-B",
+        "1"
+      ],
+      "note": "pcre2grep.c:1618 tests `p > startptr` in previous_line() with startptr at -0x30(%rbp); the mutated displacement reads 0x16(%rbp) instead, a stale caller slot whose value is always above the buffer, so the backward scan exits immediately and the before-context lines are not printed. Witness needs `-B"
+    },
+    {
+      "id": "s31",
+      "kind": "special",
+      "mode": "plain",
+      "patterns": [
+        "(?<=a{2})b"
+      ],
+      "subjects": [
+        "aab"
+      ],
+      "note": "pcre2_compile.c:9955 computes `max - 1` in get_branchlength(); the mutated instruction becomes `andl $0x1,0x1(%rbx)` where rbx is main's argv. It zeroes bytes 1-4 of argv[0], so the later file loop in main (pcre2grep.c:4719) uses the corrupted argv[0] and the program dies. Any bounded quantifier ins"
+    },
+    {
+      "id": "s27",
+      "kind": "error",
+      "mode": "plain",
+      "patterns": [
+        "a"
+      ],
+      "subjects": [
+        "a"
+      ],
+      "args": [
+        "--include=a",
+        "--include=("
+      ],
+      "note": "s27: command-line --include error message uses ordin(), which the -f path avoids; original prints the error and still matches, mutant crashes"
+    }
+  ]
+}

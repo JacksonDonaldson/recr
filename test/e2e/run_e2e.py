@@ -27,6 +27,7 @@ PROJECT_ROOT = TEST_DIR.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from binary.binary import Binary  # noqa: E402
+import grep_corpus  # noqa: E402
 
 BUILD_ROOT = TEST_DIR / "build" / "e2e"
 SOURCE_DIR = BUILD_ROOT / "pcre2"
@@ -478,7 +479,30 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _post_codezip_check() -> None:
+def _grep_corpus_baseline() -> tuple[
+    grep_corpus.Corpus, dict[str, grep_corpus.RunResult]
+]:
+    print("building the pcre2grep library corpus")
+    try:
+        corpus = grep_corpus.build(
+            SOURCE_DIR, BUILD_ROOT / "grep-corpus", SOURCE_DIR / "pcre2grep"
+        )
+        expected = grep_corpus.capture(SOURCE_DIR / "pcre2grep", corpus)
+    except (grep_corpus.CorpusError, subprocess.TimeoutExpired) as error:
+        _fail(f"pcre2grep corpus baseline failed: {error}")
+    counts = {
+        mode: sum(1 for line in path.read_bytes().split(b"\n") if line)
+        for mode, path in corpus.patterns.items()
+    }
+    print("  " + ", ".join(f"{mode}={count}"
+                           for mode, count in counts.items()))
+    return corpus, expected
+
+
+def _post_codezip_check(
+    corpus: grep_corpus.Corpus | None = None,
+    expected: dict[str, grep_corpus.RunResult] | None = None,
+) -> None:
     backup_dir = RESULT_DIR / "originals"
     backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -501,12 +525,22 @@ def _post_codezip_check() -> None:
                     f"make rebuilt {name}; the codezipped binary was not "
                     "the one under test"
                 )
+
+        if corpus is not None and expected is not None:
+            problem = grep_corpus.compare(
+                SOURCE_DIR / "pcre2grep", corpus, expected
+            )
+            if problem is not None:
+                _fail(f"pcre2grep library corpus: {problem}")
     finally:
         for name in BINARIES:
             shutil.copy2(backup_dir / name, SOURCE_DIR / name)
 
 
-def _write_summary(stats: dict[str, dict[str, int]]) -> None:
+def _write_summary(
+    stats: dict[str, dict[str, int]],
+    corpus: grep_corpus.Corpus | None = None,
+) -> None:
     total = sum(entry["freed_bytes"] for entry in stats.values())
     if total <= 0:
         _fail("codezip freed no bytes; the fixture no longer exercises removal")
@@ -523,6 +557,15 @@ def _write_summary(stats: dict[str, dict[str, int]]) -> None:
         "baseline_check": "pass",
         "post_codezip_check": "pass",
     }
+    if corpus is not None:
+        summary["grep_corpus"] = {
+            "root": str(corpus.root),
+            "patterns": {
+                mode: sum(1 for line in path.read_bytes().split(b"\n")
+                          if line)
+                for mode, path in corpus.patterns.items()
+            },
+        }
     path = RESULT_DIR / "summary.json"
     path.write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
@@ -551,13 +594,14 @@ def main() -> int:
     _checkout()
     _build()
     _run_check("check-baseline.log")
+    corpus, corpus_expected = _grep_corpus_baseline()
 
     for name in BINARIES:
         _ghidra_export(name)
 
     stats = _codezip_all()
-    _post_codezip_check()
-    _write_summary(stats)
+    _post_codezip_check(corpus, corpus_expected)
+    _write_summary(stats, corpus)
     return 0
 
 
