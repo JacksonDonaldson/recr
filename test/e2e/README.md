@@ -32,9 +32,13 @@ make -C test e2e
    LDFLAGS=-no-pie
    ```
 
+   The finished `pcre2test` and `pcre2grep` binaries are saved under
+   `test/build/e2e/baseline/`, keyed by the pinned commit, build flags, and
+   binary hashes. Later runs reuse them instead of rebuilding.
 3. Runs `make check` as a baseline.
 4. Exports `pcre2test` and `pcre2grep` with the repository's
-   `ExportGhidraXml.java`.
+   `ExportGhidraXml.java`, unless an export already matches the binary and
+   script hashes recorded in `test/build/e2e/results/ghidra-exports.json`.
 5. Runs codezip on both binaries with `--receipt`.
 6. Checks that the output keeps the file size and differs from the input only
    by `0xff` bytes inside the receipt ranges.
@@ -42,7 +46,8 @@ make -C test e2e
    originals even if the suite fails.
 
 Logs, exports, receipts, and `summary.json` are written under
-`test/build/e2e/`. Remove that directory to force a fresh checkout.
+`test/build/e2e/`. Remove that directory to force a fresh checkout, build, and
+Ghidra export.
 
 ## Build flag notes
 

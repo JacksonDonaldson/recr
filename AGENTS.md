@@ -205,7 +205,10 @@ Implemented:
   functions with Ghidra, codezips `pcre2test` and `pcre2grep`, and requires
   pcre2's `make check` to pass before and after. It is opt-in, needs Ghidra
   and network access, and records the freed ranges and byte count under
-  `test/build/e2e/results/`. Without `-fno-jump-tables`, 37 `pcre2test`
+  `test/build/e2e/results/`. The built `pcre2test`/`pcre2grep` binaries are
+  cached in `test/build/e2e/baseline/`, and Ghidra exports are reused when
+  their binary and script hashes match, so only changed inputs are rebuilt or
+  re-exported. Without `-fno-jump-tables`, 37 `pcre2test`
   functions fail uplift because the uplifter rejects decoded instructions
   unreachable through absolute switch flow.
 

@@ -34,6 +34,10 @@ LOG_DIR = BUILD_ROOT / "logs"
 RESULT_DIR = BUILD_ROOT / "results"
 GHIDRA_PROJECT_DIR = BUILD_ROOT / "ghidra"
 GHIDRA_SCRIPT_DIR = TEST_DIR / "ghidra_scripts"
+GHIDRA_EXPORT_SCRIPT = GHIDRA_SCRIPT_DIR / "ExportGhidraXml.java"
+BASELINE_DIR = BUILD_ROOT / "baseline"
+BASELINE_MANIFEST = BASELINE_DIR / "manifest.json"
+EXPORT_MANIFEST = RESULT_DIR / "ghidra-exports.json"
 
 PCRE2_REPO = "https://github.com/PCRE2Project/pcre2.git"
 PCRE2_TAG = "pcre2-10.49"
@@ -130,6 +134,69 @@ def _prepare_dirs() -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
 
+def _read_json(path: Path) -> dict:
+    """Return the JSON object at ``path``, or an empty dict if unreadable."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _write_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _build_identity() -> dict[str, object]:
+    """Return the inputs that determine the contents of the pcre2 binaries."""
+    return {
+        "commit": PCRE2_COMMIT,
+        "configure_flags": list(CONFIGURE_FLAGS),
+        "cflags": list(CFLAGS),
+        "ldflags": list(LDFLAGS),
+    }
+
+
+def _cached_binaries_usable() -> bool:
+    """Return whether the saved binaries may replace a fresh build."""
+    if not (SOURCE_DIR / "Makefile").is_file():
+        return False
+
+    manifest = _read_json(BASELINE_MANIFEST)
+    if manifest.get("build") != _build_identity():
+        return False
+
+    hashes = manifest.get("binaries")
+    if not isinstance(hashes, dict):
+        return False
+    for name in BINARIES:
+        saved = BASELINE_DIR / name
+        if not saved.is_file() or hashes.get(name) != _sha256(saved):
+            return False
+    return True
+
+
+def _restore_cached_binaries() -> None:
+    for name in BINARIES:
+        shutil.copy2(BASELINE_DIR / name, SOURCE_DIR / name)
+
+
+def _save_cached_binaries() -> None:
+    BASELINE_DIR.mkdir(parents=True, exist_ok=True)
+    hashes: dict[str, str] = {}
+    for name in BINARIES:
+        shutil.copy2(SOURCE_DIR / name, BASELINE_DIR / name)
+        hashes[name] = _sha256(SOURCE_DIR / name)
+    _write_json(
+        BASELINE_MANIFEST,
+        {"build": _build_identity(), "binaries": hashes},
+    )
+
+
 def _git_head() -> str:
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -179,6 +246,11 @@ def _checkout() -> None:
 
 
 def _build() -> None:
+    if _cached_binaries_usable():
+        print(f"reusing cached pcre2 binaries from {BASELINE_DIR}")
+        _restore_cached_binaries()
+        return
+
     if not (SOURCE_DIR / "configure").is_file():
         _run(
             ["./autogen.sh"],
@@ -206,6 +278,8 @@ def _build() -> None:
     for name in BINARIES:
         if not (SOURCE_DIR / name).is_file():
             _fail(f"pcre2 build did not produce {name}")
+
+    _save_cached_binaries()
 
 
 def _assert_suite_passed(log_path: Path, label: str) -> None:
@@ -242,6 +316,19 @@ def _clear_ghidra_project(project_name: str) -> None:
 def _ghidra_export(name: str) -> Path:
     binary = SOURCE_DIR / name
     output = RESULT_DIR / f"{name}.xml"
+    binary_digest = _sha256(binary)
+    script_digest = _sha256(GHIDRA_EXPORT_SCRIPT)
+    exports = _read_json(EXPORT_MANIFEST)
+    record = exports.get(name)
+    if (
+        output.is_file()
+        and isinstance(record, dict)
+        and record.get("binary_sha256") == binary_digest
+        and record.get("script_sha256") == script_digest
+    ):
+        print(f"reusing Ghidra export {output}")
+        return output
+
     project_name = f"codezip_e2e_{name}"
     _clear_ghidra_project(project_name)
 
@@ -268,6 +355,12 @@ def _ghidra_export(name: str) -> Path:
 
     if not output.is_file():
         _fail(f"Ghidra did not write {output}")
+
+    exports[name] = {
+        "binary_sha256": binary_digest,
+        "script_sha256": script_digest,
+    }
+    _write_json(EXPORT_MANIFEST, exports)
     return output
 
 
