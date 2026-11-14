@@ -101,4 +101,12 @@ To uplift and pretty-print every function in the sample input:
 python test/uplift_sample.py
 ```
 
+An opt-in end-to-end check builds pinned pcre2, rewrites its test executables
+with codezip, and re-runs pcre2's suite (requires Ghidra and network access,
+about 15 minutes):
+
+```sh
+make -C test e2e
+```
+
 The optimization pipeline still stops before outlining.

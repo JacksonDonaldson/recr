@@ -84,6 +84,7 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 | `binary/` | ELF, PE, and raw binary access |
 | `verify.py` | Static and dynamic equivalence checks |
 | `test/` | Grouped pytest suites, sample C input, NASM fixtures, Ghidra export |
+| `test/e2e/` | Opt-in pcre2 end-to-end codezip check |
 
 ## Current state
 
@@ -168,6 +169,14 @@ Implemented:
   and per-function results, and pretty-prints every uplifted function.
   `test/test_codezip.py` covers the CLI flags, verbose output, receipt
   contents, output bytes, and exit codes.
+- End-to-end check (`test/e2e/run_e2e.py`, `make -C test e2e`) builds pinned
+  pcre2 10.49 with `-O0 -g3 -fno-pie ... -fno-jump-tables`, exports its
+  functions with Ghidra, codezips `pcre2test` and `pcre2grep`, and requires
+  pcre2's `make check` to pass before and after. It is opt-in, needs Ghidra
+  and network access, and records the freed ranges and byte count under
+  `test/build/e2e/results/`. Without `-fno-jump-tables`, 37 `pcre2test`
+  functions fail uplift because the uplifter rejects decoded instructions
+  unreachable through absolute switch flow.
 
 Still stubs:
 
@@ -210,6 +219,14 @@ Ghidra 12.2 requires JDK 25. On the current development machine:
 - `JAVA_HOME_OVERRIDE` is set in Ghidra's `support/launch.properties`
 
 Override `GHIDRA_HOME` on the make command line if Ghidra lives elsewhere.
+
+Run the opt-in end-to-end pcre2 check (Ghidra, network on first run, about
+15 minutes):
+
+```sh
+make -C test e2e
+# writes test/build/e2e/results/summary.json
+```
 
 ## Parser conventions
 

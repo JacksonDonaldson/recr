@@ -17,7 +17,7 @@ GHIDRA_PROJECT_DIR ?= /tmp/opencode/ghidra_projects
 GHIDRA_PROJECT ?= codezip_sample
 GHIDRA_XML := $(BUILD_DIR)/sample_ghidra.xml
 
-.PHONY: all run ghidra-xml clean
+.PHONY: all run ghidra-xml e2e clean
 
 all: $(TARGET)
 
@@ -39,6 +39,11 @@ ghidra-xml: $(TARGET)
 		-postScript ExportGhidraXml.java $(abspath $(GHIDRA_XML)) \
 		-analysisTimeoutPerFile 300 \
 		-deleteProject
+
+# Opt-in end-to-end check: builds pinned pcre2, rewrites its test executables
+# with codezip, and re-runs pcre2's suite.  See test/e2e/README.md.
+e2e:
+	$(CURDIR)/e2e/run_e2e.py
 
 clean:
 	rm -rf $(BUILD_DIR)
