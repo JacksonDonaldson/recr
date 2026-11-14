@@ -82,14 +82,61 @@ def test_unmapped_addresses_are_rejected(sample_elf: Path) -> None:
         binary.virtual_to_file(0)
 
 
-def test_write_round_trip(sample_elf: Path, tmp_path: Path) -> None:
+def test_write_to_disk_round_trip(sample_elf: Path, tmp_path: Path) -> None:
     binary = Binary(sample_elf)
     output = tmp_path / "sample.copy"
 
-    binary.finish()
-    binary.write(output)
+    binary.write_to_disk(output)
 
     assert output.read_bytes() == sample_elf.read_bytes()
+    assert output.stat().st_mode == sample_elf.stat().st_mode
+
+
+def test_write_patches_only_the_in_memory_image(
+    sample_elf: Path, tmp_path: Path
+) -> None:
+    binary = Binary(sample_elf)
+    original = sample_elf.read_bytes()
+    address = 0x401156
+    file_offset = binary.virtual_to_file(address)
+
+    binary.write(address, b"\xcc\xcc")
+
+    assert binary.read(address, 2) == b"\xcc\xcc"
+    assert sample_elf.read_bytes() == original
+
+    output = tmp_path / "patched"
+    binary.write_to_disk(output)
+
+    assert output.read_bytes() == (
+        original[:file_offset] + b"\xcc\xcc" + original[file_offset + 2 :]
+    )
+
+
+def test_write_rejects_unmapped_addresses(sample_elf: Path) -> None:
+    binary = Binary(sample_elf)
+
+    with pytest.raises(ValueError, match="not mapped"):
+        binary.write(0, b"\0")
+    with pytest.raises(ValueError, match="non-negative"):
+        binary.write(-1, b"\0")
+
+
+def test_write_rejects_non_file_backed_ranges(sample_elf: Path) -> None:
+    binary = Binary(sample_elf)
+
+    with pytest.raises(ValueError, match="not file-backed"):
+        binary.write(0x404020, b"\0")
+
+    # .text is mapped up to 0x401b39 but the range must stay in one segment.
+    with pytest.raises(ValueError, match="not file-backed"):
+        binary.write(0x401B38, b"\0\0")
+
+
+def test_write_of_no_bytes_is_a_noop(sample_elf: Path) -> None:
+    binary = Binary(sample_elf)
+
+    binary.write(0, b"")
 
 
 def test_elf_rejects_malformed_file(tmp_path: Path) -> None:

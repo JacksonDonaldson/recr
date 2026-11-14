@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Codezip command-line orchestrator.
 
-Drives the parse -> uplift -> optimize -> verify pipeline.  The implemented
+Drives the parse -> uplift -> optimize -> write pipeline.  The implemented
 stages parse a reverse-engineering export, open the binary, uplift every
-function, recover cross-references, and detect unreferenced-function free
-space.  The pipeline intentionally stops before later optimization and
-verification stages.
+function, recover cross-references, detect unreferenced-function free space,
+fill that space with 0xff, and write the modified binary.  Outlining still unimplemented.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ from pathlib import Path
 
 from binary.binary import Binary
 from input_parser import ParseError, parse_re_file
+from ir import AddressKind
 from optimizers import function_remover
 from uplifter import Uplifter
 
@@ -49,12 +49,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="override the ISA named by the input export",
     )
     parser.add_argument(
-        "--verify",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="run verification after optimization (default: enabled)",
-    )
-    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -75,10 +69,9 @@ def _configure_logging(verbose: bool) -> None:
 
 
 def run_pipeline(args: argparse.Namespace) -> int:
-    """Parse, uplift, recover references, and detect free space.
+    """Parse, uplift, recover references, fill free space, and write output.
 
-    The outliner and verifier are still stubs, so a successful free-space
-    detection run is still a failure from the pipeline's point of view.
+    Outlining and still a stub
     """
     _configure_logging(args.verbose)
 
@@ -136,37 +129,6 @@ def run_pipeline(args: argparse.Namespace) -> int:
         "uplifted %d/%d function(s)", uplifted, len(parsed.functions)
     )
 
-    if not failures:
-        LOGGER.info("recovering cross-references")
-        try:
-            uplifter.build_xrefs()
-        except NotImplementedError as exc:
-            detail = str(exc) or "cross-reference recovery is not implemented"
-            LOGGER.error("failed to recover cross-references: %s", detail)
-            return 1
-        except ValueError as exc:
-            LOGGER.error("failed to recover cross-references: %s", exc)
-            return 1
-
-        xref_count = sum(
-            len(function.incoming_references)
-            for function in uplifter.function_map.values()
-        )
-        LOGGER.info("recovered %d incoming reference(s)", xref_count)
-
-        LOGGER.info("removing unreferenced functions")
-        free_space = function_remover.run_optimizer(
-            binary, uplifter, uplifter.isa
-        )
-        LOGGER.info("marked %d function(s) as free space", len(free_space))
-        for space in free_space:
-            LOGGER.debug(
-                "free space %#x (%#x bytes): %s",
-                space.start.value,
-                space.size,
-                space.diagnostic,
-            )
-
     if args.verbose:
         for function in parsed.functions:
             if not function.basic_blocks:
@@ -178,11 +140,47 @@ def run_pipeline(args: argparse.Namespace) -> int:
         LOGGER.error("failed to uplift %d function(s)", failures)
         return 1
 
-    LOGGER.error(
-        "pipeline stops after free-space detection: "
-        "outlining and verification are not implemented"
+    LOGGER.info("recovering cross-references")
+    try:
+        uplifter.build_xrefs()
+    except ValueError as exc:
+        LOGGER.error("failed to recover cross-references: %s", exc)
+        return 1
+
+    xref_count = sum(
+        len(function.incoming_references)
+        for function in uplifter.function_map.values()
     )
-    return 1
+    LOGGER.info("recovered %d incoming reference(s)", xref_count)
+
+    LOGGER.info("removing unreferenced functions")
+    free_space = function_remover.run_optimizer(
+        binary, uplifter, uplifter.isa
+    )
+    LOGGER.info("marked %d function(s) as free space", len(free_space))
+    for space in free_space:
+        LOGGER.debug(
+            "free space %#x (%#x bytes): %s",
+            space.start.value,
+            space.size,
+            space.diagnostic,
+        )
+
+    LOGGER.info("filling %d free space range(s) with 0xff", len(free_space))
+    for space in free_space:
+        binary.write(space.start.value, b"\xff" * space.size)
+
+
+    output = args.output
+    if output is None:
+        output = args.binary.with_name(args.binary.name + ".codezip")
+
+    LOGGER.info("writing modified binary to %s", output)
+    
+    binary.write_to_disk(output)
+
+
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -509,11 +509,16 @@ binary/binary.py:
         function read:
             takes a (virtual) address and length and returns the data there
 
+        function write:
+            takes a (virtual) address and data and patches the in-memory image
+            (never the file on disk)
+
         function virtual_to_file:
             maps a virtual address to a file offset
 
-        function finish:
-            does any required metadata fixups
+        function write_to_disk:
+            takes a filename, does any required metadata fixups, then writes
+            the in-memory image
                 - rewrite or remove unwind info (.eh_frame / .pdata) for modified functions
                 - rewrite relocations that point into moved code
                 - update symbol sizes

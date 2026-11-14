@@ -8,9 +8,9 @@ fixed; instructions may move within a function, and data is never appended.
 
 The input parsers, ELF backend, x86-64 disassembler, function uplifter,
 cross-reference recovery, unreferenced-function free-space detection, and CLI
-wiring through that stage are implemented. The outliner and verification are
-still stubs that raise `NotImplementedError`, so no binary modification
-behavior is implemented yet.
+wiring through writing the modified binary are implemented. The pipeline fills
+every freed range with `0xff` and writes the result to the output path. The
+outliner and verification are still stubs, so the written binary is unverified.
 
 ## Planned pipeline
 
@@ -19,14 +19,13 @@ behavior is implemented yet.
 2. **Uplift** each function into instructions, basic blocks, cross-references,
    and a control-flow graph.
 3. **Optimize**:
-   - remove unreferenced functions (detection only for now);
-   - outline repeated instruction regions aggressively.
+   - remove unreferenced functions and fill their bytes with `0xff`;
+   - outline repeated instruction regions aggressively (not implemented).
 4. **Verify** the result statically and dynamically, reverting any function
-   that fails a check.
+   that fails a check (not implemented).
 
-The current CLI performs steps 1 and 2 and the free-space detection part of
-step 3, then exits with an error because the remaining stages are not
-implemented.
+The current CLI performs steps 1 and 2 and the free-space part of step 3, then
+writes the modified binary without verifying it.
 
 ## Layout
 
@@ -75,9 +74,9 @@ python codezip.py ./a.out ./functions.yaml -o ./a.out.codezip
 ```
 
 Add `-v` or `--verbose` to log pipeline progress and pretty-print every
-uplifted function. The command currently stops after unreferenced-function
-detection and exits nonzero because outlining and verification are not
-implemented.
+uplifted function. The command writes the modified binary to `-o` (default:
+`<binary>.codezip`). Verification is not implemented yet, so runs with the
+default `--verify` warn that the output is unverified.
 
 ## Development
 
@@ -92,4 +91,4 @@ To uplift and pretty-print every function in the sample input:
 python test/uplift_sample.py
 ```
 
-The optimization pipeline still stops at its first unimplemented stage.
+The optimization pipeline still stops before outlining.

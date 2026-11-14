@@ -92,9 +92,11 @@ Implemented:
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.
 - ELF access (`binary/elf.py`) using `pyelftools`: `PT_LOAD` virtual-to-file
-  mapping, reads with BSS zero-fill, full-file writes, a no-op `finish()`, and
-  `mapped_ranges()` for enumerating loadable virtual-address ranges.
-  `Binary(path)` routes by magic bytes; PE and raw inputs raise
+  mapping, reads with BSS zero-fill, in-memory patching via
+  `write(address, data)`, `write_to_disk(path)` (metadata fixups are currently
+  a no-op), and `mapped_ranges()` for enumerating loadable virtual-address
+  ranges. `write` rejects unmapped and non-file-backed ranges and never touches
+  the input file. `Binary(path)` routes by magic bytes; PE and raw inputs raise
   `UnsupportedBinaryFormat` for now.
 - ELF tests (`test/binary/test_elf.py`) build `test/build/sample` with `make`
   when missing or stale, then verify Ghidra-derived `main` bytes and ELF
@@ -153,15 +155,19 @@ Implemented:
 - `optimizers/function_remover.py` implements `run_optimizer`: any function with
   no incoming references is dropped from the uplifter's function map and its
   whole declared extent is reported as one `FreeSpace` block with a diagnostic.
-  No bytes are rewritten yet. `test/optimizers/test_function_remover.py` covers
-  the detection, preservation of referenced functions, exact free-space extents,
+  The pass only reports ranges; the pipeline fills them.
+  `test/optimizers/test_function_remover.py` covers the detection,
+  preservation of referenced functions, exact free-space extents,
   and idempotence; the sample's `unreferenced_function` is the live fixture.
 - `codezip.py` parses the export, opens the binary, uplifts every function,
-  recovers cross-references, and runs the unreferenced-function pass. It then
-  exits nonzero because outlining and verification are still unimplemented.
+  recovers cross-references, runs the unreferenced-function pass, fills every
+  reported range with `0xff`, and writes the modified binary to `--output`
+  (default `<binary>.codezip`). It warns when verification is enabled because
+  verification and outlining are unimplemented.
   `-v/--verbose` logs pipeline progress, parser warnings, free-space results,
   and per-function results, and pretty-prints every uplifted function.
-  `test/test_codezip.py` covers the CLI flags, verbose output, and exit codes.
+  `test/test_codezip.py` covers the CLI flags, verbose output, output bytes,
+  and exit codes.
 
 Still stubs:
 

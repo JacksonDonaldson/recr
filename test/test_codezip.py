@@ -4,10 +4,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import shutil
 
+from binary.binary import Binary
 from codezip import build_arg_parser, main
 
 GHIDRA_XML = Path(__file__).parent / "fixtures" / "sample_ghidra.xml"
+
+# Declared extents of the sample's unreferenced functions, from the fixture.
+FREE_RANGES = (
+    (0x4010A0, 0x5),
+    (0x401AF7, 0x34),
+)
 
 
 def test_verbose_defaults_to_disabled() -> None:
@@ -27,18 +35,18 @@ def test_verbose_flags_are_accepted() -> None:
     )
 
 
-def test_pipeline_uplifts_everything_then_exits_with_error(
-    caplog, capsys, sample_elf: Path
+def test_pipeline_writes_binary_with_free_space_filled(
+    caplog, capsys, sample_elf: Path, tmp_path: Path
 ) -> None:
     caplog.set_level(logging.DEBUG, logger="codezip")
+    output = tmp_path / "sample.codezip"
 
-    result = main([str(sample_elf), str(GHIDRA_XML), "--verbose"])
+    result = main(
+        [str(sample_elf), str(GHIDRA_XML), "--verbose", "-o", str(output)]
+    )
 
-    assert result == 1
-    output = capsys.readouterr().out
-    assert "function main @ 0x40182b" in output
-    assert "function divide_safe @ 0x40119b" in output
-    assert "incoming references" in output
+    assert result == 0
+    assert "function main @ 0x40182b" in capsys.readouterr().out
 
     assert "uplifted 40/40 function(s)" in caplog.text
     assert "recovering cross-references" in caplog.text
@@ -49,13 +57,83 @@ def test_pipeline_uplifts_everything_then_exits_with_error(
         "free space 0x401af7 (0x34 bytes): "
         "unreferenced function unreferenced_function"
     ) in caplog.text
-    assert "outlining and verification are not implemented" in caplog.text
+    assert "filling 2 free space range(s) with 0xff" in caplog.text
+    assert f"writing modified binary to {output}" in caplog.text
+    assert "verification is not implemented" in caplog.text
+
+    original = sample_elf.read_bytes()
+    expected = bytearray(original)
+    binary = Binary(sample_elf)
+    for address, size in FREE_RANGES:
+        offset = binary.virtual_to_file(address)
+        expected[offset : offset + size] = b"\xff" * size
+
+    assert output.read_bytes() == bytes(expected)
+    assert len(output.read_bytes()) == len(original)
 
 
-def test_non_verbose_mode_does_not_pretty_print(capsys, sample_elf: Path) -> None:
-    result = main([str(sample_elf), str(GHIDRA_XML)])
+def test_no_verify_does_not_warn(caplog, sample_elf: Path, tmp_path: Path) -> None:
+    caplog.set_level(logging.DEBUG, logger="codezip")
+
+    result = main(
+        [
+            str(sample_elf),
+            str(GHIDRA_XML),
+            "--no-verify",
+            "-o",
+            str(tmp_path / "sample.codezip"),
+        ]
+    )
+
+    assert result == 0
+    assert "verification is not implemented" not in caplog.text
+
+
+def test_default_output_is_binary_path_plus_codezip(
+    sample_elf: Path, tmp_path: Path
+) -> None:
+    binary = tmp_path / "sample"
+    shutil.copyfile(sample_elf, binary)
+
+    result = main([str(binary), str(GHIDRA_XML), "--no-verify"])
+
+    assert result == 0
+    assert (tmp_path / "sample.codezip").is_file()
+
+
+def test_unwritable_output_is_reported(
+    caplog, sample_elf: Path, tmp_path: Path
+) -> None:
+    output = tmp_path / "missing" / "sample.codezip"
+
+    result = main(
+        [
+            str(sample_elf),
+            str(GHIDRA_XML),
+            "--no-verify",
+            "-o",
+            str(output),
+        ]
+    )
 
     assert result == 1
+    assert "cannot write" in caplog.text
+
+
+def test_non_verbose_mode_does_not_pretty_print(
+    capsys, sample_elf: Path, tmp_path: Path
+) -> None:
+    result = main(
+        [
+            str(sample_elf),
+            str(GHIDRA_XML),
+            "--no-verify",
+            "-o",
+            str(tmp_path / "sample.codezip"),
+        ]
+    )
+
+    assert result == 0
     assert capsys.readouterr().out == ""
 
 

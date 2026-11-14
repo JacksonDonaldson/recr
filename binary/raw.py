@@ -23,8 +23,8 @@ class RawBinary(Binary):
     def virtual_to_file(self, address: int) -> int:
         raise NotImplementedError
 
-    def write(self, path: str | Path) -> None:
+    def write(self, address: int, data: bytes) -> None:
         raise NotImplementedError
 
-    def finish(self) -> None:
+    def write_to_disk(self, path: str | Path) -> None:
         raise NotImplementedError

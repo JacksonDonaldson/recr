@@ -64,13 +64,17 @@ class Binary(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def write(self, path: str | Path) -> None:
-        """Write the current (possibly patched) contents to ``path``."""
+    def write(self, address: int, data: bytes) -> None:
+        """Patch ``data`` into the in-memory image at virtual ``address``.
+
+        The input file is never modified.  The write must stay inside one
+        loadable, file-backed range.
+        """
         raise NotImplementedError
 
     @abstractmethod
-    def finish(self) -> None:
-        """Apply required metadata fixups before the binary is written.
+    def write_to_disk(self, path: str | Path) -> None:
+        """Apply metadata fixups and write the in-memory image to ``path``.
 
         This includes unwind information, relocations that point into moved
         code, and symbol sizes.

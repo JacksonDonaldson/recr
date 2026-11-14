@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import io
 from pathlib import Path
+import shutil
 import struct
 
 from elftools.common.exceptions import ELFError as PyElfError
@@ -142,12 +143,34 @@ class ELF(Binary):
 
         return segment.file_offset + offset
 
-    def write(self, path: str | Path) -> None:
-        Path(path).write_bytes(bytes(self._data))
+    def write(self, address: int, data: bytes) -> None:
+        if address < 0:
+            raise ValueError("write address must be non-negative")
 
-    def finish(self) -> None:
-        """Apply required metadata fixups before writing.
+        if not data:
+            return
+
+        segment = self._segment_containing(address)
+        if segment is None:
+            raise ValueError(f"virtual address {address:#x} is not mapped")
+
+        offset = address - segment.virtual_address
+        if offset + len(data) > segment.file_size:
+            raise ValueError(
+                f"write of {len(data)} bytes at {address:#x} is not "
+                "file-backed"
+            )
+
+        start = segment.file_offset + offset
+        self._data[start : start + len(data)] = data
+
+    def write_to_disk(self, path: str | Path) -> None:
+        """Apply metadata fixups and write the in-memory image to ``path``.
 
         Unwind information, relocations, and symbol sizes are not rewritten
-        yet.
+        yet.  The input file's permission bits are copied so the output stays
+        executable.
         """
+        output = Path(path)
+        output.write_bytes(bytes(self._data))
+        shutil.copymode(self.path, output)
