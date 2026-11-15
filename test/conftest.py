@@ -21,6 +21,8 @@ GHIDRA_XML = TEST_DIR / "fixtures" / "sample_ghidra.xml"
 ASM_DIR = PROJECT_ROOT / "isa" / "x86_64" / "test"
 OPCODES_SOURCE = ASM_DIR / "opcodes.s"
 OPCODES_BINARY = ASM_DIR / "build" / "opcodes.bin"
+RED_ZONE_SOURCE = TEST_DIR / "optimizers" / "red_zone_outline.s"
+RED_ZONE_OBJECT = TEST_DIR / "build" / "red_zone_outline.o"
 INTEL_FORMS = ASM_DIR / "intel_64bit_forms.txt"
 INTEL_CASES = ASM_DIR / "build" / "intel_cases.json"
 STACK_CASES = ASM_DIR / "build" / "stack_cases.json"
@@ -78,6 +80,17 @@ def opcodes_binary() -> Path:
     """Return the multi-opcode NASM fixture."""
     return _ensure_built(
         ASM_DIR, OPCODES_BINARY, OPCODES_SOURCE, "opcodes.bin"
+    )
+
+
+@pytest.fixture(scope="session")
+def red_zone_object() -> Path:
+    """Return the red-zone outlining NASM fixture."""
+    return _ensure_built(
+        TEST_DIR,
+        RED_ZONE_OBJECT,
+        RED_ZONE_SOURCE,
+        "red_zone_outline.o",
     )
 
 

@@ -102,6 +102,8 @@ ISA contract:
         function make_call_instruction() -> Instruction
         function make_return_instruction() -> Instruction
         function uses_red_zone(function) -> bool
+        function can_outline_region(function, block, instructions,
+                window_start, window_length) -> bool
         function relocate_instruction(instruction, new_base_address) -> Instruction
         function set_instruction_target(instruction, new_target_address) -> Instruction
         function can_encode(instruction, address) -> bool
@@ -122,6 +124,19 @@ ISA contract:
         graph.  It returns true when a memory access is below the current RSP,
         including RBP-relative locals in a frame-pointer function that never
         subtracts from RSP, and when a stack-pointer update cannot be modeled.
+
+        can_outline_region decides whether replacing
+        instructions[window_start:window_start + window_length] with a call can
+        be done without changing behavior when the function uses the red zone.
+        instructions is the block's instruction order after the outliner
+        reorders it.  The default implementation returns true.  An ISA that
+        pushes a return address over the red zone overrides it to prove that
+        the slot the call writes is dead on every path: the moved window must
+        not touch the slot, and the slot must not be read before a covering
+        write, a call at the same stack depth, or a return makes it dead.
+        Instructions that copy RSP or RBP into another register, or compute an
+        RSP- or RBP-relative address with LEA, reject the site because the
+        analysis cannot follow the alias.
 
         try_interpret_as_pointer reads little-endian pointer-sized and 32-bit
         values at offset, and returns every Address that could be read.  A

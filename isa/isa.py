@@ -14,7 +14,7 @@ from ir import Address, AddressKind, Instruction, InstructionType
 
 if TYPE_CHECKING:
     from binary.binary import Binary
-    from ir import Function
+    from ir import BasicBlock, Function
 
 
 @dataclass(frozen=True)
@@ -147,6 +147,24 @@ class ISA(ABC):
     def uses_red_zone(self, function: "Function") -> bool:
         """Return whether ``function`` accesses memory below the stack pointer."""
         raise NotImplementedError
+
+    def can_outline_region(
+        self,
+        function: "Function",
+        block: "BasicBlock",
+        instructions: list[Instruction],
+        window_start: int,
+        window_length: int,
+    ) -> bool:
+        """Return whether an outline call at the window is stack-safe.
+
+        ``instructions`` is the block's instruction order after outlining
+        reorders it, and the window is ``instructions[window_start:...]``.
+        The default implementation allows every region; an ISA with a red zone
+        overrides this to prove that the call's pushed return address does not
+        overwrite a live stack value.
+        """
+        return True
 
     @abstractmethod
     def relocate_instruction(

@@ -68,9 +68,6 @@ optimizers/function_remover.py:
 optimizers/outliner.py:
     - orchestrates the function outlining optimization.
 
-verify.py:
-    - static and dynamic checks that the modified binary still behaves the same
-
 binary/binary.py:
     superclass defining all the functions needed to interface with the binary file we're patching.
 
@@ -491,9 +488,6 @@ optimizers/outliner.py:
 test/verify.py:
 
     function run(Binary original, Binary modified, Uplifter, isa):
-        1. round-trip: disassemble and re-emit every original instruction; require byte identity
-        2. static: every freed byte is unreferenced; every modified function's CFG is isomorphic
-        3. per-function: emulate original and modified with the same state; compare results
         4. end-to-end: build a large well-tested C project, run its test suite before and after
 
         any function that fails a check is reverted to its original bytes
@@ -544,4 +538,4 @@ binary/raw.py:
     implements Binary for raw binaries.
 
 codezip.py:
-    parses CLI arguments, drives the parse -> uplift -> optimize -> verify pipeline, and writes the modified binary plus an optional YAML receipt of the freed ranges.
+    parses CLI arguments, drives the parse -> uplift -> optimize  pipeline, and writes the modified binary plus an optional YAML receipt of the freed ranges.

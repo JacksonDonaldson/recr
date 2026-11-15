@@ -85,8 +85,22 @@ place.  `ENDBR32`/`ENDBR64` stay at their function entries for CET.
 `uses_red_zone` walks the function's control-flow graph with symbolic RSP and
 RBP offsets.  A frame-pointer function that never subtracts from RSP keeps its
 locals below RSP, so both RSP- and RBP-relative accesses are checked against the
-current stack pointer.  An unmodeled stack-pointer update makes the function
-ineligible for outlining.
+current stack pointer.
+
+`can_outline_region` uses that analysis to decide whether a red-zone function
+may still be outlined.  The outline call pushes its return address at
+`[rsp - 8, rsp)`, so that 8-byte slot must be dead at the source site.  The moved
+window must neither read nor write the slot.  The pass then follows every
+control-flow path until the slot is overwritten by a full-width store, a call or
+push at the same stack depth, or a return; any read before that point rejects the
+site.  Calls at a different stack depth, unmodeled stack updates, unknown RBP
+state, indirect flows, and instructions that copy RSP or RBP into another
+register or compute an RSP- or RBP-relative address with `LEA` are rejected;
+the scan cannot follow those aliases.  Sites whose stack pointer is not a
+multiple of the pointer size are rejected so two outline sites cannot have
+partially overlapping return-address slots.  The outliner drops only the sites
+that fail, recomputes the match's savings, and leaves the rest of the function
+unchanged.
 
 `make_call_instruction` and `make_return_instruction` synthesize the outline
 call and its terminating return.  `set_instruction_target` repatches the

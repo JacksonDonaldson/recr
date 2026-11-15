@@ -186,8 +186,9 @@ def extract_instruction_regions(
         )
         return None
 
+    cache: dict[int, bytes | None] = {}
     functions = _eligible_functions(uplifter, isa)
-    index = _build_instruction_index(functions, isa)
+    index = _build_instruction_index(functions, isa, cache)
     result = ExtractionResult()
     seen: set[tuple[frozenset[int], frozenset[bytes]]] = set()
 
@@ -196,7 +197,7 @@ def extract_instruction_regions(
             if block.used_for_outlining:
                 continue
 
-            for match in find_basic_block_matches(block, index, isa):
+            for match in find_basic_block_matches(block, index, isa, cache):
                 signature = (
                     frozenset(id(match_block) for match_block in match.blocks),
                     match.encodings,
@@ -211,7 +212,7 @@ def extract_instruction_regions(
         LOGGER.info("outliner found no profitable basic-block matches")
         return result
 
-    selected = _select_plans(result.matches, isa)
+    selected = _select_plans(result.matches, isa, cache)
     if not selected:
         LOGGER.info("outliner could not build a replacement plan")
         return result
@@ -360,6 +361,7 @@ def find_basic_block_matches(
     block: BasicBlock,
     instruction_index: _InstructionIndex,
     isa: "ISA",
+    cache: dict[int, bytes | None] | None = None,
 ) -> list[BasicBlockMatch]:
     """Return the most profitable sets of blocks that could share instructions.
 
@@ -373,9 +375,7 @@ def find_basic_block_matches(
     outlinable: list[tuple[bytes, Instruction]] = []
     seen_encodings: set[bytes] = set()
     for instruction in block.instructions:
-        if not isa.is_outlinable(instruction):
-            continue
-        encoding = _canonical_encoding(isa, instruction)
+        encoding = _outlinable_encoding(isa, instruction, cache)
         if encoding is None or encoding in seen_encodings:
             continue
         seen_encodings.add(encoding)
@@ -463,11 +463,13 @@ def format_match(match: BasicBlockMatch) -> list[str]:
 
 
 def try_generate_replacement_bytes(
-    match: BasicBlockMatch, isa: "ISA"
+    match: BasicBlockMatch,
+    isa: "ISA",
+    cache: dict[int, bytes | None] | None = None,
 ) -> _ReplacementPlan | None:
     """Try to reorder each block so the common instructions are contiguous."""
     for template in match.blocks:
-        plan = _plan_for_template(match, template, isa)
+        plan = _plan_for_template(match, template, isa, cache)
         if plan is not None:
             return plan
     return None
@@ -605,26 +607,44 @@ def can_swap_instruction(
 
 
 def _select_plans(
-    matches: list[BasicBlockMatch], isa: "ISA"
+    matches: list[BasicBlockMatch],
+    isa: "ISA",
+    cache: dict[int, bytes | None] | None = None,
 ) -> list[_ReplacementPlan]:
     """Choose non-overlapping matches and build their replacement plans."""
     selected: list[_ReplacementPlan] = []
+    deferred: list[_ReplacementPlan] = []
     used: set[int] = set()
     for match in matches:
         if any(id(block) in used for block in match.blocks):
             continue
-        plan = try_generate_replacement_bytes(match, isa)
+        plan = try_generate_replacement_bytes(match, isa, cache)
         if plan is None:
             continue
+        if len(plan.match.blocks) < len(match.blocks):
+            # Some source sites could not participate.  Let full matches
+            # claim their blocks first, then select the remainder.
+            deferred.append(plan)
+            continue
         selected.append(plan)
-        used.update(id(block) for block in match.blocks)
+        used.update(id(block) for block in plan.match.blocks)
+
+    deferred.sort(key=lambda plan: plan.match.estimated_savings, reverse=True)
+    for plan in deferred:
+        if any(id(block) in used for block in plan.match.blocks):
+            continue
+        selected.append(plan)
+        used.update(id(block) for block in plan.match.blocks)
     return selected
 
 
 def _plan_for_template(
-    match: BasicBlockMatch, template: BasicBlock, isa: "ISA"
+    match: BasicBlockMatch,
+    template: BasicBlock,
+    isa: "ISA",
+    cache: dict[int, bytes | None] | None = None,
 ) -> _ReplacementPlan | None:
-    encoded_template = _encoded_instructions(template, isa)
+    encoded_template = _encoded_instructions(template, isa, cache)
     target_order: list[bytes] = []
     seen: set[bytes] = set()
     for instruction, encoding in encoded_template:
@@ -640,10 +660,21 @@ def _plan_for_template(
     replacements: list[_BlockReplacement] = []
     template_selection: list[Instruction] | None = None
 
-    for block in match.blocks:
-        selected = _select_instructions(block.instructions, isa, target_order)
+    # Check the template first so an unusable shared block fails quickly, and
+    # drop other sites that cannot participate instead of discarding the whole
+    # match.  Plans with dropped sites are deferred by the selector so they do
+    # not pre-empt a full match.
+    ordered_blocks = (template,) + tuple(
+        block for block in match.blocks if block is not template
+    )
+    for block in ordered_blocks:
+        selected = _select_instructions(
+            block.instructions, isa, target_order, cache
+        )
         if selected is None:
-            return None
+            if block is template:
+                return None
+            continue
         if block is template:
             template_selection = selected
 
@@ -655,7 +686,9 @@ def _plan_for_template(
             block, instructions_to_move, selected
         )
         if converted is None:
-            return None
+            if block is template:
+                return None
+            continue
         reordered, window_start = converted
         window_end = window_start + len(selected)
         window = reordered.instructions[window_start:window_end]
@@ -663,7 +696,27 @@ def _plan_for_template(
             actual is not expected
             for actual, expected in zip(window, selected)
         ):
-            return None
+            if block is template:
+                return None
+            continue
+
+        function = block.containing_function
+        if function is None:
+            if block is template:
+                return None
+            continue
+        if not isa.can_outline_region(
+            function,
+            block,
+            reordered.instructions,
+            window_start,
+            len(selected),
+        ):
+            if block is template:
+                # The template supplies the shared block, so its own window
+                # must be safe.  Try another block as the template.
+                return None
+            continue
 
         call = isa.make_call_instruction()
         call.outline_target = _placeholder_block()
@@ -688,6 +741,22 @@ def _plan_for_template(
     if template_selection is None:
         return None
 
+    safe_blocks = tuple(
+        replacement.original for replacement in replacements
+    )
+    if len(safe_blocks) < 2:
+        return None
+    estimated_savings = (
+        (match.common_length - isa.call_instruction_length())
+        * len(safe_blocks)
+        - (match.common_length + isa.ret_instruction_length())
+    )
+    if estimated_savings <= 0:
+        return None
+    filtered_match = replace(
+        match, blocks=safe_blocks, estimated_savings=estimated_savings
+    )
+
     adjusted: list[Instruction] = []
     for instruction in template_selection:
         try:
@@ -705,7 +774,7 @@ def _plan_for_template(
         replacement.call.outline_target = extracted
 
     return _ReplacementPlan(
-        match=match,
+        match=filtered_match,
         replacements=replacements,
         extracted=extracted,
         extracted_instructions=adjusted,
@@ -716,13 +785,12 @@ def _select_instructions(
     instructions: list[Instruction],
     isa: "ISA",
     target_order: list[bytes],
+    cache: dict[int, bytes | None] | None = None,
 ) -> list[Instruction] | None:
     """Return the first instruction for each encoding in ``target_order``."""
     by_encoding: dict[bytes, Instruction] = {}
     for instruction in instructions:
-        if not isa.is_outlinable(instruction):
-            continue
-        encoding = _canonical_encoding(isa, instruction)
+        encoding = _outlinable_encoding(isa, instruction, cache)
         if encoding is None or encoding in by_encoding:
             continue
         by_encoding[encoding] = instruction
@@ -1239,16 +1307,16 @@ def _modified_block_ids(plans: list[_ReplacementPlan]) -> set[int]:
 
 
 def _build_instruction_index(
-    functions: list[Function], isa: "ISA"
+    functions: list[Function],
+    isa: "ISA",
+    cache: dict[int, bytes | None] | None = None,
 ) -> _InstructionIndex:
     """Index every outlinable instruction by its position-invariant encoding."""
     index = _InstructionIndex()
     for function in functions:
         for block in function.basic_blocks:
             for instruction in block.instructions:
-                if not isa.is_outlinable(instruction):
-                    continue
-                encoding = _canonical_encoding(isa, instruction)
+                encoding = _outlinable_encoding(isa, instruction, cache)
                 if encoding is None:
                     continue
                 index.blocks.setdefault(encoding, {})[id(block)] = block
@@ -1264,8 +1332,6 @@ def _eligible_functions(
         uplifter.function_map.values(), key=lambda item: item.start_address
     ):
         if function.has_unk_local_reference():
-            continue
-        if isa.uses_red_zone(function):
             continue
         if not _function_can_shrink(function):
             continue
@@ -1293,6 +1359,28 @@ def _function_can_shrink(function: Function) -> bool:
     return False
 
 
+def _outlinable_encoding(
+    isa: "ISA",
+    instruction: Instruction,
+    cache: dict[int, bytes | None] | None,
+) -> bytes | None:
+    """Return the position-invariant encoding if it can be outlined.
+
+    The same instruction object is visited by the index, the match finder, and
+    every replacement plan, so the cache keeps the expensive SLEIGH resolution
+    to one call per instruction.
+    """
+    if cache is not None and id(instruction) in cache:
+        return cache[id(instruction)]
+
+    encoding = None
+    if isa.is_outlinable(instruction):
+        encoding = _canonical_encoding(isa, instruction)
+    if cache is not None:
+        cache[id(instruction)] = encoding
+    return encoding
+
+
 def _canonical_encoding(isa: "ISA", instruction: Instruction) -> bytes | None:
     """Return position-invariant bytes for ``instruction``, or ``None``."""
     try:
@@ -1303,20 +1391,23 @@ def _canonical_encoding(isa: "ISA", instruction: Instruction) -> bytes | None:
 
 
 def _encoded_instructions(
-    block: BasicBlock, isa: "ISA"
+    block: BasicBlock,
+    isa: "ISA",
+    cache: dict[int, bytes | None] | None = None,
 ) -> list[tuple[Instruction, bytes | None]]:
-    return _encoded_instructions_from_list(block.instructions, isa)
+    return _encoded_instructions_from_list(block.instructions, isa, cache)
 
 
 def _encoded_instructions_from_list(
-    instructions: list[Instruction], isa: "ISA"
+    instructions: list[Instruction],
+    isa: "ISA",
+    cache: dict[int, bytes | None] | None = None,
 ) -> list[tuple[Instruction, bytes | None]]:
     encoded: list[tuple[Instruction, bytes | None]] = []
     for instruction in instructions:
-        if not isa.is_outlinable(instruction):
-            encoded.append((instruction, None))
-            continue
-        encoded.append((instruction, _canonical_encoding(isa, instruction)))
+        encoded.append(
+            (instruction, _outlinable_encoding(isa, instruction, cache))
+        )
     return encoded
 
 

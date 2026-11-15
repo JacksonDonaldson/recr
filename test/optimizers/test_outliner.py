@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
+from elftools.elf.elffile import ELFFile
 import pytest
 
 from ir import (
@@ -105,6 +106,134 @@ def synthetic_case(x86_64_isa):
     )
     assert result is not None
     return x86_64_isa, binary, functions, uplifter, free_space, result
+
+
+def _load_red_zone_functions(
+    isa, object_path, base: int = 0x1000
+) -> tuple[_MemoryBinary, dict[str, Function]]:
+    """Load the NASM fixture's functions from its ELF symbol table."""
+    with object_path.open("rb") as stream:
+        elf = ELFFile(stream)
+        data = elf.get_section_by_name(".text").data()
+        symbols = {
+            symbol.name: symbol["st_value"]
+            for symbol in elf.get_section_by_name(".symtab").iter_symbols()
+            if symbol.name and symbol["st_info"]["type"] != "STT_FILE"
+        }
+
+    binary = _MemoryBinary(size=0x10000)
+    binary.write(base, data)
+
+    functions: dict[str, Function] = {}
+    for name, end in symbols.items():
+        if not name.endswith("_end"):
+            continue
+        function_name = name[: -len("_end")]
+        start = symbols.get(function_name)
+        if start is None or start >= end:
+            continue
+        functions[function_name] = _decode_function(
+            isa,
+            binary,
+            function_name,
+            base + start,
+            data[start:end],
+        )
+    return binary, functions
+
+
+@pytest.fixture(scope="module")
+def red_zone_case(x86_64_isa, red_zone_object):
+    binary, functions = _load_red_zone_functions(x86_64_isa, red_zone_object)
+    uplifter = SimpleNamespace(
+        function_map={
+            Address.absolute(function.start_address): function
+            for function in functions.values()
+        }
+    )
+    free_space = [
+        FreeSpace(Address.absolute(0x3000), 0x1000, "test free space")
+    ]
+    result = outliner.run_optimizer(
+        binary, uplifter, x86_64_isa, free_space
+    )
+    assert result is not None
+    return x86_64_isa, binary, functions, uplifter, free_space, result
+
+
+def _selected_function_names(result) -> set[str]:
+    return {
+        block.containing_function.name
+        for match in result.selected_matches
+        for block in match.blocks
+    }
+
+
+def test_red_zone_outliner_keeps_only_dead_slot_sites(red_zone_case) -> None:
+    _, _, _, _, _, result = red_zone_case
+    selected = _selected_function_names(result)
+
+    assert selected == {
+        "leaf_ok_a",
+        "leaf_ok_b",
+        "leaf_deep_a",
+        "leaf_deep_b",
+        "leaf_over_a",
+        "leaf_over_b",
+        "leaf_call_a",
+        "leaf_call_b",
+        "mixed_safe_a",
+        "mixed_safe_b",
+    }
+    assert {"leaf_read_a", "leaf_read_b"}.isdisjoint(selected)
+    assert {"leaf_winread_a", "leaf_winread_b"}.isdisjoint(selected)
+    assert {"leaf_alias_a", "leaf_alias_b"}.isdisjoint(selected)
+    assert "mixed_unsafe" not in selected
+
+
+def test_red_zone_outliner_drops_only_the_unsafe_mixed_site(
+    red_zone_case,
+) -> None:
+    _, _, _, _, _, result = red_zone_case
+    mixed = [
+        match
+        for match in result.selected_matches
+        if any(
+            block.containing_function.name.startswith("mixed_")
+            for block in match.blocks
+        )
+    ]
+
+    assert len(mixed) == 1
+    assert mixed[0].block_count == 2
+    assert {
+        block.containing_function.name for block in mixed[0].blocks
+    } == {"mixed_safe_a", "mixed_safe_b"}
+
+
+def test_red_zone_outliner_leaves_unsafe_sites_unchanged(
+    red_zone_case,
+) -> None:
+    _, _, functions, _, _, _ = red_zone_case
+
+    for name in (
+        "leaf_read_a",
+        "leaf_read_b",
+        "leaf_winread_a",
+        "leaf_winread_b",
+        "leaf_alias_a",
+        "leaf_alias_b",
+        "mixed_unsafe",
+    ):
+        function = functions[name]
+        assert not any(
+            block.used_for_outlining for block in function.basic_blocks
+        )
+        assert not any(
+            instruction.type is InstructionType.OUTLINE_RESULT_CALL
+            for block in function.basic_blocks
+            for instruction in block.instructions
+        )
 
 
 @pytest.fixture(scope="module")
@@ -310,19 +439,25 @@ def test_short_branch_out_of_range_drops_plan(caplog) -> None:
         assert bytes(binary.data[start : start + len(code)]) == before[start]
 
 
-def test_sample_extraction_skips_red_zone_functions(sample_matches) -> None:
+def test_sample_red_zone_candidates_are_not_selected(sample_matches) -> None:
     _, uplifter, result = sample_matches
     isa = uplifter.isa
 
-    assert result.matches
-    for match in result.matches:
-        for block in match.blocks:
-            function = block.containing_function
-            assert function is not None
-            assert isa.uses_red_zone(function) is False
+    # Red-zone functions now produce candidate matches, but every sample
+    # candidate touches a live slot, so none of them survives selection.
+    assert any(
+        isa.uses_red_zone(block.containing_function)
+        for match in result.matches
+        for block in match.blocks
+    )
+    assert all(
+        not isa.uses_red_zone(block.containing_function)
+        for match in result.selected_matches
+        for block in match.blocks
+    )
 
 
-def test_sample_eligible_functions_exclude_red_zone(sample_matches) -> None:
+def test_sample_eligible_functions_include_red_zone(sample_matches) -> None:
     _, uplifter, _ = sample_matches
     isa = uplifter.isa
     names = {
@@ -335,8 +470,8 @@ def test_sample_eligible_functions_exclude_red_zone(sample_matches) -> None:
     assert "mix_a" in names
     assert "mix_b" in names
     assert "mix_c" in names
-    assert "add" not in names
-    assert "is_even" not in names
+    assert "add" in names
+    assert "is_even" in names
 
 
 def test_sample_outliner_selects_the_shared_mix_expression(

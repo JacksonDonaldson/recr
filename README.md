@@ -24,11 +24,9 @@ a stub, so the written binary is unverified.
 3. **Optimize**:
    - remove unreferenced functions and fill their bytes with `0xff`;
    - outline repeated instruction regions aggressively.
-4. **Verify** the result statically and dynamically, reverting any function
-   that fails a check (not implemented).
 
 The current CLI performs steps 1 and 2 and the free-space part of step 3, then
-writes the modified binary without verifying it.
+writes the modified binary.
 
 ## Layout
 

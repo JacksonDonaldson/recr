@@ -18,6 +18,16 @@ Before committing, verify the staged change set, not just the working tree.
 Untracked conftest files, fixtures, or tests are not part of the commit; run the
 suite against a clean checkout of the index when a change spans several files.
 
+When a change can alter the number of freed bytes (outlining, function removal,
+free-space placement, or stack analysis), measure the same cached pcre2 inputs
+before and after. Use `test/build/e2e/pcre2/{pcre2test,pcre2grep}` with the
+matching `test/build/e2e/results/<name>.xml`, run
+`python codezip.py <binary> <xml> -o <output> --receipt <receipt>`, and sum the
+lengths in the receipt's `freed:` section. To measure the old code, create a
+detached worktree at the parent commit and run the same command there. If the
+cached fixtures are missing, run `make -C test e2e` first. Record the result in
+the "Current state" breakdown.
+
 At the end of every run, update the "Current state" section below so it matches
 the repository. Keep it concise: record what is implemented, what is still a
 stub, and any essential constraints. Do not add task logs, changelogs, or
@@ -131,7 +141,15 @@ Implemented:
   `make_return_instruction` synthesize the outline call and return.
   `uses_red_zone` tracks symbolic RSP/RBP offsets through the CFG, so
   RBP-relative locals in a function that never subtracts from RSP are treated
-  as red-zone accesses; unmodeled stack updates make a function ineligible.
+  as red-zone accesses. `can_outline_region` uses the same analysis to allow a
+  red-zone function when the outline call's `[rsp-8, rsp)` return-address slot
+  is dead on every path: the moved window must not touch it, and no path may
+  read it before a covering store, a call or push at the same stack depth, or a
+  return. Unmodeled stack updates, unknown RBP state, indirect flows, calls at
+  a different stack depth, RSP/RBP aliases, and sites whose stack pointer is
+  not pointer-aligned are rejected. The red-zone verdict and block-entry
+  states are cached per function for the planning pass. The outliner drops
+  only the unsafe source sites and recomputes the match's savings.
 - `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
   constructors, decision trees, context changes, and P-code templates. The
   x86-64 decoder recovers modified and source register/flag/memory states,
@@ -217,21 +235,30 @@ Implemented:
   address zero first), groups blocks that share the same instruction set, and
   estimates net free-space savings after the inserted call, the stored shared
   block, and its return. Matches are capped at 10 per
-  source block and deduplicated globally. Functions with an unresolved local
-  reference, a red-zone access, or an implicit fallthrough from their last
-  instruction are skipped. Block reordering moves the common instructions into
-  a contiguous window with dependency, write-write, and control-transfer
-  checks; it refuses to move across a branch or return. Selected matches are
-  applied greedily without overlapping source blocks. Function regeneration
-  relocates every instruction, repatches branch targets, rejects any
-  instruction that would grow, and drops the plans for a function if it cannot
-  be regenerated. Shared blocks are placed in the smallest free range that can
-  encode them, RSP-relative instructions are biased for the call, and the
-  source calls are patched to the selected target. Freed function tails and
-  modified live-code ranges are reported separately. The sample's
-  `mix_a`/`mix_b`/`mix_c` chain shares a straight-line expression; those
-  functions call helpers, so they allocate frames instead of using the red
-  zone, and the sample exercises a selected match and freed function tails.
+  source block and deduplicated globally. Each instruction's
+  position-invariant encoding is cached for the pass, so the index, the match
+  search, and every replacement plan share one SLEIGH resolution per
+  instruction. Functions with an unresolved local reference or an implicit
+  fallthrough from their last instruction are skipped. Red-zone functions are
+  eligible: each candidate source site is checked with `can_outline_region`,
+  sites that are unsafe or cannot be reordered are dropped from the match, and
+  the savings are recomputed. Plans with dropped sites are deferred until full
+  matches have claimed their blocks. Block reordering moves the common
+  instructions into a contiguous window with dependency, write-write, and
+  control-transfer checks; it refuses to move across a branch or return.
+  Selected matches are applied greedily without overlapping source blocks.
+  Function regeneration relocates every instruction, repatches branch targets,
+  rejects any instruction that would grow, and drops the plans for a function
+  if it cannot be regenerated. Shared blocks are placed in the smallest free
+  range that can encode them, RSP-relative instructions are biased for the
+  call, and the source calls are patched to the selected target. Freed
+  function tails and modified live-code ranges are reported separately. The
+  sample's `mix_a`/`mix_b`/`mix_c` chain shares a straight-line expression;
+  those functions call helpers, so they allocate frames instead of using the
+  red zone, and the sample exercises a selected match and freed function tails.
+  `test/optimizers/red_zone_outline.s` covers dead slots, post-window reads,
+  deeper slots, covering writes and calls, reads inside the window, register
+  aliases, and dropping only the unsafe site.
   The temporary `--report-outline-matches` CLI option remains a dry run that
   prints candidates and exits 1 without writing.
 - `codezip.py` parses the export, opens the binary, uplifts every function,
@@ -258,6 +285,9 @@ Implemented:
   `modified` ranges. The built `pcre2test`/`pcre2grep` binaries are cached in
   `test/build/e2e/baseline/`, and Ghidra exports are reused when their binary
   and script hashes match, so only changed inputs are rebuilt or re-exported.
+  The current freed-byte breakdown is `pcre2test` 515 bytes in 63 ranges and
+  `pcre2grep` 2146 bytes in 48 ranges (2661 bytes total). The pre-red-zone
+  baseline was 360 and 2105 bytes (2465 total).
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - Mutation sensitivity check (`test/e2e/mutation_check.py`, `make -C test

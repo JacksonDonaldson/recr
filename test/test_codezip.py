@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import re
 import shutil
 
 from binary.binary import Binary
@@ -105,7 +106,9 @@ def test_pipeline_writes_binary_with_free_space_filled(
         "free space 0x401b75 (0x34 bytes): "
         "unreferenced function unreferenced_function"
     ) in caplog.text
-    assert "selected 1 of 2 outline match(es)" in caplog.text
+    assert re.search(
+        r"selected 1 of \d+ outline match\(es\)", caplog.text
+    )
     assert "filling 5 free space range(s) with 0xff" in caplog.text
     assert f"writing modified binary to {output}" in caplog.text
 

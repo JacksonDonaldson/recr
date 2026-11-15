@@ -6,10 +6,13 @@ CFLAGS ?= -m64 -O0 -g3 -fno-omit-frame-pointer -fno-inline \
           -fno-pie -Wall -Wextra -Wpedantic
 LDFLAGS ?= -m64 -no-pie
 LDLIBS ?=
+NASM ?= nasm
 
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/sample
 SOURCE := sample.c
+RED_ZONE_SOURCE := optimizers/red_zone_outline.s
+RED_ZONE_OBJECT := $(BUILD_DIR)/red_zone_outline.o
 
 # Ghidra headless export.  Override GHIDRA_HOME if Ghidra lives elsewhere.
 GHIDRA_HOME ?= $(HOME)/opt/ghidra
@@ -19,10 +22,14 @@ GHIDRA_XML := $(BUILD_DIR)/sample_ghidra.xml
 
 .PHONY: all run ghidra-xml e2e e2e-mutation clean
 
-all: $(TARGET)
+all: $(TARGET) $(RED_ZONE_OBJECT)
 
 $(TARGET): $(SOURCE) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SOURCE) $(LDFLAGS) $(LDLIBS) -o $@
+
+# Red-zone outlining fixture; the test reads function bounds from its symbols.
+$(RED_ZONE_OBJECT): $(RED_ZONE_SOURCE) | $(BUILD_DIR)
+	$(NASM) -f elf64 $< -o $@
 
 $(BUILD_DIR):
 	mkdir -p $@

@@ -25,7 +25,7 @@ from isa.sleigher.sla import ResolvedConstructor, ResolvedOperand
 
 if TYPE_CHECKING:
     from binary.binary import Binary
-    from ir import Function
+    from ir import BasicBlock, Function
     # ``gpu`` is imported lazily inside the range methods: it pulls in the
     # SLEIGH parser, which imports this package.
     import gpu
@@ -53,6 +53,10 @@ class X86_64ISA(ISA):
 
     # x86 instructions are at most 15 bytes.
     _MAX_INSTRUCTION_LENGTH = 15
+
+    # A block reached with more distinct stack states than this is too
+    # ambiguous to prove anything about.
+    _MAX_STACK_STATES = 8
 
     _NON_OUTLINABLE_TYPES = frozenset(
         {
@@ -126,6 +130,13 @@ class X86_64ISA(ISA):
         self._gpu_device: gpu.Device | None = None
         self._gpu_binary: object | None = None
         self._gpu_revision = -1
+        # The outliner asks about the same function many times.  Functions are
+        # not mutated during the planning pass, so the red-zone verdict and
+        # block-entry states are stable for the life of the object.
+        self._outline_red_zone: dict[int, bool] = {}
+        self._outline_states: dict[
+            int, dict[int, set[tuple[int, int | None]]] | None
+        ] = {}
 
     def disassemble(self, binary: "Binary", address: int) -> Instruction:
         data = self._read_instruction_bytes(binary, address)
@@ -429,7 +440,7 @@ class X86_64ISA(ISA):
             states = seen.setdefault(start, set())
             if state in states:
                 continue
-            if len(states) >= 8:
+            if len(states) >= self._MAX_STACK_STATES:
                 return True
             states.add(state)
             visited.add(start)
@@ -458,6 +469,546 @@ class X86_64ISA(ISA):
                     )
 
         return len(visited) != len(blocks)
+
+    def can_outline_region(
+        self,
+        function: "Function",
+        block: "BasicBlock",
+        instructions: list[Instruction],
+        window_start: int,
+        window_length: int,
+    ) -> bool:
+        """Return whether the outline call cannot clobber a live stack value.
+
+        The call pushes its return address at ``[rsp - pointer_size, rsp)``.
+        The function must not read that slot after the call, and the moved
+        window itself must neither read nor write it.  The search follows every
+        control-flow path until a covering write, a call at the same stack
+        depth, or a return makes the slot dead.
+        """
+        key = id(function)
+        red_zone = self._outline_red_zone.get(key)
+        if red_zone is None:
+            red_zone = self.uses_red_zone(function)
+            self._outline_red_zone[key] = red_zone
+        if not red_zone:
+            return True
+        if not function.basic_blocks:
+            return False
+
+        if key not in self._outline_states:
+            self._outline_states[key] = self._block_entry_states(function)
+        states = self._outline_states[key]
+        if states is None:
+            return False
+        entry_states = states.get(block.start_location.value)
+        if not entry_states:
+            return False
+        return all(
+            self._outline_site_is_safe(
+                function,
+                block,
+                instructions,
+                window_start,
+                window_length,
+                rsp_delta,
+                rbp_delta,
+            )
+            for rsp_delta, rbp_delta in entry_states
+        )
+
+    def _block_entry_states(
+        self, function: "Function"
+    ) -> dict[int, set[tuple[int, int | None]]] | None:
+        """Return the possible stack states at each block entry.
+
+        States are relative to the stack pointer at function entry.  ``None``
+        means a stack update could not be modeled, a flow is unresolved, or a
+        block has too many distinct states to analyze.
+        """
+        blocks = function.basic_blocks
+        if not blocks or not all(block.instructions for block in blocks):
+            return None
+
+        by_start = {block.start_location.value: block for block in blocks}
+        entry = blocks[0].start_location.value
+        pending: deque[tuple[int, int, int | None]] = deque(
+            [(entry, 0, None)]
+        )
+        states: dict[int, set[tuple[int, int | None]]] = {}
+
+        while pending:
+            start, rsp_delta, rbp_delta = pending.popleft()
+            block = by_start.get(start)
+            if block is None:
+                return None
+
+            state = (rsp_delta, rbp_delta)
+            seen = states.setdefault(start, set())
+            if state in seen:
+                continue
+            if len(seen) >= self._MAX_STACK_STATES:
+                return None
+            seen.add(state)
+
+            current_rsp = rsp_delta
+            current_rbp = rbp_delta
+            for instruction in block.instructions:
+                effect = self._stack_effect(
+                    instruction, current_rsp, current_rbp
+                )
+                if effect is None:
+                    return None
+                current_rsp, current_rbp = effect
+
+            last = block.instructions[-1]
+            for target in last.flows_to:
+                if last.type in (
+                    InstructionType.CALL,
+                    InstructionType.CALL_INDIRECT,
+                    InstructionType.OUTLINE_RESULT_CALL,
+                ):
+                    # A call continues at its fallthrough, not at its target.
+                    if (
+                        target.kind is AddressKind.ABSOLUTE
+                        and target.value == last.address + last.length
+                        and target.value in by_start
+                    ):
+                        pending.append(
+                            (target.value, current_rsp, current_rbp)
+                        )
+                    continue
+                if target.kind is not AddressKind.ABSOLUTE:
+                    return None
+                if target.value in by_start:
+                    pending.append(
+                        (target.value, current_rsp, current_rbp)
+                    )
+
+        return states
+
+    def _outline_site_is_safe(
+        self,
+        function: "Function",
+        block: "BasicBlock",
+        instructions: list[Instruction],
+        window_start: int,
+        window_length: int,
+        rsp_delta: int,
+        rbp_delta: int | None,
+    ) -> bool:
+        current_rsp = rsp_delta
+        current_rbp = rbp_delta
+        for instruction in instructions[:window_start]:
+            effect = self._stack_effect(
+                instruction, current_rsp, current_rbp
+            )
+            if effect is None:
+                return False
+            current_rsp, current_rbp = effect
+
+        site_rsp = current_rsp
+        if site_rsp % self.pointer_size:
+            # Sites whose stack pointers differ by a partial pointer could
+            # have partially overlapping return-address slots.
+            return False
+        region_start = site_rsp - self.pointer_size
+        region_end = site_rsp
+
+        for instruction in instructions[
+            window_start : window_start + window_length
+        ]:
+            if self._creates_stack_alias(instruction):
+                return False
+            accesses = self._stack_memory_accesses(instruction)
+            if accesses is None:
+                return False
+            for base, displacement, width in accesses:
+                start, end = self._access_range(
+                    base,
+                    displacement,
+                    width,
+                    current_rsp,
+                    current_rbp,
+                )
+                if start is None:
+                    return False
+                if self._overlaps(
+                    start, end, region_start, region_end
+                ):
+                    return False
+            effect = self._stack_effect(
+                instruction, current_rsp, current_rbp
+            )
+            if effect is None:
+                return False
+            current_rsp, current_rbp = effect
+
+        # The call restores RSP.  The window cannot modify RSP, but its RBP
+        # changes persist after the shared block returns.
+        return self._region_stays_clear(
+            function,
+            block,
+            instructions,
+            window_start,
+            window_length,
+            site_rsp,
+            current_rbp,
+            region_start,
+            region_end,
+        )
+
+    def _region_stays_clear(
+        self,
+        function: "Function",
+        start_block: "BasicBlock",
+        start_instructions: list[Instruction],
+        window_start: int,
+        window_length: int,
+        site_rsp: int,
+        rbp_delta: int | None,
+        region_start: int,
+        region_end: int,
+    ) -> bool:
+        by_start = {
+            block.start_location.value: block
+            for block in function.basic_blocks
+        }
+        pending: deque[
+            tuple[list[Instruction], int, int, int | None, bool]
+        ] = deque(
+            [
+                (
+                    start_instructions,
+                    window_start + window_length,
+                    site_rsp,
+                    rbp_delta,
+                    True,
+                )
+            ]
+        )
+        visited: set[tuple[int, int, int, int | None]] = set()
+
+        while pending:
+            instructions, index, rsp_delta, rbp_delta, is_start = (
+                pending.popleft()
+            )
+            while index < len(instructions):
+                if is_start and index == window_start:
+                    # A branch back to the outline call.  It overwrites the
+                    # slot only when it pushes at the same stack depth.
+                    if rsp_delta == site_rsp:
+                        break
+                    return False
+
+                key = (id(instructions), index, rsp_delta, rbp_delta)
+                if key in visited:
+                    break
+                visited.add(key)
+
+                instruction = instructions[index]
+                if self._creates_stack_alias(instruction):
+                    return False
+                accesses = self._stack_memory_accesses(instruction)
+                if accesses is None:
+                    return False
+                reads = self._reads_memory(instruction)
+                writes = self._writes_memory(instruction)
+                terminated = False
+                for base, displacement, width in accesses:
+                    start, end = self._access_range(
+                        base,
+                        displacement,
+                        width,
+                        rsp_delta,
+                        rbp_delta,
+                    )
+                    if start is None:
+                        return False
+                    if not self._overlaps(
+                        start, end, region_start, region_end
+                    ):
+                        continue
+                    if reads or not writes:
+                        return False
+                    if start <= region_start and end >= region_end:
+                        # The slot is overwritten before any read, so the
+                        # outline call's value is dead.
+                        terminated = True
+                        break
+                if terminated:
+                    break
+
+                if instruction.type is InstructionType.RET:
+                    if self._overlaps(
+                        rsp_delta,
+                        rsp_delta + self.pointer_size,
+                        region_start,
+                        region_end,
+                    ):
+                        return False
+                    if self._mnemonic(instruction) not in ("RET", "RETN"):
+                        return False
+                    break
+
+                if instruction.type in (
+                    InstructionType.CALL,
+                    InstructionType.CALL_INDIRECT,
+                ):
+                    if rsp_delta == site_rsp:
+                        break
+                    return False
+
+                effect = self._stack_effect(
+                    instruction, rsp_delta, rbp_delta
+                )
+                if effect is None:
+                    return False
+                if effect != (rsp_delta, rbp_delta):
+                    mnemonic = self._mnemonic(instruction)
+                    if mnemonic == "PUSH" and rsp_delta == site_rsp:
+                        break
+                    if (
+                        mnemonic is not None
+                        and mnemonic.startswith("POP")
+                        and self._overlaps(
+                            rsp_delta,
+                            rsp_delta + self.pointer_size,
+                            region_start,
+                            region_end,
+                        )
+                    ):
+                        return False
+                    if mnemonic == "LEAVE" and (
+                        rbp_delta is None
+                        or self._overlaps(
+                            rbp_delta,
+                            rbp_delta + self.pointer_size,
+                            region_start,
+                            region_end,
+                        )
+                    ):
+                        return False
+                rsp_delta, rbp_delta = effect
+
+                if instruction.type is InstructionType.BRANCH:
+                    if not self._enqueue_successors(
+                        pending,
+                        instruction,
+                        rsp_delta,
+                        rbp_delta,
+                        start_block,
+                        start_instructions,
+                        by_start,
+                    ):
+                        return False
+                    break
+
+                index += 1
+                if index == len(instructions):
+                    if not self._enqueue_successors(
+                        pending,
+                        instruction,
+                        rsp_delta,
+                        rbp_delta,
+                        start_block,
+                        start_instructions,
+                        by_start,
+                    ):
+                        return False
+                    break
+
+        return True
+
+    def _enqueue_successors(
+        self,
+        pending: deque[
+            tuple[list[Instruction], int, int, int | None, bool]
+        ],
+        instruction: Instruction,
+        rsp_delta: int,
+        rbp_delta: int | None,
+        start_block: "BasicBlock",
+        start_instructions: list[Instruction],
+        by_start: dict[int, "BasicBlock"],
+    ) -> bool:
+        if not instruction.flows_to:
+            return False
+        for target in instruction.flows_to:
+            if target.kind is not AddressKind.ABSOLUTE:
+                return False
+            if target.value == start_block.start_location.value:
+                pending.append(
+                    (
+                        start_instructions,
+                        0,
+                        rsp_delta,
+                        rbp_delta,
+                        True,
+                    )
+                )
+                continue
+            block = by_start.get(target.value)
+            if block is None:
+                return False
+            pending.append(
+                (block.instructions, 0, rsp_delta, rbp_delta, False)
+            )
+        return True
+
+    def _stack_memory_accesses(
+        self, instruction: Instruction
+    ) -> list[tuple[str, int, int]] | None:
+        """Return the stack-relative memory ranges an instruction touches.
+
+        Each entry is ``(base, displacement, width)``.  ``None`` means a
+        stack-relative operand exists but its width or address could not be
+        determined.
+        """
+        if not self._reads_memory(instruction) and not self._writes_memory(
+            instruction
+        ):
+            return []
+        try:
+            resolved = self._resolve(instruction)
+        except _NotAdjustable:
+            return None
+
+        data = instruction.original_data
+        accesses: list[tuple[str, int, int]] = []
+        unknown = False
+
+        def walk(
+            operand: ResolvedOperand,
+            context: int,
+            width: int | None,
+        ) -> None:
+            nonlocal unknown
+            try:
+                location = self._sleigher.spec._location_for_operand(
+                    operand, data, context
+                )
+            except _NotAdjustable:
+                location = None
+            if location is not None:
+                state = self._sleigher.spec._state_space(
+                    (location.space_index, location.offset, location.size)
+                )
+                if (
+                    state is not None
+                    and state.kind is StateSpaceKind.MEMORY
+                ):
+                    width = location.size
+
+            if operand.resolved is not None and self._is_address_operand(
+                operand, operand.resolved
+            ):
+                try:
+                    base = self._base_register(operand, data)
+                    displacement = self._address_displacement(
+                        operand, data
+                    )
+                except _NotAdjustable:
+                    unknown = True
+                    return
+                if base in ("RSP", "RBP"):
+                    if width is None:
+                        unknown = True
+                        return
+                    accesses.append((base, displacement, width))
+
+            if operand.resolved is not None:
+                for child in operand.resolved.operands:
+                    walk(child, operand.resolved.context, width)
+
+        for operand in resolved.operands:
+            walk(operand, resolved.context, None)
+
+        if unknown:
+            return None
+        return accesses
+
+    @staticmethod
+    def _reads_memory(instruction: Instruction) -> bool:
+        return any(
+            state.kind is StateSpaceKind.MEMORY
+            for state in instruction.depends_on
+        )
+
+    @staticmethod
+    def _writes_memory(instruction: Instruction) -> bool:
+        return any(
+            state.kind is StateSpaceKind.MEMORY
+            for state in instruction.modifies
+        )
+
+    def _mnemonic(self, instruction: Instruction) -> str | None:
+        try:
+            resolved = self._resolve(instruction)
+        except _NotAdjustable:
+            return None
+        return self._sleigher.spec.mnemonic(resolved).upper()
+
+    def _creates_stack_alias(self, instruction: Instruction) -> bool:
+        """Return whether a value derived from RSP or RBP escapes to a register.
+
+        The scan tracks only RSP and RBP.  A register holding an RSP- or
+        RBP-relative address could hide a later read of the return-address
+        slot, so such an instruction rejects the site.
+        """
+        if not any(
+            state.kind is StateSpaceKind.REGISTER
+            for state in instruction.modifies
+        ):
+            return False
+        try:
+            resolved = self._resolve(instruction)
+        except _NotAdjustable:
+            return True
+
+        data = instruction.original_data
+        if self._sleigher.spec.mnemonic(resolved).upper() == "LEA":
+            try:
+                for operand in self._address_operands(resolved):
+                    if self._base_register(operand, data) in ("RSP", "RBP"):
+                        return True
+            except _NotAdjustable:
+                return True
+
+        modified = {
+            state.name
+            for state in instruction.modifies
+            if state.kind is StateSpaceKind.REGISTER
+        }
+        if not modified - {"RSP", "RBP"}:
+            return False
+        return any(
+            self._uses_register_as_value(resolved, data, name)
+            for name in ("RSP", "RBP")
+        )
+
+    def _access_range(
+        self,
+        base: str,
+        displacement: int,
+        width: int,
+        rsp_delta: int,
+        rbp_delta: int | None,
+    ) -> tuple[int | None, int | None]:
+        origin = rsp_delta if base == "RSP" else rbp_delta
+        if origin is None:
+            return None, None
+        start = origin + displacement
+        return start, start + width
+
+    @staticmethod
+    def _overlaps(
+        start: int,
+        end: int,
+        region_start: int,
+        region_end: int,
+    ) -> bool:
+        return start < region_end and region_start < end
 
     def relocate_instruction(
         self, instruction: Instruction, new_base_address: int
@@ -1031,6 +1582,14 @@ class X86_64ISA(ISA):
     def _uses_rsp_as_value(
         self, resolved: ResolvedConstructor, data: bytes
     ) -> bool:
+        return self._uses_register_as_value(resolved, data, "RSP")
+
+    def _uses_register_as_value(
+        self,
+        resolved: ResolvedConstructor,
+        data: bytes,
+        name: str,
+    ) -> bool:
         def walk(
             constructor: ResolvedConstructor, in_address: bool
         ) -> bool:
@@ -1057,7 +1616,7 @@ class X86_64ISA(ISA):
                 if (
                     state is not None
                     and state.kind is StateSpaceKind.REGISTER
-                    and state.name == "RSP"
+                    and state.name == name
                 ):
                     return True
             return False
