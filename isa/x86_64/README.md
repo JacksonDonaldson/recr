@@ -80,7 +80,17 @@ modifies RSP, and anything that uses RSP as a value rather than only as an
 address base.  It also rejects trap and control-transfer mnemonics such as
 `INT`, `INT3`, `HLT`, `UD2`, and `RSM`, which the SLEIGH decoder classifies as
 `ARITHMETIC`, and stack-relative memory operands that cannot be biased in
-place.
+place.  `ENDBR32`/`ENDBR64` stay at their function entries for CET.
+
+`uses_red_zone` walks the function's control-flow graph with symbolic RSP and
+RBP offsets.  A frame-pointer function that never subtracts from RSP keeps its
+locals below RSP, so both RSP- and RBP-relative accesses are checked against the
+current stack pointer.  An unmodeled stack-pointer update makes the function
+ineligible for outlining.
+
+`make_call_instruction` and `make_return_instruction` synthesize the outline
+call and its terminating return.  `set_instruction_target` repatches the
+relative displacement field and refuses targets that do not fit.
 
 `X86_64ISA.add_extra_stack_space` adds the pointer size to every explicit
 memory operand whose base is RSP.  RBP is callee-saved and is not changed by

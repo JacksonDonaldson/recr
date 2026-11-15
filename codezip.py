@@ -3,10 +3,10 @@
 
 Drives the parse -> uplift -> optimize -> write pipeline.  The implemented
 stages parse a reverse-engineering export, open the binary, uplift every
-function, recover cross-references, detect unreferenced-function free space,
-fill that space with 0xff, write the modified binary, and optionally write a
-YAML receipt of the freed ranges.  The outliner currently reports profitable
-basic-block matches; it does not generate replacement bytes yet.
+function, recover cross-references, remove unreferenced functions, outline
+repeated instruction regions, fill the remaining free space with 0xff, write
+the modified binary, and optionally write a YAML receipt of the freed and
+rewritten ranges.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="PATH",
-        help="write a YAML receipt of the freed ranges to PATH",
+        help="write a YAML receipt of freed and rewritten ranges to PATH",
     )
     parser.add_argument(
         "--isa",
@@ -86,24 +86,34 @@ def _configure_logging(verbose: bool) -> None:
     LOGGER.setLevel(level)
 
 
-def _render_receipt(free_space: list[FreeSpace]) -> str:
-    """Render the freed ranges as a YAML document."""
-    if not free_space:
-        return "freed: []\n"
+def _render_receipt(
+    free_space: list[FreeSpace],
+    modified_ranges: list[FreeSpace] | None = None,
+) -> str:
+    """Render freed and rewritten ranges as a YAML document."""
+    lines: list[str] = []
+    if free_space:
+        lines.append("freed:")
+        for space in sorted(
+            free_space, key=lambda item: item.start.value
+        ):
+            lines.append(f"  - address: {space.start.value:#x}")
+            lines.append(f"    length: {space.size:#x}")
+    else:
+        lines.append("freed: []")
 
-    lines = ["freed:"]
-    for space in sorted(free_space, key=lambda space: space.start.value):
-        lines.append(f"  - address: {space.start.value:#x}")
-        lines.append(f"    length: {space.size:#x}")
+    if modified_ranges:
+        lines.append("modified:")
+        for space in sorted(
+            modified_ranges, key=lambda item: item.start.value
+        ):
+            lines.append(f"  - address: {space.start.value:#x}")
+            lines.append(f"    length: {space.size:#x}")
     return "\n".join(lines) + "\n"
 
 
 def run_pipeline(args: argparse.Namespace) -> int:
-    """Parse, uplift, recover references, match outline candidates, and write.
-
-    The outliner only finds profitable basic-block matches for now; it does not
-    generate replacement bytes or regenerate instructions.
-    """
+    """Parse, uplift, remove functions, outline, fill free space, and write."""
     _configure_logging(args.verbose)
 
     LOGGER.info("loading function export %s", args.re_file)
@@ -197,16 +207,11 @@ def run_pipeline(args: argparse.Namespace) -> int:
             space.diagnostic,
         )
 
-    LOGGER.info("searching for profitable outline matches")
-    try:
-        outline_result = outliner.run_optimizer(
-            binary, uplifter, uplifter.isa, free_space
-        )
-    except (ValueError, NotImplementedError) as exc:
-        LOGGER.error("outlining failed: %s", exc)
-        return 1
-
     if args.report_outline_matches:
+        LOGGER.info("searching for profitable outline matches")
+        outline_result = outliner.extract_instruction_regions(
+            binary, uplifter, uplifter.isa
+        )
         if outline_result is None:
             print("outlining is not supported by this ISA")
         else:
@@ -221,6 +226,22 @@ def run_pipeline(args: argparse.Namespace) -> int:
                     print(line)
         return 1
 
+    LOGGER.info("outlining repeated instruction regions")
+    try:
+        outline_result = outliner.run_optimizer(
+            binary, uplifter, uplifter.isa, free_space
+        )
+    except (ValueError, NotImplementedError) as exc:
+        LOGGER.error("outlining failed: %s", exc)
+        return 1
+
+    if outline_result is not None:
+        LOGGER.info(
+            "selected %d of %d outline match(es)",
+            len(outline_result.selected_matches),
+            len(outline_result.matches),
+        )
+
     LOGGER.info("filling %d free space range(s) with 0xff", len(free_space))
     for space in free_space:
         binary.write(space.start.value, b"\xff" * space.size)
@@ -233,8 +254,16 @@ def run_pipeline(args: argparse.Namespace) -> int:
     binary.write_to_disk(output)
 
     if args.receipt is not None:
+        modified_ranges = (
+            outline_result.modified_ranges
+            if outline_result is not None
+            else []
+        )
         LOGGER.info("writing receipt to %s", args.receipt)
-        args.receipt.write_text(_render_receipt(free_space), encoding="utf-8")
+        args.receipt.write_text(
+            _render_receipt(free_space, modified_ranges),
+            encoding="utf-8",
+        )
 
     return 0
 

@@ -35,6 +35,11 @@ CALL_ARGUMENTS = {
 }
 
 
+# Sentinel for instructions that may clobber every tracked state, including
+# callee-saved registers.
+ALL_STATES = object()
+
+
 def _non_callee_saved_states(
     sleigher: X86Sleigher,
 ) -> set[tuple[StateSpaceKind, str]]:
@@ -48,6 +53,21 @@ def _non_callee_saved_states(
     }
 
 
+def _expected_states(
+    expected: set[tuple[StateSpaceKind, str]] | None | object,
+    sleigher: X86Sleigher,
+) -> set[tuple[StateSpaceKind, str]]:
+    if expected is ALL_STATES:
+        return {
+            (state.kind, state.name)
+            for state in sleigher.spec.all_state_spaces()
+        }
+    if expected is None:
+        return _non_callee_saved_states(sleigher)
+    assert isinstance(expected, set)
+    return expected
+
+
 # name, encoded length, instruction type, modified states, source states.
 # ``None`` means every tracked state except callee-saved registers.
 CASES: list[
@@ -55,8 +75,8 @@ CASES: list[
         str,
         int,
         InstructionType,
-        set[tuple[StateSpaceKind, str]] | None,
-        set[tuple[StateSpaceKind, str]],
+        set[tuple[StateSpaceKind, str]] | None | object,
+        set[tuple[StateSpaceKind, str]] | None | object,
     ]
 ] = [
     ('add eax, 0x20', 3, InstructionType.ARITHMETIC, {FLAGS, reg("RAX")}, {reg("RAX")}),
@@ -116,7 +136,7 @@ CASES: list[
     ('mov r9, rdx', 3, InstructionType.ARITHMETIC, {reg("R9")}, {reg("RDX")}),
     ('bsf eax, ebx', 3, InstructionType.ARITHMETIC, {FLAGS, reg("RAX")}, {FLAGS, reg("RAX"), reg("RBX")}),
     ('bsr eax, ebx', 3, InstructionType.ARITHMETIC, {FLAGS, reg("RAX")}, {FLAGS, reg("RAX"), reg("RBX")}),
-    ('int3', 1, InstructionType.ARITHMETIC, set(), set()),
+    ('int3', 1, InstructionType.ARITHMETIC, ALL_STATES, ALL_STATES),
 ]
 
 _OFFSETS: list[int] = []
@@ -172,8 +192,8 @@ def test_opcode(
         str,
         int,
         InstructionType,
-        set[tuple[StateSpaceKind, str]] | None,
-        set[tuple[StateSpaceKind, str]],
+        set[tuple[StateSpaceKind, str]] | None | object,
+        set[tuple[StateSpaceKind, str]] | None | object,
     ],
     opcodes_binary: Path,
     sleigher: X86Sleigher,
@@ -186,14 +206,12 @@ def test_opcode(
     assert instruction.length == length, name
     assert instruction.original_data == data[offset : offset + length], name
     assert instruction.type is instruction_type, name
-    if expected_modifies is None:
-        expected_modifies = _non_callee_saved_states(sleigher)
     assert {
         (state.kind, state.name) for state in instruction.modifies
-    } == expected_modifies, name
+    } == _expected_states(expected_modifies, sleigher), name
     assert {
         (state.kind, state.name) for state in instruction.depends_on
-    } == expected_sources, name
+    } == _expected_states(expected_sources, sleigher), name
     assert instruction.flows_from == [], name
     assert instruction.flows_to == _expected_flows(
         name, offset, length
@@ -211,8 +229,8 @@ def test_reassemble_matches_nasm_at_new_base(
         str,
         int,
         InstructionType,
-        set[tuple[StateSpaceKind, str]] | None,
-        set[tuple[StateSpaceKind, str]],
+        set[tuple[StateSpaceKind, str]] | None | object,
+        set[tuple[StateSpaceKind, str]] | None | object,
     ],
     opcodes_binary: Path,
     sleigher: X86Sleigher,

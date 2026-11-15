@@ -57,7 +57,7 @@ Types:
         name
         file_offset
         start_address
-        length
+        length              # declared extent; outlining never moves it
 
         list[BasicBlock] basic_blocks
         list[Reference] incoming_references
@@ -66,10 +66,11 @@ Types:
         function has_unk_local_reference:
             return any(ref.to.kind == UNK_LOCAL for ref in outgoing_references)
 
-        function uses_red_zone:
-            scan all instructions for negative stack accesses - leaf functions that access the stack that way can't get outlined.
-
         a function owns its basic blocks, not its instructions
+
+        outlining may rewrite live code and leave an unused tail inside the
+        declared extent.  The tail is reported as FreeSpace; length is not
+        reduced.
 
     class Reference:
         Address from
@@ -95,8 +96,12 @@ ISA contract:
         function decode_range(binary, start, end) -> Iterator[DecodedFlow | None]
         function decode_control_flow_range(binary, start, end)
                 -> Iterator[DecodedFlow]
+        pointer_size: int
         function is_outlinable(instruction) -> bool
         function add_extra_stack_space(instruction, pointer_size) -> Instruction
+        function make_call_instruction() -> Instruction
+        function make_return_instruction() -> Instruction
+        function uses_red_zone(function) -> bool
         function relocate_instruction(instruction, new_base_address) -> Instruction
         function set_instruction_target(instruction, new_target_address) -> Instruction
         function can_encode(instruction, address) -> bool
@@ -104,6 +109,19 @@ ISA contract:
         function try_interpret_as_pointer(binary, offset) -> set[Address]
         function iter_pointer_references(binary, start, end, targets)
                 -> Iterator[(address, target)]
+
+        pointer_size is the size added to RSP-relative operands when a block is
+        moved behind an outlining call, and the size of an implicit stack push.
+
+        make_call_instruction returns an untargeted direct call with the
+        instruction's final length.  make_return_instruction returns the return
+        used to end a shared block.  The outliner patches the call's target with
+        set_instruction_target after placing the shared block.
+
+        uses_red_zone tracks the stack depth through the function's control-flow
+        graph.  It returns true when a memory access is below the current RSP,
+        including RBP-relative locals in a frame-pointer function that never
+        subtracts from RSP, and when a stack-pointer update cannot be modeled.
 
         try_interpret_as_pointer reads little-endian pointer-sized and 32-bit
         values at offset, and returns every Address that could be read.  A

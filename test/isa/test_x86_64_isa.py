@@ -86,6 +86,87 @@ def _decode(x86_64_isa: X86_64ISA, data: bytes) -> Instruction:
     return x86_64_isa.disassemble(_BoundedBinary(data), 0)
 
 
+def test_make_call_instruction_is_an_outline_call(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    call = x86_64_isa.make_call_instruction()
+
+    assert call.type is InstructionType.OUTLINE_RESULT_CALL
+    assert call.length == 5
+    assert call.original_data == bytes.fromhex("e800000000")
+    assert any(
+        state.name == "RSP" for state in call.modifies
+    )
+    assert any(state.name == "RAX" for state in call.modifies)
+
+
+def test_make_return_instruction_is_a_ret(x86_64_isa: X86_64ISA) -> None:
+    instruction = x86_64_isa.make_return_instruction()
+
+    assert instruction.type is InstructionType.RET
+    assert instruction.length == 1
+    assert instruction.original_data == b"\xc3"
+    assert instruction.flows_to == []
+
+
+def test_set_instruction_target_patches_a_call(x86_64_isa: X86_64ISA) -> None:
+    call = x86_64_isa.make_call_instruction()
+    call.address = 0x1000
+
+    patched = x86_64_isa.set_instruction_target(
+        call, Address.absolute(0x2000)
+    )
+
+    assert patched.original_data == bytes.fromhex("e8fb0f0000")
+    assert patched.type is InstructionType.OUTLINE_RESULT_CALL
+    assert patched.flows_to == [
+        Address.absolute(0x2000),
+        Address.absolute(0x1005),
+    ]
+
+
+def test_set_instruction_target_patches_a_conditional_branch(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    instruction = replace(
+        _decode(x86_64_isa, bytes.fromhex("0f8400000000")),
+        address=0x1000,
+    )
+
+    patched = x86_64_isa.set_instruction_target(
+        instruction, Address.absolute(0x2000)
+    )
+
+    assert patched.original_data == bytes.fromhex("0f84fa0f0000")
+    assert patched.flows_to == [
+        Address.absolute(0x2000),
+        Address.absolute(0x1006),
+    ]
+
+
+def test_set_instruction_target_rejects_out_of_range_target(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    call = x86_64_isa.make_call_instruction()
+    call.address = 0x1000
+
+    with pytest.raises(ValueError, match="does not fit"):
+        x86_64_isa.set_instruction_target(
+            call, Address.absolute(0x100000000)
+        )
+
+
+def test_set_instruction_target_rejects_instruction_without_target(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    instruction = _decode(x86_64_isa, b"\x90")
+
+    with pytest.raises(ValueError, match="has no direct target"):
+        x86_64_isa.set_instruction_target(
+            instruction, Address.absolute(0x2000)
+        )
+
+
 def test_relocate_instruction_preserves_rip_relative_target(
     x86_64_isa: X86_64ISA,
 ) -> None:

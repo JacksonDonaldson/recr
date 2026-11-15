@@ -1,4 +1,4 @@
-# Build the codezip sample input: a 30-function, non-PIE x86-64 ELF with
+# Build the codezip sample input: a 37-function, non-PIE x86-64 ELF with
 # full debug information.  -O0 keeps every function as a separate symbol.
 
 CC ?= cc

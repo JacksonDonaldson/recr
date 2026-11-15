@@ -242,6 +242,25 @@ def test_unknown_transfer_clobbers_non_callee_saved_state(
     assert RAM in expected
 
 
+@pytest.mark.parametrize(
+    "instruction", ["int 0x80", "int3", "hlt", "ud2"]
+)
+def test_trap_clobbers_and_depends_on_all_state(
+    instruction: str,
+    sleigher: X86Sleigher,
+    tmp_path: Path,
+) -> None:
+    decoded = sleigher.parse(_assemble(instruction, tmp_path))
+    assert decoded is not None, instruction
+
+    expected = {
+        (state.kind, state.name)
+        for state in sleigher.spec.all_state_spaces()
+    }
+    assert _state_keys(decoded.modifies) == expected, instruction
+    assert _state_keys(decoded.depends_on) == expected, instruction
+
+
 def test_direct_branch_does_not_clobber_state(
     sleigher: X86Sleigher,
     tmp_path: Path,

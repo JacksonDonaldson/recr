@@ -1,5 +1,5 @@
 /*
- * A small, self-contained C program with 33 functions, including main.
+ * A small, self-contained C program with 37 functions, including main.
  *
  * It is intentionally compiled at -O0 so every function survives as its own
  * symbol, making it useful as a codezip test input.  The functions cover
@@ -10,6 +10,7 @@
 #include <stdio.h>
 
 int switch_dispatch(int value);
+int mix_total(int value);
 
 int add(int a, int b)
 {
@@ -306,6 +307,7 @@ int main(void)
     total += find_byte(text, 'n');
     total += sum_array(values, count);
     total += max_array(values, count);
+    total += mix_total(5);
 
     reverse_array(values, count);
     bubble_sort(values, count);
@@ -359,4 +361,31 @@ int unreferenced_function(int value)
         total += i * 2;
     }
     return total;
+}
+
+/*
+ * A multi-level call chain: main -> mix_total -> mix_a/mix_b/mix_c -> the
+ * arithmetic helpers.  Every function that makes a call allocates a frame,
+ * so these functions do not keep locals in the red zone.  The three leaf
+ * functions also share the same straight-line expression before the call,
+ * which gives the outliner a profitable region to extract.
+ */
+int mix_a(int value)
+{
+    return add(value * 2 + 3, 1);
+}
+
+int mix_b(int value)
+{
+    return subtract(value * 2 + 3, 2);
+}
+
+int mix_c(int value)
+{
+    return multiply(value * 2 + 3, 4);
+}
+
+int mix_total(int value)
+{
+    return mix_a(value) + mix_b(value) + mix_c(value);
 }

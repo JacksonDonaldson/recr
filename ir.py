@@ -127,10 +127,6 @@ class Function:
             for reference in self.outgoing_references
         )
 
-    def uses_red_zone(self) -> bool:
-        """Return whether the function accesses the stack below the stack pointer."""
-        raise NotImplementedError
-
     def pretty_print(self) -> None:
         """Write a human-readable dump of the uplifted function to stdout."""
         instruction_count = sum(

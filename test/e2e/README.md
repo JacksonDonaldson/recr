@@ -43,8 +43,9 @@ make -C test e2e
    `ExportGhidraXml.java`, unless an export already matches the binary and
    script hashes recorded in `test/build/e2e/results/ghidra-exports.json`.
 6. Runs codezip on both binaries with `--receipt`.
-7. Checks that the output keeps the file size and differs from the input only
-   by `0xff` bytes inside the receipt ranges.
+7. Checks that the output keeps the file size, fills the receipt's `freed`
+   ranges with `0xff`, and only changes other bytes inside its `modified`
+   ranges.
 8. Installs the codezipped binaries, runs `make check` and the library corpus
    again, and restores the originals even if either check fails.
 

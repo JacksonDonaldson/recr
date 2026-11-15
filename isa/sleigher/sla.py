@@ -284,6 +284,42 @@ _UNKNOWN_TRANSFER_TYPES = frozenset(
     }
 )
 
+# Traps and system transfers that the pinned specification decodes as
+# ARITHMETIC without meaningful state effects.  They do not reliably fall
+# through, and an interrupt or exception handler may modify any tracked state.
+# Treating them as opaque keeps dependency analysis from reordering code across
+# them.
+_OPAQUE_TRANSFER_MNEMONICS = frozenset(
+    {
+        "CLGI",
+        "GETSEC",
+        "HLT",
+        "INT",
+        "INT1",
+        "INT3",
+        "INTO",
+        "RSM",
+        "SKINIT",
+        "STGI",
+        "SYSCALL",
+        "SYSENTER",
+        "SYSEXIT",
+        "SYSRET",
+        "UD0",
+        "UD1",
+        "UD2",
+        "UIRET",
+        "VMCALL",
+        "VMLAUNCH",
+        "VMMCALL",
+        "VMRESUME",
+        "VMRUN",
+        "VMXOFF",
+        "XABORT",
+        "XBEGIN",
+    }
+)
+
 
 def _is_sleigh_temporary(name: str) -> bool:
     return name in _SLEIGH_TEMPORARY_REGISTERS or name.startswith("xmmTmp")
@@ -2208,7 +2244,11 @@ class SlaSpec:
         # A resolved operand has one location per instruction, but the same
         # operand is reached through several P-code varnodes.
         memo: dict[int, VarnodeInfo | None] = {}
-        opaque = False
+        opaque = (
+            flow.type is InstructionType.ARITHMETIC
+            and self.mnemonic(resolved).upper()
+            in _OPAQUE_TRANSFER_MNEMONICS
+        )
 
         for op, owner in self._semantic_ops(resolved):
             owner_context = owner.context

@@ -126,7 +126,12 @@ Implemented:
   which lets xref recovery find immediates such as `_start`'s
   `mov rdi, main`. NASM-generated tests cover every Intel
   memory form in the corpus across RSP/ESP/RBP/SIB and disp8/disp32 variants.
-  `set_instruction_target` and the call/ret length helpers are still stubs.
+  `set_instruction_target` repatches relative displacement fields and rejects
+  targets that do not fit. `make_call_instruction` and
+  `make_return_instruction` synthesize the outline call and return.
+  `uses_red_zone` tracks symbolic RSP/RBP offsets through the CFG, so
+  RBP-relative locals in a function that never subtracts from RSP are treated
+  as red-zone accesses; unmodeled stack updates make a function ineligible.
 - `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
   constructors, decision trees, context changes, and P-code templates. The
   x86-64 decoder recovers modified and source register/flag/memory states,
@@ -140,7 +145,11 @@ Implemented:
   excluded, and opaque userops conservatively clobber all tracked state.
   Unknown transfers (calls, returns, and indirect branches) depend on the
   System V AMD64 argument state where applicable and clobber every tracked
-  state space except callee-saved RBX, RBP, R12-R15.
+  state space except callee-saved RBX, RBP, R12-R15. Traps and system transfers
+  that the pinned specification decodes as arithmetic (`INT`, `INT3`, `HLT`,
+  `UD0`-`UD2`, `RSM`, system-call and virtualization instructions) conservatively
+  clobber and depend on every tracked state, so dependency analysis cannot
+  reorder code across them.
   Constructor resolution and state effects are cached per (instruction bytes,
   context); state spaces name register, flag, and memory classes and never
   carry an address, so the state-effect cache is address-independent.
@@ -200,27 +209,40 @@ Implemented:
   `test/optimizers/test_function_remover.py` covers the detection,
   preservation of referenced functions, exact free-space extents,
   and idempotence; the sample's `unreferenced_function` is the live fixture.
-- `optimizers/outliner.py` implements basic-block matching. It indexes
-  outlinable instructions by position-invariant bytes (each instruction is
-  re-linked to address zero first), groups blocks that share the same
-  instruction set with a source block, and estimates net free-space savings
-  after the inserted call, the stored shared block, and its return. Matches
-  are capped at 10 per source block and deduplicated globally. Functions with
-  an unresolved local reference are skipped. Red-zone detection is still a
-  stub and is not applied because the pass does not relocate code yet.
-  Replacement generation, reordering, function regeneration, and relinking
-  remain unimplemented. `run_optimizer` returns the matches; the temporary
-  `--report-outline-matches` CLI option prints them and exits 1 without
-  writing an output binary.
+- `optimizers/outliner.py` implements the full outlining pass.
+  `extract_instruction_regions` matches regions, generates replacement bytes,
+  and regenerates the affected functions; `relink_in_instructions` places the
+  shared blocks and rewrites the source call sites. It indexes outlinable
+  instructions by position-invariant bytes (each instruction is re-linked to
+  address zero first), groups blocks that share the same instruction set, and
+  estimates net free-space savings after the inserted call, the stored shared
+  block, and its return. Matches are capped at 10 per
+  source block and deduplicated globally. Functions with an unresolved local
+  reference, a red-zone access, or an implicit fallthrough from their last
+  instruction are skipped. Block reordering moves the common instructions into
+  a contiguous window with dependency, write-write, and control-transfer
+  checks; it refuses to move across a branch or return. Selected matches are
+  applied greedily without overlapping source blocks. Function regeneration
+  relocates every instruction, repatches branch targets, rejects any
+  instruction that would grow, and drops the plans for a function if it cannot
+  be regenerated. Shared blocks are placed in the smallest free range that can
+  encode them, RSP-relative instructions are biased for the call, and the
+  source calls are patched to the selected target. Freed function tails and
+  modified live-code ranges are reported separately. The sample's
+  `mix_a`/`mix_b`/`mix_c` chain shares a straight-line expression; those
+  functions call helpers, so they allocate frames instead of using the red
+  zone, and the sample exercises a selected match and freed function tails.
+  The temporary `--report-outline-matches` CLI option remains a dry run that
+  prints candidates and exits 1 without writing.
 - `codezip.py` parses the export, opens the binary, uplifts every function,
-  recovers cross-references, runs the unreferenced-function pass, fills every
-  reported range with `0xff`, and writes the modified binary to `--output`
-  (default `<binary>.codezip`). `--receipt PATH` also writes a YAML receipt
-  listing each freed virtual address and length.
+  recovers cross-references, runs the unreferenced-function pass, runs the
+  outliner, fills every remaining free range with `0xff`, and writes the
+  modified binary to `--output` (default `<binary>.codezip`). `--receipt PATH`
+  also writes a YAML receipt with `freed` and `modified` ranges.
   `-v/--verbose` logs pipeline progress, parser warnings, free-space results,
-  and per-function results, and pretty-prints every uplifted function.
-  `test/test_codezip.py` covers the CLI flags, verbose output, receipt
-  contents, output bytes, and exit codes.
+  outline selections, and per-function results, and pretty-prints every
+  uplifted function. `test/test_codezip.py` covers the CLI flags, verbose
+  output, receipt contents, output bytes, and exit codes.
 - End-to-end check (`test/e2e/run_e2e.py`, `make -C test e2e`) builds pinned
   pcre2 10.49 with `-O0 -g3 -fno-pie ...`, exports its
   functions with Ghidra, codezips `pcre2test` and `pcre2grep`, and requires
@@ -231,12 +253,13 @@ Implemented:
   paths, and default line-output paths. The corpus is filtered against a
   reference binary and cached under `test/build/e2e/grep-corpus/`. The check
   is opt-in, needs Ghidra and network access, and records the freed ranges and
-  byte count under
-  `test/build/e2e/results/`. The built `pcre2test`/`pcre2grep` binaries are
-  cached in `test/build/e2e/baseline/`, and Ghidra exports are reused when
-  their binary and script hashes match, so only changed inputs are rebuilt or
-  re-exported. Switch jump tables are uplifted conservatively as unresolved
-  local flow, so the build does not disable them.
+  byte count under `test/build/e2e/results/`. The verifier requires freed
+  ranges to be `0xff` and allows other changes only inside the receipt's
+  `modified` ranges. The built `pcre2test`/`pcre2grep` binaries are cached in
+  `test/build/e2e/baseline/`, and Ghidra exports are reused when their binary
+  and script hashes match, so only changed inputs are rebuilt or re-exported.
+  Switch jump tables are uplifted conservatively as unresolved local flow, so
+  the build does not disable them.
 - Mutation sensitivity check (`test/e2e/mutation_check.py`, `make -C test
   e2e-mutation`) flips random bytes in the cached codezipped binaries and runs
   the matching pcre2 test script, plus the library corpus for `pcre2grep`. It
@@ -256,8 +279,6 @@ Still stubs:
 
 - YAML parser
 - PE and raw binary backends
-- Outliner replacement generation, instruction reordering, function
-  regeneration, and relinking (matching is implemented)
 - Verification passes
 
 Do not assume an unimplemented module works. Add tests as each stub is filled in.

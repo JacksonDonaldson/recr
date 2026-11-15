@@ -361,26 +361,43 @@ def _ghidra_export(name: str) -> Path:
     return output
 
 
-def _read_receipt(path: Path) -> list[tuple[int, int]]:
+def _read_receipt(
+    path: Path,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines or not lines[0].startswith("freed:"):
         _fail(f"{path} is not a codezip receipt")
 
-    ranges: list[tuple[int, int]] = []
+    sections: dict[str, list[tuple[int, int]]] = {
+        "freed": [],
+        "modified": [],
+    }
+    section: str | None = None
     index = 0
     while index < len(lines):
-        address_match = _RECEIPT_ITEM.match(lines[index])
-        if address_match is None:
+        line = lines[index]
+        if line.startswith("freed:"):
+            section = "freed"
+            index += 1
+            continue
+        if line.startswith("modified:"):
+            section = "modified"
             index += 1
             continue
 
+        address_match = _RECEIPT_ITEM.match(line)
+        if address_match is None:
+            index += 1
+            continue
+        if section is None:
+            _fail(f"{path} has a range outside a receipt section")
         if index + 1 >= len(lines):
             _fail(f"{path} has an address without a length")
         length_match = _RECEIPT_LENGTH.match(lines[index + 1])
         if length_match is None:
             _fail(f"{path} has an address without a length")
 
-        ranges.append(
+        sections[section].append(
             (
                 int(address_match.group(1), 16),
                 int(length_match.group(1), 16),
@@ -388,14 +405,14 @@ def _read_receipt(path: Path) -> list[tuple[int, int]]:
         )
         index += 2
 
-    return ranges
+    return sections["freed"], sections["modified"]
 
 
 def _verify_codezipped(
     binary: Path, output: Path, receipt: Path
 ) -> tuple[int, int]:
-    """Check the output only differs by 0xff-filled receipt ranges."""
-    ranges = _read_receipt(receipt)
+    """Check output changes are confined to the receipt ranges."""
+    freed, modified_ranges = _read_receipt(receipt)
     original = binary.read_bytes()
     modified = output.read_bytes()
     if len(modified) != len(original):
@@ -403,31 +420,54 @@ def _verify_codezipped(
 
     image = Binary(binary)
     expected = bytearray(original)
+    rewritten = bytearray(len(expected))
+    freed_marks = bytearray(len(expected))
     total = 0
-    previous_end = 0
-    for address, length in ranges:
+
+    def check_range(address: int, length: int) -> int:
         if length <= 0:
             _fail(f"{receipt} contains an empty range")
-        if address < previous_end:
-            _fail(f"{receipt} contains overlapping ranges")
-        previous_end = address + length
-
         try:
             offset = image.virtual_to_file(address)
         except ValueError as exc:
             _fail(f"{receipt}: {exc}")
         if offset + length > len(expected):
             _fail(f"{receipt} range at {address:#x} is out of bounds")
+        return offset
 
+    previous_end = 0
+    for address, length in freed:
+        if address < previous_end:
+            _fail(f"{receipt} contains overlapping freed ranges")
+        previous_end = address + length
+        offset = check_range(address, length)
         expected[offset : offset + length] = b"\xff" * length
+        freed_marks[offset : offset + length] = b"\x01" * length
         total += length
 
-    if bytes(expected) != modified:
-        _fail(
-            f"{output} changes bytes outside the ranges in {receipt}"
-        )
+    previous_end = 0
+    for address, length in modified_ranges:
+        if address < previous_end:
+            _fail(f"{receipt} contains overlapping modified ranges")
+        previous_end = address + length
+        offset = check_range(address, length)
+        if any(rewritten[offset : offset + length]):
+            _fail(f"{receipt} contains overlapping modified ranges")
+        if any(freed_marks[offset : offset + length]):
+            _fail(f"{receipt} modified range overlaps a freed range")
+        rewritten[offset : offset + length] = b"\x01" * length
 
-    return total, len(ranges)
+    for index, (original_byte, output_byte) in enumerate(
+        zip(expected, modified)
+    ):
+        if rewritten[index]:
+            continue
+        if original_byte != output_byte:
+            _fail(
+                f"{output} changes bytes outside the ranges in {receipt}"
+            )
+
+    return total, len(freed)
 
 
 def _codezip_all() -> dict[str, dict[str, int]]:

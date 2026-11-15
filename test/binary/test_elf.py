@@ -25,7 +25,7 @@ def test_read_main_function_from_ghidra_export(sample_elf: Path) -> None:
     main = next(function for function in result.functions if function.name == "main")
 
     assert main.start_address == 0x40182B
-    assert main.length == 0x2E6
+    assert main.length == 0x2F3
 
     binary = Binary(sample_elf)
     file_offset = binary.virtual_to_file(main.start_address)
@@ -58,8 +58,8 @@ def test_mapped_ranges_reports_load_segments(sample_elf: Path) -> None:
 
     assert binary.mapped_ranges() == [
         (0x400000, 0x558),
-        (0x401000, 0xBA9),
-        (0x402000, 0x65C),
+        (0x401000, 0xC61),
+        (0x402000, 0x6FC),
         (0x403DF8, 0x230),
     ]
 
@@ -158,9 +158,9 @@ def test_write_rejects_non_file_backed_ranges(sample_elf: Path) -> None:
     with pytest.raises(ValueError, match="not file-backed"):
         binary.write(0x404020, b"\0")
 
-    # .text is mapped up to 0x401ba9 but the range must stay in one segment.
+    # .text is mapped up to 0x401c61 but the range must stay in one segment.
     with pytest.raises(ValueError, match="not file-backed"):
-        binary.write(0x401BA8, b"\0\0")
+        binary.write(0x401C60, b"\0\0")
 
 
 def test_write_of_no_bytes_is_a_noop(sample_elf: Path) -> None:

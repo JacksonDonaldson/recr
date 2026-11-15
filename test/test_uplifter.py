@@ -45,7 +45,7 @@ def _instructions(function: Function) -> list[Instruction]:
 def test_every_sample_function_is_uplifted(uplifted_sample) -> None:
     parsed, _, uplifter = uplifted_sample
 
-    assert len(parsed.functions) == 41
+    assert len(parsed.functions) == 45
     assert len(uplifter.function_map) == len(parsed.functions)
 
     for function in parsed.functions:
@@ -332,10 +332,10 @@ def test_sample_jump_table_function_is_uplifted(uplifted_sample) -> None:
     parsed, _, _ = uplifted_sample
     function = _function(parsed, "switch_dispatch")
 
-    assert function.start_address == 0x401B11
+    assert function.start_address == 0x401B1E
     assert function.has_unk_local_reference()
     assert function.outgoing_references == [
-        Reference(Address.absolute(0x401B2D), Address.unknown_local())
+        Reference(Address.absolute(0x401B3A), Address.unknown_local())
     ]
 
     # The indirect jump hides every case body, including the default.  Each
@@ -343,17 +343,17 @@ def test_sample_jump_table_function_is_uplifted(uplifted_sample) -> None:
     assert [block.start_location for block in function.basic_blocks] == [
         Address.absolute(address)
         for address in (
-            0x401B11,
-            0x401B22,
-            0x401B30,
-            0x401B37,
-            0x401B3E,
-            0x401B45,
-            0x401B4C,
-            0x401B53,
-            0x401B5A,
-            0x401B61,
-            0x401B66,
+            0x401B1E,
+            0x401B2F,
+            0x401B3D,
+            0x401B44,
+            0x401B4B,
+            0x401B52,
+            0x401B59,
+            0x401B60,
+            0x401B67,
+            0x401B6E,
+            0x401B73,
         )
     ]
 
@@ -566,6 +566,7 @@ def test_pretty_print_renders_incoming_references(
     _function(parsed, "add").pretty_print()
     output = capsys.readouterr().out
 
-    assert "incoming references (1 reference):" in output
+    assert "incoming references (2 references):" in output
     assert "0x40189e -> 0x401156" in output
+    assert "0x401bc7 -> 0x401156" in output
 

@@ -259,7 +259,7 @@ optimizers/outliner.py:
         for each function in Uplifter.function_map:
             if the function has_unk_local_reference:
                 continue
-            if the function uses_red_zone:
+            if isa.uses_red_zone(function):
                 continue
             for each basic_block in function:
                 for each instruction in that basic block:

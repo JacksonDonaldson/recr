@@ -8,6 +8,7 @@ different stack pointer.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, AbstractSet, Iterator
 
@@ -24,6 +25,7 @@ from isa.sleigher.sla import ResolvedConstructor, ResolvedOperand
 
 if TYPE_CHECKING:
     from binary.binary import Binary
+    from ir import Function
     # ``gpu`` is imported lazily inside the range methods: it pulls in the
     # SLEIGH parser, which imports this package.
     import gpu
@@ -371,6 +373,92 @@ class X86_64ISA(ISA):
         self._verify_adjustment(instruction, adjusted)
         return self._copy_instruction(instruction, original_data=adjusted)
 
+    def make_call_instruction(self) -> Instruction:
+        """Return a zero-displacement ``call rel32`` placeholder."""
+        decoded = self._sleigher.parse(bytes.fromhex("e800000000"), 0)
+        if decoded is None:
+            raise ValueError("cannot decode the outline call template")
+        return replace(
+            decoded,
+            type=InstructionType.OUTLINE_RESULT_CALL,
+            address=0,
+            outline_target=None,
+            flows_from=[],
+            flows_to=[],
+        )
+
+    def make_return_instruction(self) -> Instruction:
+        """Return a one-byte ``ret``."""
+        decoded = self._sleigher.parse(b"\xc3", 0)
+        if decoded is None:
+            raise ValueError("cannot decode the outline return template")
+        return replace(
+            decoded,
+            address=0,
+            outline_target=None,
+            flows_from=[],
+            flows_to=[],
+        )
+
+    def uses_red_zone(self, function: "Function") -> bool:
+        """Return whether a function accesses memory below the stack pointer.
+
+        RSP and RBP are tracked as offsets from the RSP at function entry.
+        A frame-pointer function that never subtracts from RSP keeps its locals
+        in the red zone even though they are addressed through RBP, so checking
+        only explicit RSP operands is not enough.
+        """
+        blocks = function.basic_blocks
+        if not blocks:
+            return False
+
+        by_start = {block.start_location.value: block for block in blocks}
+        entry = blocks[0].start_location.value
+        pending: deque[tuple[int, int, int | None]] = deque(
+            [(entry, 0, None)]
+        )
+        seen: dict[int, set[tuple[int, int | None]]] = {}
+        visited: set[int] = set()
+
+        while pending:
+            start, rsp_delta, rbp_delta = pending.popleft()
+            block = by_start.get(start)
+            if block is None:
+                continue
+            state = (rsp_delta, rbp_delta)
+            states = seen.setdefault(start, set())
+            if state in states:
+                continue
+            if len(states) >= 8:
+                return True
+            states.add(state)
+            visited.add(start)
+
+            current_rsp = rsp_delta
+            current_rbp = rbp_delta
+            for instruction in block.instructions:
+                if self._accesses_below_rsp(
+                    instruction, current_rsp, current_rbp
+                ):
+                    return True
+                effect = self._stack_effect(
+                    instruction, current_rsp, current_rbp
+                )
+                if effect is None:
+                    return True
+                current_rsp, current_rbp = effect
+
+            last = block.instructions[-1]
+            for target in last.flows_to:
+                if target.kind is not AddressKind.ABSOLUTE:
+                    return True
+                if target.value in by_start:
+                    pending.append(
+                        (target.value, current_rsp, current_rbp)
+                    )
+
+        return len(visited) != len(blocks)
+
     def relocate_instruction(
         self, instruction: Instruction, new_base_address: int
     ) -> Instruction:
@@ -384,7 +472,63 @@ class X86_64ISA(ISA):
     def set_instruction_target(
         self, instruction: Instruction, new_target_address: Address
     ) -> Instruction:
-        raise NotImplementedError
+        if new_target_address.kind is not AddressKind.ABSOLUTE:
+            raise ValueError("instruction target must be an absolute address")
+        if instruction.type not in (
+            InstructionType.BRANCH,
+            InstructionType.CALL,
+            InstructionType.OUTLINE_RESULT_CALL,
+        ):
+            raise ValueError(
+                f"instruction type {instruction.type.name} has no direct target"
+            )
+
+        data = bytearray(instruction.original_data)
+        resolved = self._sleigher.spec.resolve(bytes(data), self._sleigher.context)
+        if resolved is None:
+            raise ValueError("instruction cannot be resolved")
+        relative = self._sleigher.spec.relative_target(
+            resolved, bytes(data), instruction.address
+        )
+        if relative is None:
+            raise ValueError("instruction has no relative target field")
+        _, offset, size = relative
+
+        displacement = new_target_address.value - (
+            instruction.address + instruction.length
+        )
+        try:
+            encoded = displacement.to_bytes(size, "little", signed=True)
+        except OverflowError as exc:
+            raise ValueError(
+                f"target {new_target_address.value:#x} does not fit"
+            ) from exc
+        data[offset : offset + size] = encoded
+
+        patched = bytes(data)
+        decoded = self._sleigher.parse(patched, instruction.address)
+        if decoded is None or decoded.length != instruction.length:
+            raise ValueError("patched instruction does not decode in place")
+        if (
+            not decoded.flows_to
+            or decoded.flows_to[0].kind is not AddressKind.ABSOLUTE
+            or decoded.flows_to[0].value != new_target_address.value
+        ):
+            raise ValueError("patched instruction does not reach the target")
+
+        if instruction.type is InstructionType.OUTLINE_RESULT_CALL:
+            flows_to = [
+                new_target_address,
+                Address.absolute(instruction.address + instruction.length),
+            ]
+        else:
+            flows_to = list(decoded.flows_to)
+
+        return replace(
+            instruction,
+            original_data=patched,
+            flows_to=flows_to,
+        )
 
     def can_encode(self, instruction: Instruction, address: int) -> bool:
         return self._sleigher.reassemble(instruction, address) is not None
@@ -576,6 +720,221 @@ class X86_64ISA(ISA):
                 )
             displacements.append(_StackDisplacement(offset, size, value))
         return displacements
+
+    def _accesses_below_rsp(
+        self,
+        instruction: Instruction,
+        rsp_delta: int,
+        rbp_delta: int | None,
+    ) -> bool:
+        """Return whether ``instruction`` reads or writes below RSP."""
+        if not any(
+            state.kind is StateSpaceKind.MEMORY
+            for state in (*instruction.modifies, *instruction.depends_on)
+        ):
+            # LEA computes an address but does not access memory.  Its
+            # displacement is biased by the outliner like any other RSP-based
+            # address, but it cannot clobber the red zone itself.
+            return False
+
+        try:
+            resolved = self._resolve(instruction)
+        except _NotAdjustable:
+            return True
+
+        try:
+            for operand in self._address_operands(resolved):
+                base = self._base_register(
+                    operand, instruction.original_data
+                )
+                if base not in ("RSP", "RBP"):
+                    continue
+                displacement = self._address_displacement(
+                    operand, instruction.original_data
+                )
+                if base == "RSP":
+                    if rsp_delta + displacement < rsp_delta:
+                        return True
+                else:
+                    if rbp_delta is None:
+                        return True
+                    if rbp_delta + displacement < rsp_delta:
+                        return True
+        except _NotAdjustable:
+            return True
+        return False
+
+    def _address_displacement(
+        self, operand: ResolvedOperand, data: bytes
+    ) -> int:
+        """Return the ModRM displacement of an address operand."""
+        field = self._modrm_displacement(data, operand.offset)
+        if field is None:
+            return 0
+        size, offset = field
+        if offset + size > len(data):
+            raise _NotAdjustable("displacement extends past instruction")
+        return int.from_bytes(data[offset : offset + size], "little", signed=True)
+
+    def _stack_effect(
+        self,
+        instruction: Instruction,
+        rsp_delta: int,
+        rbp_delta: int | None,
+    ) -> tuple[int, int | None] | None:
+        """Return the stack state after ``instruction``.
+
+        ``None`` means the instruction changes the stack pointer in a way this
+        analyzer does not model.
+        """
+        modifies_rsp = self._modifies_register(instruction, "RSP")
+        modifies_rbp = self._modifies_register(instruction, "RBP")
+        if not modifies_rsp and not modifies_rbp:
+            return rsp_delta, rbp_delta
+
+        if instruction.type in (
+            InstructionType.CALL,
+            InstructionType.CALL_INDIRECT,
+            InstructionType.OUTLINE_RESULT_CALL,
+            InstructionType.RET,
+        ):
+            # Calls restore RSP when they return; returns end the block.
+            return rsp_delta, rbp_delta
+
+        try:
+            resolved = self._resolve(instruction)
+        except _NotAdjustable:
+            return None
+        mnemonic = self._sleigher.spec.mnemonic(resolved).upper()
+        data = instruction.original_data
+        info = self._opcode_info(data)
+        if info is None:
+            return None
+        rex_w, rex_b, rex_r, has_66, opcode_index, opcode = info
+
+        if mnemonic == "PUSH":
+            if has_66:
+                return None
+            return rsp_delta - self.pointer_size, rbp_delta
+        if mnemonic.startswith("POP"):
+            if has_66:
+                return None
+            if opcode == 0x5C and not rex_b:
+                # pop rsp takes its new value from memory.
+                return None
+            new_rbp = rbp_delta
+            if opcode == 0x5D and not rex_b:
+                new_rbp = None
+            return rsp_delta + self.pointer_size, new_rbp
+        if mnemonic == "LEAVE":
+            if rbp_delta is None:
+                return None
+            return rbp_delta + self.pointer_size, None
+        if mnemonic == "ENTER":
+            return None
+
+        if opcode in (0x89, 0x8B) and rex_w and not has_66:
+            if opcode_index + 1 >= len(data):
+                return None
+            modrm = data[opcode_index + 1]
+            if modrm >> 6 != 3:
+                return None
+            if opcode == 0x8B:
+                destination = (modrm >> 3) & 7
+                source = modrm & 7
+                if rex_r:
+                    destination += 8
+                if rex_b:
+                    source += 8
+            else:
+                destination = modrm & 7
+                source = (modrm >> 3) & 7
+                if rex_b:
+                    destination += 8
+                if rex_r:
+                    source += 8
+            if destination == 5 and source == 4:
+                # mov rbp, rsp
+                return rsp_delta, rsp_delta
+            if destination == 4 and source == 5:
+                # mov rsp, rbp
+                if rbp_delta is None:
+                    return None
+                return rbp_delta, rbp_delta
+            if destination == 4:
+                return None
+            if destination == 5:
+                return rsp_delta, None
+
+        if mnemonic in ("SUB", "ADD") and opcode in (0x83, 0x81):
+            if not rex_w or has_66 or rex_b or rex_r:
+                return None
+            modrm_index = opcode_index + 1
+            if modrm_index >= len(data):
+                return None
+            modrm = data[modrm_index]
+            if modrm >> 6 != 3 or (modrm & 7) != 4:
+                return None
+            operation = (modrm >> 3) & 7
+            if mnemonic == "SUB" and operation != 5:
+                return None
+            if mnemonic == "ADD" and operation != 0:
+                return None
+            immediate_index = modrm_index + 1
+            immediate_size = 1 if opcode == 0x83 else 4
+            if immediate_index + immediate_size > len(data):
+                return None
+            amount = int.from_bytes(
+                data[immediate_index : immediate_index + immediate_size],
+                "little",
+                signed=True,
+            )
+            if mnemonic == "SUB":
+                return rsp_delta - amount, rbp_delta
+            return rsp_delta + amount, rbp_delta
+
+        if modifies_rsp:
+            return None
+        return rsp_delta, None
+
+    @staticmethod
+    def _modifies_register(
+        instruction: Instruction, name: str
+    ) -> bool:
+        return any(
+            state.kind is StateSpaceKind.REGISTER and state.name == name
+            for state in instruction.modifies
+        )
+
+    def _opcode_info(
+        self, data: bytes
+    ) -> tuple[bool, bool, bool, bool, int, int] | None:
+        """Return REX and opcode facts for an x86 instruction."""
+        index = 0
+        has_66 = False
+        rex = 0
+        while index < len(data):
+            byte = data[index]
+            if byte in self._LEGACY_PREFIXES:
+                if byte == 0x66:
+                    has_66 = True
+                index += 1
+                continue
+            if 0x40 <= byte <= 0x4F:
+                rex = byte
+                index += 1
+                continue
+            break
+        if index >= len(data):
+            return None
+        return (
+            bool(rex & 0x08),
+            bool(rex & 0x01),
+            bool(rex & 0x04),
+            has_66,
+            index,
+            data[index],
+        )
 
     def _address_operands(
         self, resolved: ResolvedConstructor

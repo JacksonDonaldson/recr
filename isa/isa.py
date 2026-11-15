@@ -14,6 +14,7 @@ from ir import Address, AddressKind, Instruction, InstructionType
 
 if TYPE_CHECKING:
     from binary.binary import Binary
+    from ir import Function
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class ISA(ABC):
 
     name: ClassVar[str] = ""
     supports_outlining: ClassVar[bool] = False
+    pointer_size: ClassVar[int] = 0
 
     @abstractmethod
     def disassemble(self, binary: "Binary", address: int) -> Instruction:
@@ -125,6 +127,25 @@ class ISA(ABC):
         amount.  Raise :class:`ValueError` if the instruction cannot be
         re-encoded in place without changing its length or semantics.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    def make_call_instruction(self) -> Instruction:
+        """Return a direct-call placeholder for an outline source site.
+
+        The returned instruction is not yet targeted; the outliner patches it
+        with :meth:`set_instruction_target` after placing the shared block.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def make_return_instruction(self) -> Instruction:
+        """Return a return instruction for the end of a shared block."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def uses_red_zone(self, function: "Function") -> bool:
+        """Return whether ``function`` accesses memory below the stack pointer."""
         raise NotImplementedError
 
     @abstractmethod

@@ -45,6 +45,10 @@ EXPECTED_USER_FUNCTIONS = {
     "main",
     "switch_dispatch",
     "unreferenced_function",
+    "mix_a",
+    "mix_b",
+    "mix_c",
+    "mix_total",
 }
 
 
@@ -71,7 +75,7 @@ def test_sample_ghidra_xml_parses() -> None:
         0x405000 <= function.start_address < 0x405020
         for function in result.functions
     )
-    assert len(result.functions) == 41
+    assert len(result.functions) == 45
 
 
 def test_ghidra_function_metadata() -> None:
@@ -85,19 +89,35 @@ def test_ghidra_function_metadata() -> None:
 
     main = functions["main"]
     assert main.start_address == 0x40182B
-    assert main.length == 0x2E6
+    assert main.length == 0x2F3
 
     binary_search = functions["binary_search"]
     assert binary_search.start_address == 0x401790
     assert binary_search.length == 0x9B
 
     switch_dispatch = functions["switch_dispatch"]
-    assert switch_dispatch.start_address == 0x401B11
+    assert switch_dispatch.start_address == 0x401B1E
     assert switch_dispatch.length == 0x57
 
     unreferenced = functions["unreferenced_function"]
-    assert unreferenced.start_address == 0x401B68
+    assert unreferenced.start_address == 0x401B75
     assert unreferenced.length == 0x34
+
+    mix_a = functions["mix_a"]
+    assert mix_a.start_address == 0x401BA9
+    assert mix_a.length == 0x25
+
+    mix_b = functions["mix_b"]
+    assert mix_b.start_address == 0x401BCE
+    assert mix_b.length == 0x25
+
+    mix_c = functions["mix_c"]
+    assert mix_c.start_address == 0x401BF3
+    assert mix_c.length == 0x25
+
+    mix_total = functions["mix_total"]
+    assert mix_total.start_address == 0x401C18
+    assert mix_total.length == 0x3A
 
     # This is a real PLT stub in .plt.sec, not part of the artificial external
     # block, so it must be retained despite its Ghidra-assigned name.
