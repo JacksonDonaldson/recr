@@ -66,8 +66,13 @@ class X86_64ISA(ISA):
     # ARITHMETIC because it trusts the printed mnemonic.  They are not
     # straight-line instructions: they trap, halt, or transfer control through
     # a table that is not part of the instruction stream.
+    #
+    # ENDBR is kept at function entry points: moving it into a shared block
+    # would leave indirect branch targets without the mark required by CET.
     _NON_OUTLINABLE_MNEMONICS = frozenset(
         {
+            "ENDBR32",
+            "ENDBR64",
             "GETSEC",
             "HLT",
             "INT",
@@ -432,10 +437,12 @@ class X86_64ISA(ISA):
         return pointers
 
     def call_instruction_length(self) -> int:
-        raise NotImplementedError
+        """Return the length of a ``call rel32`` used at an outline site."""
+        return 5
 
     def ret_instruction_length(self) -> int:
-        raise NotImplementedError
+        """Return the length of a one-byte ``ret`` used at a target site."""
+        return 1
 
     @classmethod
     def _read_instruction_bytes(
@@ -487,8 +494,11 @@ class X86_64ISA(ISA):
 
     @staticmethod
     def _is_fallthrough(instruction: Instruction) -> bool:
-        if not instruction.flows_from and not instruction.flows_to:
-            return True
+        if not instruction.flows_to:
+            # Before code-flow recovery both lists are empty.  Once recovery
+            # has run, an instruction with incoming edges but no outgoing edge
+            # is not a straight-line instruction.
+            return not instruction.flows_from
         if len(instruction.flows_to) != 1:
             return False
 
@@ -496,16 +506,8 @@ class X86_64ISA(ISA):
         if target.kind is not AddressKind.ABSOLUTE:
             return False
 
-        if instruction.flows_from:
-            if len(instruction.flows_from) != 1:
-                return False
-            source = instruction.flows_from[0]
-            if source.kind is not AddressKind.ABSOLUTE:
-                return False
-            return target.value == source.value + instruction.length
-
-        # flows_from is filled in by the code-flow recovery pass, so accept a
-        # single fallthrough edge before that pass has run.
+        # flows_from holds predecessor addresses, not the instruction's own
+        # address, so the fallthrough is always relative to this instruction.
         return target.value == instruction.address + instruction.length
 
     @staticmethod

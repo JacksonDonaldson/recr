@@ -344,7 +344,12 @@ optimizers/outliner.py:
         Get: number of bytes for the call instruction and number of bytes for the ret instruction from the ISA.
 
         So the overall number of bytes saved if a particular combination works is:
-            ((combined instruction length - call instruction length) * number of sources) - ret instruction length
+            ((combined instruction length - call instruction length) * number of sources)
+                - combined instruction length - ret instruction length
+
+        The combined instruction length is subtracted once more because the
+        shared block itself has to be stored in free space.  A match that does
+        not pay for its own target block is not profitable.
 
         bb_match = map from basic_block -> int best_matches
 

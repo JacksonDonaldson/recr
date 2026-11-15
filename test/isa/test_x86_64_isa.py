@@ -248,6 +248,51 @@ def test_is_outlinable_accepts_multi_byte_fallthrough(
     assert x86_64_isa.is_outlinable(instruction) is True
 
 
+def test_is_outlinable_accepts_predecessor_address_in_flows_from(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    instruction = replace(
+        _decode(x86_64_isa, b"\x90"),
+        address=0x1000,
+        flows_from=[Address.absolute(0x0FFF)],
+        flows_to=[Address.absolute(0x1001)],
+    )
+
+    assert x86_64_isa.is_outlinable(instruction) is True
+
+
+def test_is_outlinable_accepts_multiple_predecessors(
+    x86_64_isa: X86_64ISA,
+) -> None:
+    instruction = replace(
+        _decode(x86_64_isa, b"\x90"),
+        address=0x1000,
+        flows_from=[
+            Address.absolute(0x0FFE),
+            Address.absolute(0x0FFF),
+        ],
+        flows_to=[Address.absolute(0x1001)],
+    )
+
+    assert x86_64_isa.is_outlinable(instruction) is True
+
+
+def test_is_outlinable_rejects_endbr64(x86_64_isa: X86_64ISA) -> None:
+    instruction = replace(
+        _decode(x86_64_isa, bytes.fromhex("f30f1efa")),
+        address=0x1000,
+        flows_from=[Address.absolute(0x0FFF)],
+        flows_to=[Address.absolute(0x1004)],
+    )
+
+    assert x86_64_isa.is_outlinable(instruction) is False
+
+
+def test_outline_call_and_return_lengths(x86_64_isa: X86_64ISA) -> None:
+    assert x86_64_isa.call_instruction_length() == 5
+    assert x86_64_isa.ret_instruction_length() == 1
+
+
 def test_is_outlinable_rejects_outline_result_call(
     x86_64_isa: X86_64ISA,
 ) -> None:

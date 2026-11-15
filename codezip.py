@@ -5,7 +5,8 @@ Drives the parse -> uplift -> optimize -> write pipeline.  The implemented
 stages parse a reverse-engineering export, open the binary, uplift every
 function, recover cross-references, detect unreferenced-function free space,
 fill that space with 0xff, write the modified binary, and optionally write a
-YAML receipt of the freed ranges.  Outlining is still unimplemented.
+YAML receipt of the freed ranges.  The outliner currently reports profitable
+basic-block matches; it does not generate replacement bytes yet.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from pathlib import Path
 from binary.binary import Binary
 from input_parser import ParseError, parse_re_file
 from ir import FreeSpace
-from optimizers import function_remover
+from optimizers import function_remover, outliner
 from uplifter import Uplifter
 
 LOGGER = logging.getLogger("codezip")
@@ -63,6 +64,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="log pipeline progress and pretty-print every uplifted function",
     )
+    parser.add_argument(
+        "--report-outline-matches",
+        action="store_true",
+        help=(
+            "temporary: print every profitable outline match and exit "
+            "with status 1 without writing an output binary"
+        ),
+    )
     return parser
 
 
@@ -90,9 +99,10 @@ def _render_receipt(free_space: list[FreeSpace]) -> str:
 
 
 def run_pipeline(args: argparse.Namespace) -> int:
-    """Parse, uplift, recover references, fill free space, and write output.
+    """Parse, uplift, recover references, match outline candidates, and write.
 
-    Outlining is still unimplemented.
+    The outliner only finds profitable basic-block matches for now; it does not
+    generate replacement bytes or regenerate instructions.
     """
     _configure_logging(args.verbose)
 
@@ -187,10 +197,33 @@ def run_pipeline(args: argparse.Namespace) -> int:
             space.diagnostic,
         )
 
+    LOGGER.info("searching for profitable outline matches")
+    try:
+        outline_result = outliner.run_optimizer(
+            binary, uplifter, uplifter.isa, free_space
+        )
+    except (ValueError, NotImplementedError) as exc:
+        LOGGER.error("outlining failed: %s", exc)
+        return 1
+
+    if args.report_outline_matches:
+        if outline_result is None:
+            print("outlining is not supported by this ISA")
+        else:
+            print(
+                f"{len(outline_result.matches)} profitable basic-block "
+                "match(es)"
+            )
+            for index, match in enumerate(outline_result.matches, start=1):
+                print()
+                print(f"match {index}:")
+                for line in outliner.format_match(match):
+                    print(line)
+        return 1
+
     LOGGER.info("filling %d free space range(s) with 0xff", len(free_space))
     for space in free_space:
         binary.write(space.start.value, b"\xff" * space.size)
-
 
     output = args.output
     if output is None:

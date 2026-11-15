@@ -10,8 +10,9 @@ The input parsers, ELF backend, x86-64 disassembler, function uplifter,
 cross-reference recovery, unreferenced-function free-space detection, and CLI
 wiring through writing the modified binary are implemented. The pipeline fills
 every freed range with `0xff`, writes the result to the output path, and can
-write a YAML receipt of the freed ranges. The outliner and verification are
-still stubs, so the written binary is unverified.
+write a YAML receipt of the freed ranges. The outliner finds profitable
+basic-block matches but does not generate replacement bytes yet; verification
+is still a stub, so the written binary is unverified.
 
 ## Planned pipeline
 
@@ -21,7 +22,8 @@ still stubs, so the written binary is unverified.
    and a control-flow graph.
 3. **Optimize**:
    - remove unreferenced functions and fill their bytes with `0xff`;
-   - outline repeated instruction regions aggressively (not implemented).
+   - outline repeated instruction regions aggressively (match finding
+     implemented; replacement generation not implemented).
 4. **Verify** the result statically and dynamically, reverting any function
    that fails a check (not implemented).
 
@@ -77,6 +79,9 @@ python codezip.py ./a.out ./functions.yaml -o ./a.out.codezip
 Add `-v` or `--verbose` to log pipeline progress and pretty-print every
 uplifted function. The command writes the modified binary to `-o` (default:
 `<binary>.codezip`). Verification is not implemented yet.
+
+The temporary `--report-outline-matches` option prints every profitable
+basic-block match and exits with status 1 without writing an output binary.
 
 Pass `--receipt PATH` to also write a YAML receipt of the freed ranges:
 

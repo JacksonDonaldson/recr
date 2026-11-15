@@ -36,6 +36,24 @@ def test_verbose_flags_are_accepted() -> None:
     )
 
 
+def test_outline_report_defaults_to_disabled() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(["sample.bin", "sample.yaml"])
+
+    assert args.report_outline_matches is False
+
+
+def test_outline_report_flag_is_accepted() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        ["sample.bin", "sample.yaml", "--report-outline-matches"]
+    )
+
+    assert args.report_outline_matches is True
+
+
 def test_receipt_defaults_to_disabled() -> None:
     parser = build_arg_parser()
 
@@ -86,6 +104,31 @@ def test_pipeline_writes_binary_with_free_space_filled(
 
     assert output.read_bytes() == bytes(expected)
     assert len(output.read_bytes()) == len(original)
+
+
+def test_outline_report_prints_matches_and_exits(
+    capsys, sample_elf: Path, tmp_path: Path
+) -> None:
+    output = tmp_path / "sample.codezip"
+
+    result = main(
+        [
+            str(sample_elf),
+            str(GHIDRA_XML),
+            "-o",
+            str(output),
+            "--report-outline-matches",
+        ]
+    )
+
+    assert result == 1
+    assert not output.exists()
+
+    stdout = capsys.readouterr().out
+    assert "profitable basic-block match(es)" in stdout
+    assert "match 1:" in stdout
+    assert "shared instructions:" in stdout
+    assert "source blocks:" in stdout
 
 
 def test_receipt_records_freed_ranges(

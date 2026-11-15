@@ -116,8 +116,11 @@ Implemented:
   with no displacement field, disp8 overflow, RSP value use, and EVEX
   compressed disp8 (including after legacy prefixes) are conservatively
   rejected. Trap and control-transfer mnemonics that the decoder classifies as
-  arithmetic are rejected explicitly. `disassemble` clamps its read to the
-  mapped range so instructions at the end of a segment still decode.
+  arithmetic are rejected explicitly, as are `ENDBR32`/`ENDBR64` so a CET
+  indirect-branch target keeps its mark. Fallthrough detection is relative to
+  the instruction's own address, not its predecessor. `disassemble` clamps its
+  read to the mapped range so instructions at the end of a segment still
+  decode.
   `try_interpret_as_pointer` reads the bytes at an offset as both
   little-endian 64-bit and 32-bit addresses and returns every readable value,
   which lets xref recovery find immediates such as `_start`'s
@@ -197,6 +200,18 @@ Implemented:
   `test/optimizers/test_function_remover.py` covers the detection,
   preservation of referenced functions, exact free-space extents,
   and idempotence; the sample's `unreferenced_function` is the live fixture.
+- `optimizers/outliner.py` implements basic-block matching. It indexes
+  outlinable instructions by position-invariant bytes (each instruction is
+  re-linked to address zero first), groups blocks that share the same
+  instruction set with a source block, and estimates net free-space savings
+  after the inserted call, the stored shared block, and its return. Matches
+  are capped at 10 per source block and deduplicated globally. Functions with
+  an unresolved local reference are skipped. Red-zone detection is still a
+  stub and is not applied because the pass does not relocate code yet.
+  Replacement generation, reordering, function regeneration, and relinking
+  remain unimplemented. `run_optimizer` returns the matches; the temporary
+  `--report-outline-matches` CLI option prints them and exits 1 without
+  writing an output binary.
 - `codezip.py` parses the export, opens the binary, uplifts every function,
   recovers cross-references, runs the unreferenced-function pass, fills every
   reported range with `0xff`, and writes the modified binary to `--output`
@@ -241,7 +256,8 @@ Still stubs:
 
 - YAML parser
 - PE and raw binary backends
-- Outliner
+- Outliner replacement generation, instruction reordering, function
+  regeneration, and relinking (matching is implemented)
 - Verification passes
 
 Do not assume an unimplemented module works. Add tests as each stub is filled in.
