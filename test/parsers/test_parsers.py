@@ -159,3 +159,70 @@ def test_parse_re_file_rejects_non_ghidra_xml(tmp_path: Path) -> None:
 def test_parse_re_file_rejects_missing_file(tmp_path: Path) -> None:
     with pytest.raises(ParseError, match="does not exist"):
         parse_re_file(str(tmp_path / "missing.xml"))
+
+
+def _processor_export(tmp_path: Path, provider: str, name: str) -> Path:
+    path = tmp_path / "processor.xml"
+    path.write_text(
+        "<?xml version=\"1.0\"?>\n"
+        "<PROGRAM NAME=\"processor\">\n"
+        f"  <PROCESSOR NAME=\"{name}\" LANGUAGE_PROVIDER=\"{provider}\" "
+        "ENDIAN=\"little\" />\n"
+        "  <FUNCTIONS />\n"
+        "</PROGRAM>\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_ghidra_detects_riscv64(tmp_path: Path) -> None:
+    path = _processor_export(
+        tmp_path, "RISCV:LE:64:default:gcc", "RISCV"
+    )
+
+    result = parse_re_file(str(path))
+
+    assert result.isa == "riscv64"
+    assert result.functions == []
+
+
+def test_ghidra_detects_riscv32(tmp_path: Path) -> None:
+    path = _processor_export(
+        tmp_path, "RISCV:LE:32:default:gcc", "RISCV"
+    )
+
+    assert parse_re_file(str(path)).isa == "riscv32"
+
+
+def test_ghidra_accepts_address_space_qualified_addresses(
+    tmp_path: Path,
+) -> None:
+    # Ghidra 12.2 exports RISC-V addresses as ``ram:offset``.
+    path = tmp_path / "riscv.xml"
+    path.write_text(
+        "<?xml version=\"1.0\"?>\n"
+        "<PROGRAM NAME=\"riscv\">\n"
+        "  <PROCESSOR NAME=\"RISCV\" "
+        "LANGUAGE_PROVIDER=\"RISCV:LE:64:default:gcc\" ENDIAN=\"little\" />\n"
+        "  <MEMORY_MAP>\n"
+        "    <MEMORY_SECTION NAME=\".text\" START_ADDR=\"ram:00001000\" "
+        "LENGTH=\"0x20\" PERMISSIONS=\"rx\" />\n"
+        "  </MEMORY_MAP>\n"
+        "  <FUNCTIONS>\n"
+        "    <FUNCTION ENTRY_POINT=\"ram:00001000\" NAME=\"main\">\n"
+        "      <ADDRESS_RANGE START=\"ram:00001000\" "
+        "END=\"ram:0000100b\" />\n"
+        "    </FUNCTION>\n"
+        "  </FUNCTIONS>\n"
+        "</PROGRAM>\n",
+        encoding="utf-8",
+    )
+
+    result = parse_re_file(str(path))
+
+    assert result.isa == "riscv64"
+    assert result.warnings == []
+    assert len(result.functions) == 1
+    assert result.functions[0].name == "main"
+    assert result.functions[0].start_address == 0x1000
+    assert result.functions[0].length == 0xC

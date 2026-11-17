@@ -485,8 +485,6 @@ optimizers/outliner.py:
 
 
 
-test/verify.py:
-
     function run(Binary original, Binary modified, Uplifter, isa):
         4. end-to-end: build a large well-tested C project, run its test suite before and after
 

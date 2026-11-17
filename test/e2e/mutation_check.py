@@ -34,10 +34,12 @@ from elftools.elf.elffile import ELFFile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import grep_corpus  # noqa: E402
-from run_e2e import BINARIES, BUILD_ROOT, RESULT_DIR, SOURCE_DIR  # noqa: E402
+from run_e2e import BINARIES, X86_LAYOUT  # noqa: E402
 
-LOG_DIR = BUILD_ROOT / "logs" / "mutation"
-MUTANT_DIR = BUILD_ROOT / "mutants"
+SOURCE_DIR = X86_LAYOUT.source
+RESULT_DIR = X86_LAYOUT.results
+LOG_DIR = X86_LAYOUT.logs / "mutation"
+MUTANT_DIR = X86_LAYOUT.root / "mutants"
 RESULT_PATH = RESULT_DIR / "mutation.json"
 
 SCRIPTS = {
@@ -497,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
         print("preparing the pcre2grep library corpus")
         try:
             corpus = grep_corpus.build(
-                SOURCE_DIR, BUILD_ROOT / "grep-corpus", executable
+                SOURCE_DIR, X86_LAYOUT.root / "grep-corpus", executable
             )
         except (grep_corpus.CorpusError, subprocess.TimeoutExpired) as error:
             _fail(f"pcre2grep corpus: {error}")

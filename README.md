@@ -49,7 +49,6 @@ writes the modified binary.
 | `binary/elf.py` | ELF backend |
 | `binary/pe.py` | PE backend (stub) |
 | `binary/raw.py` | Raw binary backend (stub) |
-| `verify.py` | Static and dynamic equivalence checks |
 | `test/` | Grouped pytest suites, sample C input, NASM fixtures, and Ghidra exports |
 
 ## Input formats
@@ -113,6 +112,13 @@ network access, about 4 minutes):
 
 ```sh
 make -C test e2e
+```
+
+The fixture can also be cross-compiled for RISC-V and run under qemu. That
+target is baseline-only until a RISC-V ISA backend exists:
+
+```sh
+make -C test e2e-riscv
 ```
 
 To check that the suite would notice a corrupted rewrite, run the mutation

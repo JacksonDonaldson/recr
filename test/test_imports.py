@@ -8,7 +8,6 @@ def test_core_modules_import() -> None:
     import input_parser
     import ir
     import uplifter
-    import verify  # noqa: F401
 
 
 def test_x86_64_isa_is_registered() -> None:

@@ -71,6 +71,17 @@ def _detect_isa(root: ET.Element) -> str:
     if name in ("x86", "x86_64", "x86-64"):
         return "x86_64" if ("64" in name or "64" in address_model) else "x86"
 
+    if parts and parts[0] == "RISCV":
+        if "64" in parts or "rv64" in language.lower():
+            return "riscv64"
+        if "32" in parts or "rv32" in language.lower():
+            return "riscv32"
+    if name == "riscv":
+        if "64" in address_model:
+            return "riscv64"
+        if "32" in address_model:
+            return "riscv32"
+
     display_name = language or name or "<unknown>"
     raise ParseError(f"unsupported Ghidra processor: {display_name!r}")
 
@@ -188,8 +199,20 @@ def _parse_function(
 
 
 def _parse_hex(value: str) -> int:
-    """Parse a Ghidra numeric value, which is hexadecimal with or without ``0x``."""
+    """Parse a Ghidra numeric value.
+
+    Values are hexadecimal with or without ``0x``.  Some exports qualify an
+    address with its address space, for example ``ram:00011220``; the offset is
+    the virtual address in the binary image.
+    """
     text = value.strip()
     if not text:
         raise ValueError("empty address")
+
+    space, separator, offset = text.rpartition(":")
+    if separator:
+        if not space or not offset:
+            raise ValueError(f"invalid address {value!r}")
+        text = offset
+
     return int(text, 16)

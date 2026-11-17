@@ -20,7 +20,7 @@ GHIDRA_PROJECT_DIR ?= /tmp/opencode/ghidra_projects
 GHIDRA_PROJECT ?= codezip_sample
 GHIDRA_XML := $(BUILD_DIR)/sample_ghidra.xml
 
-.PHONY: all run ghidra-xml e2e e2e-mutation clean
+.PHONY: all run ghidra-xml e2e e2e-riscv e2e-mutation clean
 
 all: $(TARGET) $(RED_ZONE_OBJECT)
 
@@ -52,6 +52,12 @@ ghidra-xml: $(TARGET)
 # See test/e2e/README.md.
 e2e:
 	$(CURDIR)/e2e/run_e2e.py
+
+# RISC-V bring-up: cross-build pcre2, run the unmodified suite under qemu, and
+# export both binaries with Ghidra.  Codezip is skipped until a RISC-V ISA
+# backend exists.  Needs riscv64-linux-gnu-gcc and qemu-riscv64 on PATH.
+e2e-riscv:
+	$(CURDIR)/e2e/run_e2e.py --arch riscv64 --baseline-only
 
 # Opt-in mutation check: flip bytes in the codezipped binaries and require the
 # pcre2 suite to notice.  Needs the artifacts from `make e2e`.

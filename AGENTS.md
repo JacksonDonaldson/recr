@@ -20,8 +20,8 @@ suite against a clean checkout of the index when a change spans several files.
 
 When a change can alter the number of freed bytes (outlining, function removal,
 free-space placement, or stack analysis), measure the same cached pcre2 inputs
-before and after. Use `test/build/e2e/pcre2/{pcre2test,pcre2grep}` with the
-matching `test/build/e2e/results/<name>.xml`, run
+before and after. Use `test/build/e2e/x86_64/pcre2/{pcre2test,pcre2grep}` with
+the matching `test/build/e2e/x86_64/results/<name>.xml`, run
 `python codezip.py <binary> <xml> -o <output> --receipt <receipt>`, and sum the
 lengths in the receipt's `freed:` section. To measure the old code, create a
 detached worktree at the parent commit and run the same command there. If the
@@ -94,16 +94,19 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 | `gpu/` | Optional CUDA backend for whole-image range scans |
 | `optimizers/` | Function removal and outlining |
 | `binary/` | ELF, PE, and raw binary access |
-| `verify.py` | Static and dynamic equivalence checks |
 | `test/` | Grouped pytest suites, sample C input, NASM fixtures, Ghidra export |
-| `test/e2e/` | Opt-in pcre2 end-to-end codezip check |
+| `test/e2e/` | Opt-in pcre2 end-to-end codezip check and RISC-V baseline |
 
 ## Current state
 
 Implemented:
 
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
-  `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.
+  `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.  The
+  parser accepts address-space-qualified values such as `ram:00011220`, which
+  Ghidra 12.2 emits for RISC-V.  The processor language maps `RISCV:LE:64:*`
+  to `riscv64` and `RISCV:LE:32:*` to `riscv32`; `create_isa` still rejects
+  both until a RISC-V backend exists.
 - ELF access (`binary/elf.py`) using `pyelftools`: `PT_LOAD` virtual-to-file
   mapping, reads with BSS zero-fill, in-memory patching via
   `write(address, data)`, `write_to_disk(path)` (metadata fixups are currently
@@ -278,25 +281,37 @@ Implemented:
   and UTF modes to exercise the statically linked library; curated cases in
   `test/e2e/survivor_cases.json` cover rare subject escapes, compile-error
   paths, and default line-output paths. The corpus is filtered against a
-  reference binary and cached under `test/build/e2e/grep-corpus/`. The check
-  is opt-in, needs Ghidra and network access, and records the freed ranges and
-  byte count under `test/build/e2e/results/`. The verifier requires freed
-  ranges to be `0xff` and allows other changes only inside the receipt's
-  `modified` ranges. The built `pcre2test`/`pcre2grep` binaries are cached in
-  `test/build/e2e/baseline/`, and Ghidra exports are reused when their binary
-  and script hashes match, so only changed inputs are rebuilt or re-exported.
+  reference binary and cached under `test/build/e2e/x86_64/grep-corpus/`. The
+  check is opt-in, needs Ghidra and network access, and records the freed
+  ranges and byte count under `test/build/e2e/<arch>/results/`. The verifier
+  requires freed ranges to be `0xff` and allows other changes only inside the
+  receipt's `modified` ranges. The built `pcre2test`/`pcre2grep` binaries are
+  cached in `test/build/e2e/<arch>/baseline/`, and Ghidra exports are reused
+  when their binary and script hashes match, so only changed inputs are
+  rebuilt or re-exported.
   The current freed-byte breakdown is `pcre2test` 515 bytes in 63 ranges and
   `pcre2grep` 2146 bytes in 48 ranges (2661 bytes total). The pre-red-zone
   baseline was 360 and 2105 bytes (2465 total).
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
+- RISC-V bring-up target (`make -C test e2e-riscv`, or `run_e2e.py --arch
+  riscv64 --baseline-only`) cross-builds the same pcre2 fixture with
+  `riscv64-linux-gnu-gcc`, installs qemu wrappers so `make check` executes the
+  target ELF under `qemu-riscv64-static -L <sysroot>`, and requires the
+  unmodified suite to pass. It exports both binaries with Ghidra, verifies the
+  language is `RISCV`, and parses each export with the production parser, then
+  stops with `codezip: skipped` because there is no RISC-V ISA backend yet. The
+  cross toolchain and qemu are not vendored:
+  set `RISCV64_CC`, `RISCV64_QEMU`, and `RISCV64_SYSROOT`, or install
+  `gcc-riscv64-linux-gnu` and `qemu-user-static`.
 - Mutation sensitivity check (`test/e2e/mutation_check.py`, `make -C test
-  e2e-mutation`) flips random bytes in the cached codezipped binaries and runs
-  the matching pcre2 test script, plus the library corpus for `pcre2grep`. It
+  e2e-mutation`, native x86-64 only) flips random bytes in the cached
+  codezipped binaries and runs the matching pcre2 test script, plus the
+  library corpus for `pcre2grep`. It
   defaults to one executable byte per trial, 20 trials per binary, and a 40%
   minimum detection rate; `--region`, `--flips`, and `--trials` adjust the
   measurement. Per-trial logs and `mutation.json` go under
-  `test/build/e2e/`. The bulk corpus raises single-byte detection for
+  `test/build/e2e/x86_64/`. The bulk corpus raises single-byte detection for
   `pcre2grep` from roughly 22% to 52% before survivor triage. The 178 curated
   cases in `test/e2e/survivor_cases.json` come from three triaged samples:
   they catch 38 of 57 flips in the first, 18 of 42 in the second, and 122 of
@@ -358,7 +373,15 @@ Run the opt-in end-to-end pcre2 check (Ghidra, network on first run, about
 
 ```sh
 make -C test e2e
-# writes test/build/e2e/results/summary.json
+# writes test/build/e2e/x86_64/results/summary.json
+```
+
+Run the RISC-V baseline (needs `riscv64-linux-gnu-gcc` and `qemu-riscv64`;
+codezip itself is skipped until the ISA backend exists):
+
+```sh
+make -C test e2e-riscv
+# writes test/build/e2e/riscv64/results/summary.json
 ```
 
 ## Parser conventions

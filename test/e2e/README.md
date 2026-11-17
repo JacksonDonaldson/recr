@@ -12,6 +12,15 @@ actually notice a corrupted rewrite.
 make -C test e2e
 ```
 
+The same fixture can be cross-compiled for RISC-V and run under qemu. That
+target is baseline-only for now: it proves the unmodified suite passes and
+records the Ghidra exports, but skips codezip until a RISC-V ISA backend
+exists.
+
+```sh
+make -C test e2e-riscv
+```
+
 ## Prerequisites
 
 - Linux x86-64 with a C compiler, `make`, `git`, and autotools
@@ -19,12 +28,23 @@ make -C test e2e
 - Ghidra 12.2 with JDK 25, at `~/opt/ghidra` by default. Override the location
   with `GHIDRA_HOME`.
 - Network access the first time the source checkout is created.
+- For `--arch riscv64`: `riscv64-linux-gnu-gcc` and either
+  `qemu-riscv64-static` or `qemu-riscv64` on `PATH`, plus the matching
+  `/usr/riscv64-linux-gnu` sysroot. On Ubuntu:
+
+  ```sh
+  sudo apt install gcc-riscv64-linux-gnu qemu-user-static
+  ```
+
+  Override the defaults with `RISCV64_CC` (which may include compiler
+  arguments such as `--sysroot=...`), `RISCV64_QEMU`, and `RISCV64_SYSROOT`.
 
 ## What it does
 
 1. Clones `pcre2` tag `pcre2-10.49` (commit
-   `6f9d7c1373262c541324a16a358785b33ef116cf`) into `test/build/e2e/pcre2`.
-   A cached checkout at the wrong commit is replaced.
+   `6f9d7c1373262c541324a16a358785b33ef116cf`) into
+   `test/build/e2e/<arch>/pcre2`. A cached checkout at the wrong commit is
+   replaced.
 2. Configures and builds it with
 
    ```text
@@ -34,14 +54,21 @@ make -C test e2e
    LDFLAGS=-no-pie
    ```
 
-   The finished `pcre2test` and `pcre2grep` binaries are saved under
-   `test/build/e2e/baseline/`, keyed by the pinned commit, build flags, and
-   binary hashes. Later runs reuse them instead of rebuilding.
+   The finished `pcre2test`, `pcre2grep`, and `pcre2posix_test` binaries are
+   saved under `test/build/e2e/<arch>/baseline/`, keyed by the pinned commit,
+   target, build flags, and binary hashes. Later runs reuse them instead of
+   rebuilding. A cross build keeps the real ELF as `<name>.<arch>` and puts a
+   small qemu wrapper at `<name>`, so `make check` runs the target binaries
+   without binfmt registration.
 3. Runs `make check` as a baseline.
 4. Builds the `pcre2grep` library corpus (see below) and captures its output.
+   This step runs only for the native target.
 5. Exports `pcre2test` and `pcre2grep` with the repository's
    `ExportGhidraXml.java`, unless an export already matches the binary and
-   script hashes recorded in `test/build/e2e/results/ghidra-exports.json`.
+   script hashes recorded in
+   `test/build/e2e/<arch>/results/ghidra-exports.json`. It also verifies that
+   Ghidra selected a `RISCV` language for RISC-V and parses each export with
+   the production parser, recording the function count in the summary.
 6. Runs codezip on both binaries with `--receipt`.
 7. Checks that the output keeps the file size, fills the receipt's `freed`
    ranges with `0xff`, and only changes other bytes inside its `modified`
@@ -50,8 +77,9 @@ make -C test e2e
    again, and restores the originals even if either check fails.
 
 Logs, exports, receipts, and `summary.json` are written under
-`test/build/e2e/`. Remove that directory to force a fresh checkout, build, and
-Ghidra export.
+`test/build/e2e/<arch>/`. Remove that directory to force a fresh checkout,
+build, and Ghidra export. `--arch riscv64 --baseline-only` performs steps 1-3
+and 5, then records `codezip: skipped` in the summary.
 
 ## pcre2grep library corpus
 
@@ -70,7 +98,7 @@ cases (normal `-o` output, sometimes with an extra option such as `-v`,
 `-P`, or `-U`), 16 compile-error cases (run separately so one bad pattern does
 not abort the corpus), and 4 default-output cases (run without `-o`). Cases
 can also supply raw `subjects_hex` bytes. The result is
-cached under `test/build/e2e/grep-corpus/<digest>/`, keyed by the testdata,
+cached under `test/build/e2e/x86_64/grep-corpus/<digest>/`, keyed by the testdata,
 the reference binary, the curated cases, and the filter limits, so the build
 happens once per checkout. The bulk corpus has roughly 3,000 plain and 1,800
 UTF patterns over about 4,000 subject lines; running both modes takes roughly
@@ -83,9 +111,9 @@ codezipped `pcre2grep` to produce identical stdout, stderr, and exit status.
 ## Mutation sensitivity check
 
 A passing suite is only useful if it would notice a broken rewrite.
-`mutation_check.py` flips random bytes in the codezipped binaries and runs the
-matching pcre2 script (`RunTest` for `pcre2test`; `RunGrepTest` plus the
-library corpus for `pcre2grep`):
+`mutation_check.py` operates on the native x86-64 build. It flips random bytes
+in the codezipped binaries and runs the matching pcre2 script (`RunTest` for
+`pcre2test`; `RunGrepTest` plus the library corpus for `pcre2grep`):
 
 ```sh
 make -C test e2e-mutation
@@ -119,7 +147,7 @@ Because each `pcre2grep` trial also runs the corpus, a 20-trial run takes
 several minutes. The first run also pays the one-time corpus build.
 
 The script writes per-trial logs for detected mutations, plus a JSON record of
-every mutation and outcome, under `test/build/e2e/`. It requires the
+every mutation and outcome, under `test/build/e2e/x86_64/`. It requires the
 `pcre2test.codezip` and `pcre2grep.codezip` artifacts from `make -C test e2e`.
 
 ## Build flag notes
@@ -138,9 +166,9 @@ after the rewrite:
 
 | Binary | Freed bytes | Freed ranges |
 | --- | ---: | ---: |
-| `pcre2test` | 61 | 4 |
-| `pcre2grep` | 1881 | 23 |
-| **Total** | **1942** | **27** |
+| `pcre2test` | 515 | 63 |
+| `pcre2grep` | 2146 | 48 |
+| **Total** | **2661** | **111** |
 
 The exact counts depend on the compiler and glibc, so the script records them
 in `summary.json` and asserts only that the rewrite freed at least one byte and
