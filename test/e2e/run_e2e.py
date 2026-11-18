@@ -6,10 +6,8 @@ functions with Ghidra, run its test suite, rewrite the test executables with
 codezip, and require the suite to pass again.  The run is opt-in because it
 needs network access on the first invocation and takes several minutes.
 
-The native target is x86-64.  ``--arch riscv64`` cross-compiles the same
-fixture and runs it under qemu; until a RISC-V ISA backend exists, that target
-must be run with ``--baseline-only``, which proves the unmodified suite passes
-and records the Ghidra exports for the decoder work.
+The native target is x86-64. ``--arch riscv64`` cross-compiles the same
+fixture and runs both the original and rewritten executables under QEMU.
 
 Run it with ``make -C test e2e`` or ``make -C test e2e-riscv``.
 """
@@ -72,7 +70,6 @@ class Target:
     compiler: str
     runner: str | None
     sysroot: Path | None
-    supports_codezip: bool
     native: bool
 
     @property
@@ -134,7 +131,6 @@ def _target(arch: str) -> Target:
             compiler=os.environ.get("CC", "cc"),
             runner=None,
             sysroot=None,
-            supports_codezip=True,
             native=True,
         )
 
@@ -157,7 +153,6 @@ def _target(arch: str) -> Target:
             ),
             runner=qemu,
             sysroot=sysroot,
-            supports_codezip=False,
             native=False,
         )
 
@@ -662,7 +657,7 @@ def _read_receipt(
 
 def _verify_codezipped(
     binary: Path, output: Path, receipt: Path
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Check output changes are confined to the receipt ranges."""
     freed, modified_ranges = _read_receipt(receipt)
     original = binary.read_bytes()
@@ -719,7 +714,7 @@ def _verify_codezipped(
                 f"{output} changes bytes outside the ranges in {receipt}"
             )
 
-    return total, len(freed)
+    return total, len(freed), len(modified_ranges)
 
 
 def _codezip_all(layout: Layout, target: Target) -> dict[str, dict[str, int]]:
@@ -747,12 +742,15 @@ def _codezip_all(layout: Layout, target: Target) -> dict[str, dict[str, int]]:
             logs=layout.logs,
         )
 
-        freed_bytes, freed_ranges = _verify_codezipped(
+        freed_bytes, freed_ranges, modified_ranges = _verify_codezipped(
             binary, output, receipt
         )
+        if target.name == RISCV64 and not modified_ranges:
+            _fail(f"{name}: no RISC-V outlines were written")
         stats[name] = {
             "freed_bytes": freed_bytes,
             "freed_ranges": freed_ranges,
+            "modified_ranges": modified_ranges,
             "mapped_bytes": sum(
                 size for _, size in Binary(binary).mapped_ranges()
             ),
@@ -769,7 +767,7 @@ def _sha256(path: Path) -> str:
 
 
 def _grep_corpus_baseline(
-    layout: Layout,
+    layout: Layout, target: Target,
 ) -> tuple[grep_corpus.Corpus, dict[str, grep_corpus.RunResult]]:
     print("building the pcre2grep library corpus")
     try:
@@ -777,6 +775,7 @@ def _grep_corpus_baseline(
             layout.source,
             layout.root / "grep-corpus",
             layout.source / "pcre2grep",
+            reference_image=None if target.is_native else _real_binary(layout, target, "pcre2grep"),
         )
         expected = grep_corpus.capture(layout.source / "pcre2grep", corpus)
     except (grep_corpus.CorpusError, subprocess.TimeoutExpired) as error:
@@ -858,7 +857,7 @@ def _write_summary(
     if functions is not None:
         summary["parsed_functions"] = functions
     if stats is None:
-        summary["codezip"] = "skipped: no ISA backend for this target"
+        summary["codezip"] = "skipped: baseline-only run"
     else:
         total = sum(entry["freed_bytes"] for entry in stats.values())
         if total <= 0:
@@ -886,7 +885,7 @@ def _write_summary(
     if stats is None:
         print("End-to-end baseline result")
         print(f"  {target.name}: unmodified pcre2 suite passed")
-        print("  codezip: skipped (no ISA backend for this target)")
+        print("  codezip: skipped (baseline-only run)")
     else:
         print("End-to-end codezip result")
         for name, entry in stats.items():
@@ -922,12 +921,6 @@ def main(argv: list[str] | None = None) -> int:
 
     target = _target(args.arch)
     layout = _layout(target.name)
-    if not target.supports_codezip and not args.baseline_only:
-        _fail(
-            f"codezip has no {target.name} ISA backend yet; "
-            "rerun with --baseline-only"
-        )
-
     print("Running the pinned pcre2 end-to-end check; expect several minutes.")
     if args.baseline_only:
         print(
@@ -942,7 +935,7 @@ def main(argv: list[str] | None = None) -> int:
     corpus: grep_corpus.Corpus | None = None
     corpus_expected: dict[str, grep_corpus.RunResult] | None = None
     if not args.baseline_only:
-        corpus, corpus_expected = _grep_corpus_baseline(layout)
+        corpus, corpus_expected = _grep_corpus_baseline(layout, target)
 
     languages: dict[str, str] = {}
     functions: dict[str, int] = {}

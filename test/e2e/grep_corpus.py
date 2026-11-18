@@ -440,6 +440,8 @@ def build(
     source_dir: Path,
     cache_root: Path,
     reference: Path,
+    *,
+    reference_image: Path | None = None,
 ) -> Corpus:
     """Return a cached corpus, creating it if necessary.
 
@@ -460,6 +462,7 @@ def build(
     ).encode("utf-8")
     testdata = [(path.name.encode(), path.read_bytes()) for path in files]
     reference_bytes = reference.read_bytes()
+    image_bytes = [reference_image.read_bytes()] if reference_image is not None else []
     limits = {
         "match_limit": MATCH_LIMIT,
         "depth_limit": DEPTH_LIMIT,
@@ -469,7 +472,7 @@ def build(
     key = _digest(
         [CORPUS_VERSION.encode()]
         + [part for _, part in testdata]
-        + [reference_bytes, curated_bytes]
+        + [reference_bytes, *image_bytes, curated_bytes]
         + [json.dumps(limits, sort_keys=True).encode()]
     )
     root = cache_root / key[:16]

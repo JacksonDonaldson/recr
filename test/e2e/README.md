@@ -12,10 +12,8 @@ actually notice a corrupted rewrite.
 make -C test e2e
 ```
 
-The same fixture can be cross-compiled for RISC-V and run under qemu. That
-target is baseline-only for now: it proves the unmodified suite passes and
-records the Ghidra exports, but skips codezip until a RISC-V ISA backend
-exists.
+The RISC-V target cross-compiles the same fixture for RV64 and runs the
+original and codezipped executables under QEMU.
 
 ```sh
 make -C test e2e-riscv
@@ -62,7 +60,7 @@ make -C test e2e-riscv
    without binfmt registration.
 3. Runs `make check` as a baseline.
 4. Builds the `pcre2grep` library corpus (see below) and captures its output.
-   This step runs only for the native target.
+   Cross builds include the real target ELF in the corpus cache key.
 5. Exports `pcre2test` and `pcre2grep` with the repository's
    `ExportGhidraXml.java`, unless an export already matches the binary and
    script hashes recorded in
@@ -72,7 +70,7 @@ make -C test e2e-riscv
 6. Runs codezip on both binaries with `--receipt`.
 7. Checks that the output keeps the file size, fills the receipt's `freed`
    ranges with `0xff`, and only changes other bytes inside its `modified`
-   ranges.
+   ranges. Both RV64 programs must report modified ranges from outlining.
 8. Installs the codezipped binaries, runs `make check` and the library corpus
    again, and restores the originals even if either check fails.
 
@@ -98,7 +96,7 @@ cases (normal `-o` output, sometimes with an extra option such as `-v`,
 `-P`, or `-U`), 16 compile-error cases (run separately so one bad pattern does
 not abort the corpus), and 4 default-output cases (run without `-o`). Cases
 can also supply raw `subjects_hex` bytes. The result is
-cached under `test/build/e2e/x86_64/grep-corpus/<digest>/`, keyed by the testdata,
+cached under `test/build/e2e/<arch>/grep-corpus/<digest>/`, keyed by the testdata,
 the reference binary, the curated cases, and the filter limits, so the build
 happens once per checkout. The bulk corpus has roughly 3,000 plain and 1,800
 UTF patterns over about 4,000 subject lines; running both modes takes roughly

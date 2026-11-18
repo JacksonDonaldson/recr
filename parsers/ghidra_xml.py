@@ -72,11 +72,13 @@ def _detect_isa(root: ET.Element) -> str:
         return "x86_64" if ("64" in name or "64" in address_model) else "x86"
 
     if parts and parts[0] == "RISCV":
-        if "64" in parts or "rv64" in language.lower():
-            return "riscv64"
-        if "32" in parts or "rv32" in language.lower():
-            return "riscv32"
+        if len(parts) >= 4 and parts[1] == "LE" and parts[3] == "DEFAULT":
+            if parts[2] in ("32", "64"):
+                return f"riscv{parts[2]}"
+        raise ParseError(f"unsupported Ghidra processor: {language!r}")
     if name == "riscv":
+        if (processor.get("ENDIAN") or "little").lower() != "little":
+            raise ParseError(f"unsupported Ghidra processor endianness: {processor.get('ENDIAN')!r}")
         if "64" in address_model:
             return "riscv64"
         if "32" in address_model:

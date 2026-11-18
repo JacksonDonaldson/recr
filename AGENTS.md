@@ -104,9 +104,8 @@ Implemented:
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.  The
   parser accepts address-space-qualified values such as `ram:00011220`, which
-  Ghidra 12.2 emits for RISC-V.  The processor language maps `RISCV:LE:64:*`
-  to `riscv64` and `RISCV:LE:32:*` to `riscv32`; `create_isa` still rejects
-  both until a RISC-V backend exists.
+  Ghidra 12.2 emits for RISC-V. The generic little-endian RISC-V languages
+  select the RV32 or RV64 implementation.
 - ELF access (`binary/elf.py`) using `pyelftools`: `PT_LOAD` virtual-to-file
   mapping, reads with BSS zero-fill, in-memory patching via
   `write(address, data)`, `write_to_disk(path)` (metadata fixups are currently
@@ -153,6 +152,16 @@ Implemented:
   not pointer-aligned are rejected. The red-zone verdict and block-entry
   states are cached per function for the planning pass. The outliner drops
   only the unsafe source sites and recomputes the match's savings.
+- `isa/riscv/` implements little-endian RV32 and RV64 with Ghidra 12.2 SLEIGH.
+  It decodes standard and compressed instructions, tracks ABI register, RAM,
+  CSR and reservation state, relocates direct branches and calls, and
+  preserves AUIPC results when the new displacement fits. Missing P-code
+  yields opaque effects. The mapped-image scan recovers pointers assembled
+  across instructions, including GP-relative references. Outlining uses
+  the alternate link register t0 without adjusting the stack. Backward CFG
+  liveness checks the reordered suffix at every site, and functions with
+  LR/SC are excluded. GNU binutils fixtures check state, malformed input,
+  relocation, link liveness, and exact CLI output.
 - `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
   constructors, decision trees, context changes, and P-code templates. The
   x86-64 decoder recovers modified and source register/flag/memory states,
@@ -294,16 +303,12 @@ Implemented:
   baseline was 360 and 2105 bytes (2465 total).
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
-- RISC-V bring-up target (`make -C test e2e-riscv`, or `run_e2e.py --arch
-  riscv64 --baseline-only`) cross-builds the same pcre2 fixture with
-  `riscv64-linux-gnu-gcc`, installs qemu wrappers so `make check` executes the
-  target ELF under `qemu-riscv64-static -L <sysroot>`, and requires the
-  unmodified suite to pass. It exports both binaries with Ghidra, verifies the
-  language is `RISCV`, and parses each export with the production parser, then
-  stops with `codezip: skipped` because there is no RISC-V ISA backend yet. The
-  cross toolchain and qemu are not vendored:
-  set `RISCV64_CC`, `RISCV64_QEMU`, and `RISCV64_SYSROOT`, or install
-  `gcc-riscv64-linux-gnu` and `qemu-user-static`.
+- `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,
+  including receipt verification, the original and rewritten `make check`,
+  and the plain and UTF corpus. RV64 frees 1640 bytes in 177 ranges from
+  `pcre2test` and 2654 bytes in 91 ranges from `pcre2grep` (4294 total).
+  The RV64 pre-outlining counts were 112 and 2056 bytes (2168 total).
+  The x86-64 counts above are identical before and after RISC-V outlining.
 - Mutation sensitivity check (`test/e2e/mutation_check.py`, `make -C test
   e2e-mutation`, native x86-64 only) flips random bytes in the cached
   codezipped binaries and runs the matching pcre2 test script, plus the
@@ -346,6 +351,9 @@ Use NASM 2.16.02 or newer. The corpus is generated with NASM 3.02; NASM
 2.16.01 emits PTWRITE without the mandatory `F3` prefix (see
 `other_peoples_bugs.md`).
 
+The RISC-V decoder tests require `binutils-riscv64-linux-gnu`, which can
+assemble and link both RV32 and RV64 fixtures.
+
 Build and run the sample ELF:
 
 ```sh
@@ -376,8 +384,9 @@ make -C test e2e
 # writes test/build/e2e/x86_64/results/summary.json
 ```
 
-Run the RISC-V baseline (needs `riscv64-linux-gnu-gcc` and `qemu-riscv64`;
-codezip itself is skipped until the ISA backend exists):
+Run the RISC-V end-to-end check with `riscv64-linux-gnu-gcc`, QEMU, and the
+matching sysroot. The runner accepts `RISCV64_CC`, `RISCV64_QEMU`, and
+`RISCV64_SYSROOT` overrides.
 
 ```sh
 make -C test e2e-riscv

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import io
 from pathlib import Path
 import shutil
@@ -10,6 +11,7 @@ import struct
 
 from elftools.common.exceptions import ELFError as PyElfError
 from elftools.elf.elffile import ELFFile
+from elftools.elf.sections import SymbolTableSection
 
 from binary.binary import Binary
 
@@ -124,6 +126,17 @@ class ELF(Binary):
 
     def image_revision(self) -> int:
         return self._revision
+
+    @lru_cache(maxsize=16)
+    def symbol_address(self, name: str) -> int | None:
+        with io.BytesIO(self._data) as stream:
+            elf = ELFFile(stream)
+            for section in elf.iter_sections():
+                if isinstance(section, SymbolTableSection):
+                    for symbol in section.get_symbol_by_name(name) or ():
+                        if symbol['st_shndx'] != 'SHN_UNDEF':
+                            return int(symbol['st_value'])
+        return None
 
     def read(self, address: int, length: int) -> bytes:
         if length < 0:

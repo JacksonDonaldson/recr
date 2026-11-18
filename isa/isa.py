@@ -111,12 +111,20 @@ class ISA(ABC):
                 ):
                     yield address, pointer.value
 
-    @abstractmethod
+    def iter_address_references(
+        self, binary: "Binary", start: int, end: int, targets: AbstractSet[int],
+    ) -> Iterator[tuple[int, int]]:
+        """Yield references formed by architecture-specific instruction sequences."""
+        return iter(())
+
     def is_outlinable(self, instruction: Instruction) -> bool:
         """Return whether ``instruction`` may be moved into an outlined block."""
-        raise NotImplementedError
+        return False
 
-    @abstractmethod
+    def can_reorder_across(self, instruction: Instruction) -> bool:
+        """Return whether dependency analysis may move code across this instruction."""
+        return True
+
     def add_extra_stack_space(
         self, instruction: Instruction, pointer_size: int
     ) -> Instruction:
@@ -127,26 +135,23 @@ class ISA(ABC):
         amount.  Raise :class:`ValueError` if the instruction cannot be
         re-encoded in place without changing its length or semantics.
         """
-        raise NotImplementedError
+        raise ValueError(f"outlining is disabled for {self.name}")
 
-    @abstractmethod
     def make_call_instruction(self) -> Instruction:
         """Return a direct-call placeholder for an outline source site.
 
         The returned instruction is not yet targeted; the outliner patches it
         with :meth:`set_instruction_target` after placing the shared block.
         """
-        raise NotImplementedError
+        raise ValueError(f"outlining is disabled for {self.name}")
 
-    @abstractmethod
     def make_return_instruction(self) -> Instruction:
         """Return a return instruction for the end of a shared block."""
-        raise NotImplementedError
+        raise ValueError(f"outlining is disabled for {self.name}")
 
-    @abstractmethod
     def uses_red_zone(self, function: "Function") -> bool:
         """Return whether ``function`` accesses memory below the stack pointer."""
-        raise NotImplementedError
+        return False
 
     def can_outline_region(
         self,
@@ -156,7 +161,7 @@ class ISA(ABC):
         window_start: int,
         window_length: int,
     ) -> bool:
-        """Return whether an outline call at the window is stack-safe.
+        """Return whether the call and return preserve state at the window.
 
         ``instructions`` is the block's instruction order after outlining
         reorders it, and the window is ``instructions[window_start:...]``.
@@ -197,12 +202,10 @@ class ISA(ABC):
         """Interpret bytes at ``offset`` as 64-bit and 32-bit addresses."""
         raise NotImplementedError
 
-    @abstractmethod
     def call_instruction_length(self) -> int:
         """Return the length of the call emitted at an outline source site."""
-        raise NotImplementedError
+        raise ValueError(f"outlining is disabled for {self.name}")
 
-    @abstractmethod
     def ret_instruction_length(self) -> int:
         """Return the length of the return emitted at an outline target site."""
-        raise NotImplementedError
+        raise ValueError(f"outlining is disabled for {self.name}")

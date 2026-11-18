@@ -33,6 +33,7 @@ Types:
             nop
             arithmetic
             rip_relative
+            pc_relative     # forms a PC-relative address without jumping
             outline_result_call
 
         BasicBlock outline_target
@@ -91,6 +92,7 @@ Canonical encoding:
 ISA contract:
 
     class ISA:
+        supports_outlining: bool
         function disassemble(binary, address) -> Instruction
         function decode_flows(binary, address) -> DecodedFlow
         function decode_range(binary, start, end) -> Iterator[DecodedFlow | None]
@@ -98,6 +100,7 @@ ISA contract:
                 -> Iterator[DecodedFlow]
         pointer_size: int
         function is_outlinable(instruction) -> bool
+        function can_reorder_across(instruction) -> bool
         function add_extra_stack_space(instruction, pointer_size) -> Instruction
         function make_call_instruction() -> Instruction
         function make_return_instruction() -> Instruction
@@ -111,9 +114,13 @@ ISA contract:
         function try_interpret_as_pointer(binary, offset) -> set[Address]
         function iter_pointer_references(binary, start, end, targets)
                 -> Iterator[(address, target)]
+        function iter_address_references(binary, start, end, targets)
+                -> Iterator[(address, target)]
 
-        pointer_size is the size added to RSP-relative operands when a block is
-        moved behind an outlining call, and the size of an implicit stack push.
+        pointer_size is the architecture's native pointer width in bytes. On
+        x86-64 it is also the size of the implicit stack push at an outline call.
+        An ISA opts in to outlining with supports_outlining after implementing
+        its call, return, and site-safety rules.
 
         make_call_instruction returns an untargeted direct call with the
         instruction's final length.  make_return_instruction returns the return
@@ -127,7 +134,7 @@ ISA contract:
 
         can_outline_region decides whether replacing
         instructions[window_start:window_start + window_length] with a call can
-        be done without changing behavior when the function uses the red zone.
+        be done without changing behavior.
         instructions is the block's instruction order after the outliner
         reorders it.  The default implementation returns true.  An ISA that
         pushes a return address over the red zone overrides it to prove that
@@ -137,6 +144,17 @@ ISA contract:
         Instructions that copy RSP or RBP into another register, or compute an
         RSP- or RBP-relative address with LEA, reject the site because the
         analysis cannot follow the alias.
+
+        On RISC-V the call writes the alternate link register x5 (t0) and
+        leaves SP alone. The register must be dead at the reordered window's
+        exit and the window must neither read nor write it. Functions with
+        LR/SC instructions are ineligible because a new jump can change the
+        reservation sequence's forward-progress guarantees.
+
+        can_reorder_across allows architectures to mark barriers in addition
+        to the outliner's register and memory dependency checks. RISC-V keeps
+        calls, atomics, system instructions, and PC-relative instructions in
+        place during block reordering.
 
         try_interpret_as_pointer reads little-endian pointer-sized and 32-bit
         values at offset, and returns every Address that could be read.  A
@@ -164,6 +182,12 @@ ISA contract:
         [start, end) whose pointer readings include a value in targets.  It
         matches calling try_interpret_as_pointer at each address.
 
+        iter_address_references yields (address, target) for target addresses
+        formed across instruction sequences in [start, end). The source is
+        the instruction that materializes or consumes the address. For example,
+        RISC-V uses LUI or AUIPC to form a base and a separate instruction to
+        apply the signed low offset. A scanner may overestimate references.
+
         disassemble fills flows_to:
             straight-line instruction: [address + length]
             direct conditional branch: [target, address + length]
@@ -174,11 +198,19 @@ ISA contract:
             return: []
             flows_from is left empty; the code-flow recovery pass fills it.
 
-        disassemble models unknown transfers conservatively:
+        disassemble models unknown transfers conservatively using the
+        architecture's calling convention. On x86-64:
             calls depend on the System V AMD64 argument state (RDI, RSI, RDX,
             RCX, R8, R9, ZMM0-ZMM7, RAX for varargs, RSP, and memory)
             calls, returns, and indirect branches clobber every tracked state
             space except callee-saved RBX, RBP, R12-R15
+
+        On RISC-V, state uses ABI register names at their full width. The
+        immutable zero register contributes no state. CSR accesses share one
+        csreg space and alias floating-point status and rounding state. Calls
+        conservatively depend on integer and floating-point argument registers,
+        SP, GP, TP, and memory. Unknown transfers preserve the integer
+        callee-saved registers, SP, GP, and TP.
 
         is_outlinable returns false if:
             flows are present and flows_to is not a single fallthrough edge
@@ -198,6 +230,9 @@ ISA contract:
         relocate_instruction preserves the instruction's absolute target(s):
             a moved call still calls the same address, and a moved rip-relative
             load still reads the same location.  It may return a different length.
+            RISC-V re-encodes B, J, CB, and CJ displacements from the current
+            PC. AUIPC can move only when its original result remains encodable
+            in the existing upper-immediate field, without changing a consumer.
 
         set_instruction_target returns the re-encoded instruction and fails if the
             new target does not fit (e.g. jmp rel8 out of range).

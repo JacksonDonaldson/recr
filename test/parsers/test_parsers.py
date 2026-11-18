@@ -194,6 +194,13 @@ def test_ghidra_detects_riscv32(tmp_path: Path) -> None:
     assert parse_re_file(str(path)).isa == "riscv32"
 
 
+@pytest.mark.parametrize("language", ["RISCV:BE:64:default:gcc", "RISCV:LE:32:AndeStar_v5:gcc"])
+def test_ghidra_rejects_unsupported_riscv_language(tmp_path: Path, language: str) -> None:
+    path = _processor_export(tmp_path, language, "RISCV")
+    with pytest.raises(ParseError, match="unsupported Ghidra processor"):
+        parse_re_file(str(path))
+
+
 def test_ghidra_accepts_address_space_qualified_addresses(
     tmp_path: Path,
 ) -> None:

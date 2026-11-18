@@ -53,11 +53,10 @@ ghidra-xml: $(TARGET)
 e2e:
 	$(CURDIR)/e2e/run_e2e.py
 
-# RISC-V bring-up: cross-build pcre2, run the unmodified suite under qemu, and
-# export both binaries with Ghidra.  Codezip is skipped until a RISC-V ISA
-# backend exists.  Needs riscv64-linux-gnu-gcc and qemu-riscv64 on PATH.
+# RISC-V end-to-end check. The original and codezipped executables run under
+# QEMU. Needs riscv64-linux-gnu-gcc and qemu-riscv64 on PATH.
 e2e-riscv:
-	$(CURDIR)/e2e/run_e2e.py --arch riscv64 --baseline-only
+	$(CURDIR)/e2e/run_e2e.py --arch riscv64
 
 # Opt-in mutation check: flip bytes in the codezipped binaries and require the
 # pcre2 suite to notice.  Needs the artifacts from `make e2e`.

@@ -75,6 +75,7 @@ class InstructionType(Enum):
     ARITHMETIC = auto()
     RIP_RELATIVE = auto()
     OUTLINE_RESULT_CALL = auto()
+    PC_RELATIVE = auto()  # Forms a PC-relative data address without branching.
 
 
 @dataclass

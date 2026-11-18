@@ -491,6 +491,7 @@ def convert_basic_block_to_given_instruction_order_and_minimize_instruction_dist
     basic_block: BasicBlock,
     instructions_to_move: list[Instruction],
     target_instruction_order: list[Instruction],
+    isa: "ISA | None" = None,
 ) -> tuple[BasicBlock, int] | None:
     """Reorder instructions while keeping the target instructions adjacent.
 
@@ -537,7 +538,7 @@ def convert_basic_block_to_given_instruction_order_and_minimize_instruction_dist
                 neighbor = items[group_start - 1]
                 if id(neighbor) in target_id_set:
                     return None
-                if can_swap_instruction(group, neighbor):
+                if can_swap_instruction(group, neighbor, isa):
                     items[group_start - 1 : group_end + 1] = (
                         group + [neighbor]
                     )
@@ -551,7 +552,7 @@ def convert_basic_block_to_given_instruction_order_and_minimize_instruction_dist
             # instructions to the far side so the target chain is adjacent.
             for index in range(len(group) - 1, 0, -1):
                 if not can_swap_instruction(
-                    [group[index]], group[index - 1]
+                    [group[index]], group[index - 1], isa
                 ):
                     return None
                 group[index - 1], group[index] = (
@@ -567,7 +568,7 @@ def convert_basic_block_to_given_instruction_order_and_minimize_instruction_dist
                 neighbor = items[group_end + 1]
                 if id(neighbor) in target_id_set:
                     return None
-                if can_swap_instruction(group, neighbor):
+                if can_swap_instruction(group, neighbor, isa):
                     items[group_start : group_end + 2] = [neighbor] + group
                     group_start += 1
                     group_end += 1
@@ -584,12 +585,18 @@ def convert_basic_block_to_given_instruction_order_and_minimize_instruction_dist
 
 
 def can_swap_instruction(
-    group_to_move: list[Instruction], to_swap_with: Instruction
+    group_to_move: list[Instruction], to_swap_with: Instruction,
+    isa: "ISA | None" = None,
 ) -> bool:
     """Return whether two instruction groups can be reordered safely."""
     if _is_non_fallthrough(to_swap_with):
         return False
     if any(_is_non_fallthrough(instruction) for instruction in group_to_move):
+        return False
+    if isa is not None and not all(
+        isa.can_reorder_across(instruction)
+        for instruction in (*group_to_move, to_swap_with)
+    ):
         return False
 
     group_modifies = _state_set(group_to_move, modifies=True)
@@ -683,7 +690,7 @@ def _plan_for_template(
             block.instructions[index] for index in source_indices
         ]
         converted = convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance(
-            block, instructions_to_move, selected
+            block, instructions_to_move, selected, isa
         )
         if converted is None:
             if block is template:
@@ -867,9 +874,7 @@ def _layout_function(
                     )
             else:
                 try:
-                    new_instruction = isa.relocate_instruction(
-                        instruction, address
-                    )
+                    new_instruction = _relocate(isa, instruction, address)
                 except ValueError:
                     LOGGER.debug(
                         "outliner cannot relocate %s at %#x to %#x",
@@ -1062,9 +1067,7 @@ def _try_place(
         failed = False
         for instruction in plan.extracted_instructions:
             try:
-                new_instruction = isa.relocate_instruction(
-                    instruction, current
-                )
+                new_instruction = _relocate(isa, instruction, current)
             except ValueError:
                 failed = True
                 break
@@ -1384,10 +1387,16 @@ def _outlinable_encoding(
 def _canonical_encoding(isa: "ISA", instruction: Instruction) -> bytes | None:
     """Return position-invariant bytes for ``instruction``, or ``None``."""
     try:
-        relocated = isa.relocate_instruction(instruction, _CANONICAL_ADDRESS)
+        relocated = _relocate(isa, instruction, _CANONICAL_ADDRESS)
     except ValueError:
         return None
     return relocated.original_data
+
+
+def _relocate(isa: "ISA", instruction: Instruction, address: int) -> Instruction:
+    if not isa.can_encode(instruction, address):
+        raise ValueError(f"cannot encode instruction at {address:#x}")
+    return isa.relocate_instruction(instruction, address)
 
 
 def _encoded_instructions(

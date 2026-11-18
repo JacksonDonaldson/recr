@@ -1,0 +1,2 @@
+# Compiled SLEIGH specifications must be stored byte-for-byte.
+*.sla binary

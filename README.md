@@ -114,8 +114,8 @@ network access, about 4 minutes):
 make -C test e2e
 ```
 
-The fixture can also be cross-compiled for RISC-V and run under qemu. That
-target is baseline-only until a RISC-V ISA backend exists:
+The full check also runs on RV64 under QEMU. The little-endian RV32 and RV64
+backends support function removal, instruction relocation, and outlining.
 
 ```sh
 make -C test e2e-riscv

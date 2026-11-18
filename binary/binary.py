@@ -71,6 +71,10 @@ class Binary(ABC):
         """Return a counter that changes whenever the image is patched."""
         return 0
 
+    def symbol_address(self, name: str) -> int | None:
+        """Return the virtual address of a defined symbol, if available."""
+        return None
+
     @abstractmethod
     def read(self, address: int, length: int) -> bytes:
         """Read ``length`` bytes at virtual ``address``."""

@@ -59,3 +59,19 @@ The corpus test compares the decoder against NASM's original and relocated
 encodings. Keeping the five entries as strict `xfail` preserves the evidence
 and makes the recovery condition explicit: remove the corresponding entry from
 `test/isa/known_gaps.py` when the specification is fixed.
+
+## Ghidra 12.2 RISC-V SLEIGH
+
+GNU binutils 2.42 assembles `fclass.s a0,fa1` as `53 95 05 e0`.
+Ghidra's `riscv.rv32f.sinc` emits a copy of `fa1` into a unique P-code
+temporary. Its template has no write to `a0`, which must receive the
+classification mask. The RV32 and RV64 backends explicitly record that
+destination. `test_pinned_ghidra_fclass_models_destination` checks the original
+template and remains a strict expected failure.
+
+GNU binutils 2.42 encodes `c.jalr a1` as `82 95`. Ghidra's
+`riscv.rvc.sinc` calls through the unmasked source register. The RISC-V
+compressed instruction inherits JALR's bit-zero clearing, so a source value
+of `0x8013` must transfer to `0x8012`. The address scanner applies the mask.
+`test_pinned_ghidra_compressed_jalr_masks_target` checks the original template
+and remains a strict expected failure.

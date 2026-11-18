@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from itertools import chain
 from typing import TYPE_CHECKING
 
 from ir import (
@@ -90,8 +91,9 @@ class Uplifter:
         }
         for start, size in sorted(self.binary.mapped_ranges()):
             end = start + size
-            for address, target in self.isa.iter_pointer_references(
-                self.binary, start, end, targets
+            for address, target in chain(
+                self.isa.iter_pointer_references(self.binary, start, end, targets),
+                self.isa.iter_address_references(self.binary, start, end, targets),
             ):
                 function = self.function_map.get(Address.absolute(target))
                 if function is None:

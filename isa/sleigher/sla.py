@@ -197,6 +197,7 @@ OP_CALL = 7
 OP_CALLIND = 8
 OP_CALLOTHER = 9
 OP_RETURN = 10
+OP_INT_AND = 27
 OP_BUILD = 60
 
 FLAG_REGISTERS = {
@@ -1282,6 +1283,10 @@ class _Interner:
 class SlaSpec:
     """A decoded SLEIGH specification with instruction-resolution helpers."""
 
+    _callee_saved_registers = _CALLEE_SAVED_REGISTERS
+    _call_argument_registers = _CALL_ARGUMENT_REGISTERS
+    _opaque_transfer_mnemonics = _OPAQUE_TRANSFER_MNEMONICS
+
     # Decoding the same bytes in the same context always yields the same
     # constructor tree and state effects, so both are cached.  The bound keeps
     # memory proportional to the number of distinct encodings actually seen.
@@ -1309,6 +1314,7 @@ class SlaSpec:
                 pass
         else:
             self.__dict__.update(cached)
+        self._build_register_canonicalization()
         self._resolve_cached = lru_cache(maxsize=self._DECODE_CACHE_LIMIT)(
             self._resolve_uncached
         )
@@ -1355,7 +1361,6 @@ class SlaSpec:
             for _, symbol in sorted(self.symbols.items())
             if symbol.kind == E_USEROP_HEAD
         ]
-        self._build_register_canonicalization()
         self._parse_subtables()
 
         self.root_subtable = next(
@@ -1481,9 +1486,27 @@ class SlaSpec:
 
     def _build_register_canonicalization(self) -> None:
         for varnode in self.varnodes.values():
-            parent_name = _canonical_register_parent(varnode.name)
+            parent_name = self._register_parent(varnode.name)
             parent = self._varnodes_by_name.get(parent_name) if parent_name else None
             self._canonical_registers[varnode.symbol_id] = parent or varnode
+
+    _register_parent = staticmethod(_canonical_register_parent)
+
+    def _register_state(self, varnode: VarnodeInfo) -> StateSpace | None:
+        if _is_sleigh_temporary(varnode.name):
+            return None
+        if varnode.name in FLAG_REGISTERS:
+            return StateSpace(StateSpaceKind.FLAG, "flags", 1)
+        return StateSpace(StateSpaceKind.REGISTER, varnode.name, varnode.size)
+
+    def _implicit_state_spaces(self) -> tuple[StateSpace, ...]:
+        return (
+            StateSpace(StateSpaceKind.FLAG, "flags", 1),
+            StateSpace(StateSpaceKind.MEMORY, self.default_space, 1),
+        )
+
+    def _memory_state_for_access(self, space_id: ConstTpl) -> StateSpace:
+        return StateSpace(StateSpaceKind.MEMORY, self.default_space, 1)
 
     def userop_name(self, index: int) -> str:
         if index < 0 or index >= len(self.userops):
@@ -1498,20 +1521,11 @@ class SlaSpec:
                 canonical = self._canonical_registers.get(
                     varnode.symbol_id, varnode
                 )
-                if _is_sleigh_temporary(canonical.name):
-                    continue
-                if canonical.name in FLAG_REGISTERS:
-                    continue
-                state = StateSpace(
-                    StateSpaceKind.REGISTER, canonical.name, canonical.size
-                )
+                state = self._register_state(canonical)
+                if state is not None and state.kind is not StateSpaceKind.FLAG:
+                    states[(state.kind, state.name, state.size)] = state
+            for state in self._implicit_state_spaces():
                 states[(state.kind, state.name, state.size)] = state
-            flag = StateSpace(StateSpaceKind.FLAG, "flags", 1)
-            memory = StateSpace(
-                StateSpaceKind.MEMORY, self.default_space, 1
-            )
-            states[(flag.kind, flag.name, flag.size)] = flag
-            states[(memory.kind, memory.name, memory.size)] = memory
             self._all_state_spaces = tuple(states.values())
         return self._all_state_spaces
 
@@ -1528,7 +1542,7 @@ class SlaSpec:
                 for state in self.all_state_spaces()
                 if not (
                     state.kind is StateSpaceKind.REGISTER
-                    and state.name in _CALLEE_SAVED_REGISTERS
+                    and state.name in self._callee_saved_registers
                 )
             )
         return self._unknown_transfer_clobbers
@@ -1540,7 +1554,7 @@ class SlaSpec:
             for state in self.all_state_spaces():
                 if state.kind is StateSpaceKind.MEMORY or (
                     state.kind is StateSpaceKind.REGISTER
-                    and state.name in _CALL_ARGUMENT_REGISTERS
+                    and state.name in self._call_argument_registers
                 ):
                     states.append(state)
             self._call_argument_state = tuple(states)
@@ -1968,7 +1982,11 @@ class SlaSpec:
             return self._space_index(self.default_space)
         if const.kind == "curspace_size":
             return self.spaces[self._space_index(self.default_space)].size
-        return None
+        if const.kind == "relative":
+            return const.value  # An internal P-code label, in constant space.
+        if const.kind in ("flowref", "flowref_size", "flowdest", "flowdest_size"):
+            raise SlaError(f"unsupported flow-dependent constant {const.kind}")
+        raise SlaError(f"unknown constant kind {const.kind}")
 
     def _resolve_varnode_tpl(
         self,
@@ -2247,7 +2265,7 @@ class SlaSpec:
         opaque = (
             flow.type is InstructionType.ARITHMETIC
             and self.mnemonic(resolved).upper()
-            in _OPAQUE_TRANSFER_MNEMONICS
+            in self._opaque_transfer_mnemonics
         )
 
         for op, owner in self._semantic_ops(resolved):
@@ -2284,13 +2302,13 @@ class SlaSpec:
                                     depended.add(source)
                                     depends_on.append(source)
             elif op.opcode == OP_STORE:
-                state = StateSpace(StateSpaceKind.MEMORY, self.default_space, 1)
+                state = self._memory_state_for_access(op.inputs[0].offset)
                 if state not in modified:
                     modified.add(state)
                     modifies.append(state)
 
             if op.opcode == OP_LOAD:
-                state = StateSpace(StateSpaceKind.MEMORY, self.default_space, 1)
+                state = self._memory_state_for_access(op.inputs[0].offset)
                 if state not in depended:
                     depended.add(state)
                     depends_on.append(state)
@@ -2388,13 +2406,7 @@ class SlaSpec:
             if varnode is None:
                 return None
             canonical = self._canonical_registers.get(varnode.symbol_id, varnode)
-            if _is_sleigh_temporary(canonical.name):
-                return None
-            if canonical.name in FLAG_REGISTERS:
-                return StateSpace(StateSpaceKind.FLAG, "flags", 1)
-            return StateSpace(
-                StateSpaceKind.REGISTER, canonical.name, canonical.size
-            )
+            return self._register_state(canonical)
         if space.kind == "ram" or space.kind == "other":
             return StateSpace(StateSpaceKind.MEMORY, space.name, size)
         return None
