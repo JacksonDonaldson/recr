@@ -45,10 +45,10 @@ class _ImageBinary:
 
 @pytest.fixture(scope="session")
 def cuda_device_name() -> str:
-    """Skip the calling test when no CUDA backend is usable."""
+    """Require a usable CUDA backend for GPU tests."""
     name = gpu.device_name()
     if name is None:
-        pytest.skip(f"CUDA backend unavailable: {gpu.build_error()}")
+        pytest.fail(f"CUDA backend unavailable: {gpu.build_error()}", pytrace=False)
     return name
 
 

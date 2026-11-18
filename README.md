@@ -69,8 +69,11 @@ addresses; the active `Binary` implementation maps them to file offsets.
 
 ## Usage
 
+Install from the repository with Python 3.10 or newer.
+
 ```sh
-python codezip.py ./a.out ./functions.yaml -o ./a.out.codezip
+python -m pip install -e .
+codezip ./a.out ./functions.xml -o ./a.out.codezip
 ```
 
 Add `-v` or `--verbose` to log pipeline progress and pretty-print every
@@ -95,8 +98,8 @@ modified:
 ## Development
 
 ```sh
-python -m pip install -r requirements.txt
-pytest
+python -m pip install -e '.[test]'
+python -m pytest -q
 ```
 
 To uplift and pretty-print every function in the sample input:

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codezip"
+version = "0.1.0"
+description = "Recover unused space in compiled binaries without changing their layout."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["pyelftools>=0.31"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+codezip = "codezip:main"
+
+[tool.setuptools]
+py-modules = ["cache", "codezip", "input_parser", "ir", "uplifter"]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["binary", "gpu", "isa", "isa.*", "optimizers", "parsers"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"isa.riscv" = ["ghidra/*.sla"]
+"isa.x86_64" = ["ghidra/*.sla"]
+gpu = ["kernels.cu"]

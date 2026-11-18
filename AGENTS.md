@@ -101,6 +101,9 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 
 Implemented:
 
+- `pyproject.toml` supports editable and wheel installs and provides the
+  `codezip` command. The distribution bundles the x86-64 and RISC-V SLEIGH
+  tables and the optional CUDA kernel source.
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.  The
   parser accepts address-space-qualified values such as `ram:00011220`, which
@@ -231,7 +234,7 @@ Implemented:
   for pointer-sized readings of known function entries. `test/gpu/` compares
   every mapped address against the per-address CPU decoder, and compares the
   whole Intel form corpus instruction by instruction (and at every byte of the
-  concatenated corpus); a mismatch is a test failure.
+  concatenated corpus). The GPU suite requires a usable CUDA device.
 - `optimizers/function_remover.py` implements `run_optimizer`: any function with
   no incoming references is dropped from the uplifter's function map and its
   whole declared extent is reported as one `FreeSpace` block with a diagnostic.
@@ -336,13 +339,13 @@ Do not assume an unimplemented module works. Add tests as each stub is filled in
 ## Setup and checks
 
 ```sh
-python -m pip install -r requirements.txt
+python -m pip install -e '.[test]'
 python -m pytest -q
 ```
 
-CUDA acceleration is optional and needs no Python package: `gpu/` loads a
-shared library built by `nvcc` from `gpu/kernels.cu` with `ctypes`. Tests that
-need it skip when no compiler or device is present. Both the kernel build and
+CUDA acceleration is optional for the CLI. The GPU tests require `nvcc`
+and access to a CUDA device. The backend loads the shared library built from
+`gpu/kernels.cu` using `ctypes`. Both the kernel build and
 the parsed SLEIGH specification are cached under the system temporary
 directory (`codezip-cuda/`); delete that directory to force a rebuild or a
 fresh parse.
