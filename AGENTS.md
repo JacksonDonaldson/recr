@@ -114,6 +114,13 @@ Implemented:
   RISC-V placement checks JAL reach, relinks ELF immediates, and keeps
   AUIPC/JALR call pairs together. The RISC-V tests run the RV64 sample and
   execute hooked RV64 and RV32 ELF fixtures under QEMU.
+- `recr <manifest.yaml> [<functions.xml>] <hooks.rec>` also accepts static
+  raw images. The manifest names the image, gives disjoint file-backed
+  virtual regions with permissions, and lists entry points to preserve.
+  Functions and C declarations come from the manifest or a Ghidra export.
+  RISC-V raw images declare their architecture and ABI. Native x86-64 and
+  QEMU RV64 tests build static fixtures, patch the raw bytes, and execute
+  them at their mapped addresses using both metadata sources.
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.  The
   parser accepts address-space-qualified values such as `ram:00011220`, which
@@ -129,7 +136,9 @@ Implemented:
   ranges. `mapped_segments()`, `image_bytes()`, and `image_revision()` expose
   the file image that the CUDA backend uploads. `write` rejects unmapped and
   non-file-backed ranges and never touches the input file. `Binary(path)` routes
-  by magic bytes; PE and raw inputs raise `UnsupportedBinaryFormat` for now.
+  ELF by magic bytes; PE is unimplemented and raw images use the explicit
+  `RawBinary` mapping backend. Raw reads can span adjacent virtual regions,
+  writes stay within one region, and unmapped file bytes are preserved.
 - ELF tests (`test/binary/test_elf.py`) build `test/build/sample` with `make`
   when missing or stale, then verify Ghidra-derived `main` bytes and ELF
   mapping. Fixture-build failures are test failures, not skips.
@@ -317,8 +326,8 @@ Implemented:
   The current freed-byte breakdown is `pcre2test` 515 bytes in 63 ranges and
   `pcre2grep` 2146 bytes in 48 ranges (2661 bytes total). The pre-red-zone
   baseline was 360 and 2105 bytes (2465 total).
-  The default codezip output is byte-identical on these inputs with recr's
-  protected-entry support in place.
+  The default codezip outputs and receipts are byte-identical on these inputs
+  after adding recr's protected entries and raw-image support.
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,
@@ -345,7 +354,7 @@ Implemented:
 
 Still stubs:
 
-- PE and raw binary backends
+- PE binary backend
 - Verification passes
 
 Do not assume an unimplemented module works. Add tests as each stub is filled in.

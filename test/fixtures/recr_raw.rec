@@ -1,0 +1,5 @@
+static volatile int adjustment = 2;
+
+int @transform(int value) {
+    return transform(value) + counter + adjustment + 5;
+}

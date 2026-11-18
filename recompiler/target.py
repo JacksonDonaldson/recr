@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from elftools.elf.elffile import ELFFile
 
@@ -81,6 +82,29 @@ class Target:
 
 
 X86_64 = Target("x86_64", "EM_X86_64", 64)
+
+
+def raw_target(isa: str, riscv: object) -> Target:
+    """Select an extension ABI for an image with no executable header."""
+    if isa == X86_64.isa:
+        return X86_64
+    if isa not in ("riscv32", "riscv64"):
+        raise ValueError(f"unsupported raw image ISA {isa!r}")
+    if not isinstance(riscv, dict):
+        raise ValueError("a raw RISC-V image requires a 'riscv' mapping with 'march' and 'abi'")
+    bits = int(isa[-2:])
+    march = riscv.get("march")
+    if not isinstance(march, str) or not re.fullmatch(rf"rv{bits}[ig][a-z0-9_]*", march):
+        raise ValueError(f"'riscv.march' must be an RV{bits} GCC architecture string")
+    base = "ilp32" if bits == 32 else "lp64"
+    abis = (base, base + "f", base + "d")
+    abi = riscv.get("abi")
+    if abi not in abis:
+        raise ValueError(f"'riscv.abi' must be one of {', '.join(abis)}")
+    first, *extensions = march[4:].split("_")
+    compressed = "c" in first or any(re.fullmatch(r"(?:c|zca)(?:[0-9]+p[0-9]+)?", ext) for ext in extensions)
+    flags = (abis.index(abi) << 1) | compressed
+    return Target(isa, "EM_RISCV", bits, flags, march)
 
 
 def executable_target(elf: ELFFile) -> Target:

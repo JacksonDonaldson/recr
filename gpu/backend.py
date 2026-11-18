@@ -220,9 +220,11 @@ class Device:
         image: bytes,
         segments: list[Segment],
     ) -> None:
+        self._handle = ctypes.c_void_p()
         if not segments:
             raise BackendError("an image needs at least one mapped segment")
-        self._handle = ctypes.c_void_p()
+        if any(segment.virtual_address + segment.memory_size >= 1 << 63 for segment in segments):
+            raise BackendError("CUDA image addresses must fit in signed 64 bits")
         self._library = library()
         self._tables = tables
         self._image = image

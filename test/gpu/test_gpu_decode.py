@@ -56,6 +56,14 @@ def _decode_range(isa: X86_64ISA, binary, start: int, end: int):
     return list(isa.decode_range(binary, start, end))
 
 
+def test_high_virtual_address_uses_cpu_pointer_scan(cuda_device_name: str) -> None:
+    base = 0xffff800000000000
+    target = base + 8
+    binary = _ImageBinary(target.to_bytes(8, "little") + b"\xc3", base)
+    isa = X86_64ISA()
+    assert list(isa.iter_pointer_references(binary, base, base + 9, {target})) == [(base, target)]
+
+
 # Every Intel form is at most 8 bytes; the stride leaves a full window for each
 # case so no case's decode can depend on the bytes of the case before it.
 _INTEL_CASE_STRIDE = 16

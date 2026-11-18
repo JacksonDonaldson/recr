@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile .rec hooks and place them in an ELF's codezip receipt ranges."""
+"""Compile .rec hooks and place them in regions reclaimed by codezip."""
 
 from __future__ import annotations
 
@@ -19,9 +19,11 @@ import codezip
 from input_parser import ParseError, parse_re_file
 from ir import Address, FreeSpace, Function, Instruction, InstructionType
 from isa.isa import ISA
+from parsers.yaml import EXTENSIONS as YAML_EXTENSIONS
 from recompiler.compiler import HOOK_PREFIX, compile_rec, rewrite_hooks
 from recompiler.exports import Exports, read_exports
 from recompiler.placement import Fragment, Object, Space, place
+from recompiler.raw import RawInput, read_raw_input
 from recompiler.target import Target
 from uplifter import Uplifter
 
@@ -111,16 +113,17 @@ def _trampoline(hook: Hook, space: Space, isa: ISA, target: Target) -> Fragment:
     return Fragment(address, data)
 
 
-def _build(args: argparse.Namespace, flags: list[str], directory: Path) -> None:
-    if args.re_file.suffix.lower() != ".xml":
-        raise ValueError("recr requires a typed Ghidra XML export")
-    parsed = parse_re_file(str(args.re_file))
-    exports = read_exports(args.binary, args.re_file, parsed.functions)
+def _build(args: argparse.Namespace, flags: list[str], directory: Path, raw: RawInput | None) -> None:
+    if raw is None:
+        parsed = parse_re_file(str(args.re_file))
+        exports = read_exports(args.binary, args.re_file, parsed.functions)
+        original = Binary(args.binary)
+    else:
+        parsed, exports, original = raw.parsed, raw.exports, raw.binary
     target = exports.target
     if (args.isa or parsed.isa) != target.isa:
         raise ValueError(f"the export ISA does not match the {target.isa} executable")
     rewritten, names = rewrite_hooks(args.rec.read_text(encoding="utf-8"))
-    original = Binary(args.binary)
     uplifter = Uplifter(target.isa, original)
     isa = uplifter.isa
     hooks = []
@@ -143,6 +146,8 @@ def _build(args: argparse.Namespace, flags: list[str], directory: Path) -> None:
 
     imports = {name: exports.address(name) for name in sorted(extension.imports())}
     protected = frozenset((*imports.values(), *(f.start_address for name in names for f in exports.functions[name])))
+    if raw is not None:
+        protected |= raw.protected_entries
     compacted = directory / "compacted"
     receipt_path = directory / "codezip.yaml"
     options = codezip.build_arg_parser().parse_args([
@@ -150,12 +155,16 @@ def _build(args: argparse.Namespace, flags: list[str], directory: Path) -> None:
         str(receipt_path), *(["-v"] if args.verbose else []),
         "--isa", target.isa,
     ])
-    if codezip.run_pipeline(options, protected_entries=protected):
+    if codezip.run_pipeline(
+        options, protected_entries=protected,
+        binary=raw.binary if raw is not None else None,
+        parsed=raw.parsed if raw is not None else None,
+    ):
         raise ValueError("codezip could not prepare the original binary")
     receipt = yaml.safe_load(receipt_path.read_text(encoding="utf-8"))
     free = [(item["address"], item["length"]) for item in receipt["freed"]]
     space = Space(free, exports)
-    image = Binary(compacted)
+    image = original if raw is not None else Binary(compacted)
     trampolines = []
     for hook in hooks:
         trampoline = _trampoline(hook, space, isa, target)
@@ -204,25 +213,35 @@ def main(argv: list[str] | None = None) -> int:
         prog="recr", description="Place compiled .rec hooks into space recovered by codezip.",
         epilog="Pass additional GCC flags, objects, and static archives after --.",
     )
-    parser.add_argument("binary", type=Path)
-    parser.add_argument("re_file", type=Path)
-    parser.add_argument("rec", type=Path)
+    parser.add_argument("input", type=Path, metavar="INPUT", help="ELF executable or raw-image YAML manifest")
+    parser.add_argument("re_file", type=Path, nargs="?", metavar="EXPORT", help="Ghidra XML function export")
+    parser.add_argument("rec", type=Path, metavar="REC", help=".rec source file")
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("-r", "--receipt", type=Path)
     parser.add_argument("--isa")
     parser.add_argument("--cc", default=os.environ.get("CC"), help="GCC executable or command")
     parser.add_argument("-v", "--verbose", action="store_true")
-    args, interspersed = parser.parse_known_args(argv)
-    args.output = args.output or args.binary.with_name(args.binary.name + ".recr")
+    args, interspersed = parser.parse_known_intermixed_args(argv)
     try:
-        if args.output.resolve() in {args.binary.resolve(), args.re_file.resolve(), args.rec.resolve()}:
+        raw = None
+        if args.re_file is not None and args.re_file.suffix.lower() != ".xml":
+            raise ValueError("the separate function export must be Ghidra XML")
+        if args.input.suffix.lower() in YAML_EXTENSIONS:
+            raw = read_raw_input(args.input, args.re_file)
+            args.re_file = args.re_file or args.input
+            args.binary = raw.binary.path
+        else:
+            if args.re_file is None:
+                raise ValueError("an ELF input requires a typed Ghidra XML export")
+            args.binary = args.input
+        args.output = args.output or args.binary.with_name(args.binary.name + ".recr")
+        inputs = {path.resolve() for path in (args.input, args.binary, args.re_file, args.rec)}
+        if args.output.resolve() in inputs:
             raise ValueError("recr output must use a separate path from the inputs")
-        if args.receipt is not None and args.receipt.resolve() in {
-            args.output.resolve(), args.binary.resolve(), args.re_file.resolve(), args.rec.resolve(),
-        }:
+        if args.receipt is not None and args.receipt.resolve() in inputs | {args.output.resolve()}:
             raise ValueError("recr receipt must use a separate path from input and output files")
         with TemporaryDirectory(prefix="recr-") as directory:
-            _build(args, [*interspersed, *flags], Path(directory))
+            _build(args, [*interspersed, *flags], Path(directory), raw)
     except (ValueError, OSError, ParseError, ELFError, ET.ParseError) as exc:
         print(f"recr: {exc}", file=sys.stderr)
         return 1

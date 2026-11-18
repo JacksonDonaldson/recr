@@ -19,6 +19,7 @@ from binary.binary import Binary
 from input_parser import ParseError, parse_re_file
 from ir import FreeSpace
 from optimizers import function_remover, outliner
+from parsers.base import ParseResult
 from uplifter import Uplifter
 
 LOGGER = logging.getLogger("codezip")
@@ -114,20 +115,22 @@ def _render_receipt(
 
 def run_pipeline(
     args: argparse.Namespace, *, protected_entries: frozenset[int] = frozenset(),
+    binary: Binary | None = None, parsed: ParseResult | None = None,
 ) -> int:
-    """Parse, uplift, remove functions, outline, fill free space, and write."""
+    """Compact and write the image, using caller-supplied input metadata when available."""
     _configure_logging(args.verbose)
 
     LOGGER.info("loading function export %s", args.re_file)
-    try:
-        parsed = parse_re_file(str(args.re_file))
-    except ParseError as exc:
-        LOGGER.error("%s", exc)
-        return 1
-    except NotImplementedError as exc:
-        detail = str(exc) or "parser is not implemented"
-        LOGGER.error("cannot parse %s: %s", args.re_file, detail)
-        return 1
+    if parsed is None:
+        try:
+            parsed = parse_re_file(str(args.re_file))
+        except ParseError as exc:
+            LOGGER.error("%s", exc)
+            return 1
+        except NotImplementedError as exc:
+            detail = str(exc) or "parser is not implemented"
+            LOGGER.error("cannot parse %s: %s", args.re_file, detail)
+            return 1
 
     for warning in parsed.warnings:
         LOGGER.warning("%s", warning)
@@ -138,11 +141,12 @@ def run_pipeline(
     )
 
     LOGGER.info("opening binary %s", args.binary)
-    try:
-        binary = Binary(args.binary)
-    except (OSError, ValueError) as exc:
-        LOGGER.error("cannot open binary %s: %s", args.binary, exc)
-        return 1
+    if binary is None:
+        try:
+            binary = Binary(args.binary)
+        except (OSError, ValueError) as exc:
+            LOGGER.error("cannot open binary %s: %s", args.binary, exc)
+            return 1
 
     try:
         uplifter = Uplifter(isa_name, binary)

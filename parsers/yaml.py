@@ -62,18 +62,27 @@ def is_supported(filename: str) -> bool:
     return True
 
 
-def parse(filename: str) -> ParseResult:
-    """Parse a YAML function export."""
+def load_document(filename: str | Path) -> dict:
+    """Read a YAML mapping with unique keys."""
     try:
         document = yaml.load(Path(filename).read_bytes(), Loader=_UniqueKeyLoader)
-        return _parse_document(document)
+        if not isinstance(document, dict):
+            raise ValueError("the document must be a mapping")
+        return document
     except (OSError, RecursionError, ValueError, yaml.YAMLError) as exc:
         raise ParseError(f"invalid YAML export {filename}: {exc}") from exc
 
 
-def _parse_document(document: object) -> ParseResult:
-    if not isinstance(document, dict):
-        raise ValueError("the document must be a mapping")
+def parse(filename: str) -> ParseResult:
+    """Parse a YAML function export."""
+    try:
+        return parse_functions(load_document(filename))
+    except ValueError as exc:
+        raise ParseError(f"invalid YAML export {filename}: {exc}") from exc
+
+
+def parse_functions(document: dict, *, mapped_offsets: bool = False) -> ParseResult:
+    """Parse function records, optionally deriving missing offsets from a memory map."""
     isa = document.get("isa")
     if not isinstance(isa, str) or not isa.strip():
         raise ValueError("'isa' must be a nonempty string")
@@ -88,7 +97,9 @@ def _parse_document(document: object) -> ParseResult:
         if not isinstance(record, dict):
             raise ValueError(f"function {name!r} must be a mapping")
         start = _read_integer(record, "start_address", name, 0)
-        offset = _read_integer(record, "file_offset", name, UNKNOWN_FILE_OFFSET)
+        offset = UNKNOWN_FILE_OFFSET
+        if not mapped_offsets or "file_offset" in record:
+            offset = _read_integer(record, "file_offset", name, UNKNOWN_FILE_OFFSET)
         length = _read_integer(record, "length", name, 1)
         if start + length > _ADDRESS_LIMIT:
             raise ValueError(f"function {name!r} extends past the 64-bit address space")

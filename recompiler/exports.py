@@ -1,4 +1,4 @@
-"""Read typed C symbols and classify ELF storage for recr."""
+"""Read typed C symbols from Ghidra and classify available storage for recr."""
 
 from __future__ import annotations
 
@@ -124,7 +124,14 @@ def read_exports(binary: Path, xml: Path, functions: list[Function]) -> Exports:
                 segments.append(Segment(start, segment["p_filesz"], segment["p_memsz"], segment["p_flags"]))
             if segment["p_type"] == "PT_GNU_RELRO":
                 relro.append((start, start + segment["p_memsz"]))
+    return read_ghidra_exports(xml, functions, segments, target, imports=imports, relro=relro)
 
+
+def read_ghidra_exports(
+    xml: Path, functions: list[Function], segments: list[Segment], target: Target,
+    *, imports: dict[str, set[int]] | None = None, relro: list[tuple[int, int]] | None = None,
+) -> Exports:
+    imports = imports or {}
     root = ET.parse(xml).getroot()
     typedefs = {e.get("NAME", ""): e.get("DATATYPE", "") for e in root.findall("DATATYPES/TYPE_DEF")}
     definitions = {}
@@ -194,4 +201,4 @@ def read_exports(binary: Path, xml: Path, functions: list[Function]) -> Exports:
         target = node.get("TO_ADDRESS")
         if target:
             reference_addresses.add(_parse_hex(target))
-    return Exports(by_name, addresses, declarations, segments, relro, reference_addresses, target)
+    return Exports(by_name, addresses, declarations, segments, relro or [], reference_addresses, target)

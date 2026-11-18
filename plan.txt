@@ -34,7 +34,7 @@ Overview:
 Overall project structure:
 
 recr.py and recompiler/:
-    - compile .rec C extensions against typed Ghidra symbols
+    - compile .rec C extensions against typed Ghidra symbols or declarations in a raw-image manifest
     - invoke codezip with the original functions needed by the extension protected
     - map linked sections into cleared ranges and install function hooks
     - retain callable originals using relocated entry instructions and a return jump
@@ -84,7 +84,7 @@ binary/pe.py
     - does the parsing necessary for PE files
 
 binary/raw.py
-    - does the parsing necessary for raw binaries
+    - read and patch headerless images through explicit virtual address mappings
 
 
 Detailed breakdown:

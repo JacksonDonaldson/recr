@@ -48,7 +48,7 @@ writes the modified binary.
 | `binary/binary.py` | Binary file interface and format routing |
 | `binary/elf.py` | ELF backend |
 | `binary/pe.py` | PE backend (stub) |
-| `binary/raw.py` | Raw binary backend (stub) |
+| `binary/raw.py` | Explicit virtual-to-file mappings for raw images |
 | `test/` | Grouped pytest suites, sample C input, NASM fixtures, and Ghidra exports |
 
 ## Input formats
@@ -121,6 +121,52 @@ RISC-V builds default to `riscv64-linux-gnu-gcc`. Use `--cc` to select a
 different cross-compiler. Hook and fragment jumps must reach their targets
 with a single `JAL` so they leave registers intact. The RV64 sample and both
 RISC-V hook tests run under QEMU in `test/test_recr_riscv.py`.
+
+### Raw firmware images
+
+Pass a `.yaml` or `.yml` manifest and the `.rec` file for a statically linked
+raw image. Relative binary paths are resolved from the manifest directory.
+The default output is `<binary>.recr`.
+
+```sh
+recr ./firmware.yaml ./hooks.rec -o ./firmware.patched.bin
+recr ./firmware.yaml ./functions.xml ./hooks.rec -o ./firmware.patched.bin
+```
+
+```yaml
+binary: firmware.bin
+isa: x86_64
+regions:
+  - {start_address: 0x400000, file_offset: 0x10, length: 0x70}
+  - {start_address: 0x410000, file_offset: 0x80, length: 0x100, permissions: rwx}
+  - {start_address: 0x420000, file_offset: 0x180, length: 0x10, permissions: rw}
+entry_points: [0x400000]
+functions:
+  _start: {start_address: 0x400000, length: 0x20}
+  transform:
+    start_address: 0x400020
+    length: 0x10
+    declaration: "extern int transform(int value);"
+  spare: {start_address: 0x410000, length: 0x100}
+symbols:
+  counter: {address: 0x420000, declaration: "extern int counter;"}
+```
+
+Map each region with its virtual start, file offset, and byte length. Regions
+may appear in any order and must be disjoint in the file and in virtual memory.
+Permissions default to `rx`. Include data regions containing pointers so
+codezip can scan them for live functions. List reset, interrupt, and other
+entry addresses that firmware can reach from outside the mapped image under
+`entry_points` so codezip preserves their functions.
+
+Use `functions` to identify hooks and give codezip the extents it can analyze
+for reclaimable space. Each function must fit in one executable region. Its
+file offset is derived from the mapping. If you pass a Ghidra XML export,
+it supplies the ISA, functions, and C types, so omit `isa` and `functions`
+from the manifest. `symbols` binds additional names to fixed virtual addresses.
+An optional `declaration` supplies the C declaration implicitly visible in
+the `.rec` file. Raw RISC-V manifests must include the original architecture
+and ABI, for example `riscv: {march: rv64gc, abi: lp64d}` with `isa: riscv64`.
 
 ## Development
 
