@@ -1,4 +1,4 @@
-"""Place an x86-64 ELF extension into file-backed codezip receipt ranges."""
+"""Place an ELF extension into file-backed codezip receipt ranges."""
 
 from __future__ import annotations
 
@@ -9,8 +9,12 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
 from ir import Address, Instruction, InstructionType
+from isa.isa import ISA
+from isa.riscv.encoding import UPPER, relative_immediate
 from isa.x86_64 import X86_64ISA
+from recompiler import riscv
 from recompiler.exports import Exports
+from recompiler.target import X86_64, Target
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,7 @@ class Section:
     fragments: list[Fragment] = field(default_factory=list)
     instruction_addresses: dict[int, int] = field(default_factory=dict)
     pc_bias: dict[int, int] = field(default_factory=dict)
+    promoted_branches: dict[int, int] = field(default_factory=dict)
 
     @property
     def permissions(self) -> int:
@@ -53,6 +58,21 @@ class Section:
             return fragment.address + len(fragment.data)
         raise ValueError(f"reference into a non-instruction boundary in split section {self.name}+{offset:#x}")
 
+    def _location(self, address: int, width: int) -> tuple[bytearray, int]:
+        for fragment in self.fragments:
+            offset = address - fragment.address
+            if 0 <= offset and offset + width <= len(fragment.data):
+                return fragment.data, offset
+        raise ValueError(f"relocation outside placed bytes in {self.name}")
+
+    def read_word(self, address: int, width: int) -> int:
+        data, offset = self._location(address, width)
+        return int.from_bytes(data[offset:offset + width], "little")
+
+    def write_word(self, address: int, value: int, width: int, *, signed: bool = False) -> None:
+        data, offset = self._location(address, width)
+        data[offset:offset + width] = value.to_bytes(width, "little", signed=signed)
+
 
 @dataclass
 class Fragment:
@@ -66,13 +86,13 @@ class Object:
     symbols: dict[str, Symbol]
 
     @classmethod
-    def read(cls, path: Path) -> Object:
+    def read(cls, path: Path, target: Target = X86_64) -> Object:
         sections = {}
         symbols = {}
         with path.open("rb") as stream:
             elf = ELFFile(stream)
-            if elf.header.e_type != "ET_REL" or elf.header.e_machine != "EM_X86_64":
-                raise ValueError("GCC must produce a relocatable x86-64 ELF object")
+            if not target.accepts_object(elf):
+                raise ValueError(f"GCC must produce a relocatable ELF object matching the {target.isa} ABI")
             for index, section in enumerate(elf.iter_sections()):
                 flags = section["sh_flags"]
                 if not flags & 2 or not section["sh_size"]:
@@ -94,12 +114,12 @@ class Object:
                 if not isinstance(section, RelocationSection) or section["sh_info"] not in sections:
                     continue
                 if not section.is_RELA():
-                    raise ValueError("x86-64 extension relocations require explicit addends")
-                target = sections[section["sh_info"]]
+                    raise ValueError("extension relocations require explicit addends")
+                destination = sections[section["sh_info"]]
                 for entry in section.iter_relocations():
                     kind = entry["r_info_type"]
-                    if kind:
-                        target.relocations.append(Relocation(
+                    if kind and not (target.machine == "EM_RISCV" and kind == riscv.RELAX):
+                        destination.relocations.append(Relocation(
                             entry["r_offset"], kind,
                             _symbol(symtab.get_symbol(entry["r_info_sym"])), entry["r_addend"],
                         ))
@@ -108,7 +128,7 @@ class Object:
     def imports(self) -> set[str]:
         return {
             r.symbol.name for section in self.sections.values() for r in section.relocations
-            if r.symbol.section == "SHN_UNDEF"
+            if r.symbol.section == "SHN_UNDEF" and r.symbol.name
         }
 
 
@@ -172,13 +192,6 @@ class Space:
         return None
 
 
-def jump(source: int, target: int) -> bytes:
-    try:
-        return b"\xe9" + (target - source - 5).to_bytes(4, "little", signed=True)
-    except OverflowError as exc:
-        raise ValueError(f"jump from {source:#x} to {target:#x} is out of range") from exc
-
-
 @dataclass(frozen=True)
 class _Instruction:
     original: Instruction
@@ -186,6 +199,8 @@ class _Instruction:
     falls_through: bool
     branch: int | None
     relative_data: bool
+    branch_offset: int = 0
+    elf_relocated: bool = False
 
     @property
     def offset(self) -> int:
@@ -202,46 +217,71 @@ class _Image:
         return self.data[address:address + length]
 
 
-def _instructions(section: Section, isa: X86_64ISA) -> list[_Instruction]:
+def _instructions(section: Section, isa: ISA, target: Target = X86_64) -> list[_Instruction]:
     image = _Image(section.data)
     items = []
     offset = 0
-    relocated_offsets = {relocation.offset for relocation in section.relocations}
+    relocations = {relocation.offset: relocation.kind for relocation in section.relocations}
     while offset < len(section.data):
         original = isa.disassemble(image, offset)
         raw = original.original_data
         following = offset + original.length
         branch = None
         relative_data = False
-        resolved = isa._sleigher.spec.resolve(raw, isa._sleigher.context)
-        relative = isa._sleigher.spec.relative_target(resolved, raw, offset)
-        for location in range(offset, following):
-            if location in relocated_offsets:
-                section.pc_bias[location] = following - location
-        if relative is not None and offset + relative[1] not in relocated_offsets:
-            if original.type in (InstructionType.BRANCH, InstructionType.CALL):
-                branch = relative[0]
-                if raw[0] == 0xEB and original.length == 2:
-                    raw = b"\xe9\0\0\0\0"
-                elif 0x70 <= raw[0] <= 0x7F and original.length == 2:
-                    raw = bytes((0x0F, raw[0] + 0x10)) + bytes(4)
-            else:
-                relative_data = True
+        branch_offset = 0
+        elf_relocated = False
+        if target.machine == "EM_RISCV":
+            kind = relocations.get(offset)
+            word = int.from_bytes(raw, "little")
+            immediate = relative_immediate(word, len(raw), target.bits)
+            elf_relocated = immediate is UPPER and kind is not None
+            if immediate is UPPER:
+                relative_data = not elf_relocated
+            elif immediate is not None:
+                if kind not in riscv.BRANCH_RELOCS:
+                    branch = offset + immediate.decode(word)
+                else:
+                    elf_relocated = True
+                raw, branch_offset = riscv.promote(raw, target.bits)
+                if kind in riscv.BRANCH_RELOCS and len(raw) != original.length:
+                    section.promoted_branches[offset] = branch_offset
+        else:
+            assert isinstance(isa, X86_64ISA)
+            resolved = isa._sleigher.spec.resolve(raw, isa._sleigher.context)
+            relative = isa._sleigher.spec.relative_target(resolved, raw, offset)
+            for location in range(offset, following):
+                if location in relocations:
+                    section.pc_bias[location] = following - location
+            if relative is not None and offset + relative[1] not in relocations:
+                if original.type in (InstructionType.BRANCH, InstructionType.CALL):
+                    branch = relative[0]
+                    if raw[0] == 0xEB and original.length == 2:
+                        raw = b"\xe9\0\0\0\0"
+                    elif 0x70 <= raw[0] <= 0x7F and original.length == 2:
+                        raw = bytes((0x0F, raw[0] + 0x10)) + bytes(4)
+                else:
+                    relative_data = True
         falls_through = original.type is not InstructionType.RET and (
             original.type is not InstructionType.BRANCH
             or any(flow.value == following for flow in original.flows_to)
         )
-        items.append(_Instruction(original, raw, falls_through, branch, relative_data))
+        items.append(_Instruction(
+            original, raw, falls_through, branch, relative_data, branch_offset, elf_relocated,
+        ))
         offset = following
     return items
 
 
-def _split(section: Section, space: Space, isa: X86_64ISA) -> None:
-    items = _instructions(section, isa)
+def _split(section: Section, space: Space, isa: ISA, target: Target) -> None:
+    items = _instructions(section, isa, target)
     remaining = items
     groups = []
+    pair_interiors = {
+        relocation.offset + 4 for relocation in section.relocations
+        if target.machine == "EM_RISCV" and relocation.kind in riscv.CALL_PAIRS
+    }
     while remaining:
-        align = section.alignment if not groups else 1
+        align = max(section.alignment, target.alignment) if not groups else target.alignment
         candidates = []
         for index, region in enumerate(space.ranges):
             if region.flags & 5 != 5:
@@ -253,11 +293,13 @@ def _split(section: Section, space: Space, isa: X86_64ISA) -> None:
             payload = 0
             for i, item in enumerate(remaining, 1):
                 payload += len(item.data)
-                glue = 5 if i < len(remaining) and item.falls_through else 0
-                if payload + glue <= available:
-                    count, total = i, payload + glue
                 if payload > available:
                     break
+                if i < len(remaining) and remaining[i].offset in pair_interiors:
+                    continue
+                glue = target.jump_size if i < len(remaining) and item.falls_through else 0
+                if payload + glue <= available:
+                    count, total = i, payload + glue
             if count:
                 break
         else:
@@ -279,32 +321,39 @@ def _split(section: Section, space: Space, isa: X86_64ISA) -> None:
             address = fragment.address + cursor
             raw = item.data
             if item.branch is not None:
-                target = section.address(item.branch)
-                template = isa.disassemble(_Image(raw), 0)
+                destination = section.address(item.branch)
+                tail = raw[item.branch_offset:]
+                template = isa.disassemble(_Image(tail), 0)
+                branch_address = address + item.branch_offset
                 instruction = isa.set_instruction_target(
-                    Instruction(raw, template.type, len(raw), address), Address.absolute(target),
+                    Instruction(tail, template.type, len(tail), branch_address),
+                    Address.absolute(destination),
                 )
-                if not isa.can_encode(instruction, address):
+                if not isa.can_encode(instruction, branch_address):
                     raise ValueError(f"cannot encode split branch in {section.name}")
-                raw = instruction.original_data
+                raw = raw[:item.branch_offset] + instruction.original_data
             elif item.relative_data:
                 raise ValueError(f"cannot split {section.name} with an unrelocated PC-relative operand")
-            elif not isa.can_encode(item.original, address):
+            # ELF fixups validate the final displacements for unlinked operands.
+            elif not item.elf_relocated and not isa.can_encode(item.original, address):
                 raise ValueError(f"cannot encode split instruction in {section.name}+{item.offset:#x}")
             fragment.data[cursor:cursor + len(raw)] = raw
             cursor += len(raw)
         if cursor < len(fragment.data):
-            fragment.data[cursor:] = jump(fragment.address + cursor, groups[index + 1][0].address)
+            fragment.data[cursor:] = target.jump(fragment.address + cursor, groups[index + 1][0].address)
 
 
-def place(object_: Object, space: Space, imports: dict[str, int], isa: X86_64ISA) -> list[Fragment]:
+def place(
+    object_: Object, space: Space, imports: dict[str, int], isa: ISA, target: Target = X86_64,
+) -> list[Fragment]:
     sections = sorted(
         object_.sections.values(),
         key=lambda section: (not bool(section.flags & 1), bool(section.flags & 4), -len(section.data)),
     )
     split = []
     for section in sections:
-        address = space.allocate(len(section.data), section.alignment, section.permissions)
+        alignment = max(section.alignment, target.alignment) if section.flags & 4 else section.alignment
+        address = space.allocate(len(section.data), alignment, section.permissions)
         if address is not None:
             section.fragments.append(Fragment(address, bytearray(section.data)))
         elif section.flags & 4:
@@ -312,16 +361,38 @@ def place(object_: Object, space: Space, imports: dict[str, int], isa: X86_64ISA
         else:
             raise ValueError(f"insufficient cleared space for {section.name} ({len(section.data)} bytes)")
     for section in split:
-        _split(section, space, isa)
+        _split(section, space, isa, target)
+
+    def resolve(symbol: Symbol, addend: int) -> int:
+        return _symbol_address(object_, symbol, addend, imports)
+
     for section in sections:
         for relocation in section.relocations:
-            _apply(object_, section, relocation, imports, isa)
+            if target.machine == "EM_RISCV":
+                try:
+                    riscv.apply(object_, section, relocation, resolve, target.bits)
+                except OverflowError as exc:
+                    raise ValueError(f"RISC-V relocation overflows in {section.name}") from exc
+            else:
+                _apply_x86(object_, section, relocation, imports, isa)
     return [fragment for section in sections for fragment in section.fragments]
 
 
-def _apply(
+def _symbol_address(object_: Object, symbol: Symbol, addend: int, imports: dict[str, int]) -> int:
+    if symbol.section == "SHN_UNDEF":
+        if symbol.name not in imports:
+            raise ValueError(f"undefined relocation symbol {symbol.name!r}")
+        return imports[symbol.name] + addend
+    if symbol.section == "SHN_ABS":
+        return symbol.offset + addend
+    if symbol.section in object_.sections:
+        return object_.sections[symbol.section].address(symbol.offset + addend)
+    raise ValueError(f"relocation references an unsupported section for {symbol.name!r}")
+
+
+def _apply_x86(
     object_: Object, section: Section, relocation: Relocation,
-    imports: dict[str, int], isa: X86_64ISA,
+    imports: dict[str, int], isa: ISA,
 ) -> None:
     # R_X86_64_64, PC32, PLT32, 32, 32S, and PC64.
     formats = {1: (8, False, False), 2: (4, True, True), 4: (4, True, True),
@@ -341,31 +412,18 @@ def _apply(
 
     symbol = relocation.symbol
     addend = relocation.addend
-    if symbol.section == "SHN_UNDEF":
-        value = imports[symbol.name] + addend
-    elif symbol.section == "SHN_ABS":
-        value = symbol.offset + addend
-    elif symbol.section in object_.sections:
-        destination = object_.sections[symbol.section]
-        if destination.instruction_addresses and relative:
-            if not section.pc_bias and section.flags & 4:
-                _instructions(section, isa)
-            bias = section.pc_bias.get(offset, 0)
-        else:
-            bias = 0
-        value = destination.address(symbol.offset + addend + bias) - bias
+    destination = object_.sections.get(symbol.section)
+    if destination is not None and destination.instruction_addresses and relative:
+        if not section.pc_bias and section.flags & 4:
+            _instructions(section, isa)
+        bias = section.pc_bias.get(offset, 0)
     else:
-        raise ValueError(f"relocation references an unsupported section for {symbol.name!r}")
+        bias = 0
+    value = _symbol_address(object_, symbol, addend + bias, imports) - bias
 
     if relative:
         value -= address
     try:
-        encoded = value.to_bytes(width, "little", signed=signed)
+        section.write_word(address, value, width, signed=signed)
     except OverflowError as exc:
         raise ValueError(f"relocation overflows for {symbol.name or section.name!r}") from exc
-    for fragment in section.fragments:
-        start = address - fragment.address
-        if 0 <= start and start + width <= len(fragment.data):
-            fragment.data[start:start + width] = encoded
-            return
-    raise ValueError(f"relocation outside placed bytes in {section.name}")

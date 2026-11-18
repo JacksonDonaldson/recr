@@ -9,6 +9,8 @@ import re
 import shlex
 import subprocess
 
+from recompiler.target import Target
+
 
 HOOK_PREFIX = "__recr_hook_"
 _C_TOKENS = re.compile(
@@ -62,6 +64,7 @@ def _shadowed(stderr: str, header: Path, names: set[str]) -> set[str]:
 def compile_rec(
     source: Path, rewritten: str, hooks: tuple[str, ...],
     declarations: dict[str, str], flags: list[str], compiler: str, directory: Path,
+    target: Target,
 ) -> Path:
     header = directory / "imports.h"
     translation_unit = directory / "extension.c"
@@ -72,7 +75,7 @@ def compile_rec(
     if not driver:
         raise ValueError("missing GCC executable")
     command = [
-        *driver, "-m64", "-std=gnu17", "-Os", "-fno-pie", "-fno-pic",
+        *driver, *target.compiler_flags, "-std=gnu17", "-Os", "-fno-pie", "-fno-pic",
         "-fno-builtin", "-fno-stack-protector", "-fno-asynchronous-unwind-tables",
         "-fno-unwind-tables", "-fno-jump-tables", "-ffunction-sections",
         "-fdata-sections", "-fno-lto", "-Werror=implicit-function-declaration",
@@ -83,7 +86,7 @@ def compile_rec(
     imported = dict(declarations)
     while True:
         header.write_text(
-            "#include <stddef.h>\n#include <stdint.h>\n#include <sys/types.h>\n"
+            "#include <stddef.h>\n#include <stdint.h>\ntypedef __PTRDIFF_TYPE__ ssize_t;\n"
             + "\n".join(imported.values()) + "\n"
             + "\n".join(
                 f"extern __typeof__({name}) {HOOK_PREFIX}{name};"

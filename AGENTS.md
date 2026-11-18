@@ -105,11 +105,15 @@ Implemented:
 - `pyproject.toml` supports editable and wheel installs and provides the
   `codezip` and `recr` commands. The distribution bundles the x86-64 and RISC-V SLEIGH
   tables and the optional CUDA kernel source.
-- `recr` compiles .rec hooks for x86-64 non-PIE ELF with typed Ghidra XML.
+- `recr` compiles .rec hooks for x86-64, RV32, and RV64 non-PIE ELF with typed
+  Ghidra XML.
   It retains original functions used by the extension, places code and data
   in codezip receipt ranges, and installs fixed-width entry jumps and original
   call trampolines. Code can span disjoint ranges. Writable data requires
   writable cleared space. GCC accepts flags, objects, and static libraries.
+  RISC-V placement checks JAL reach, relinks ELF immediates, and keeps
+  AUIPC/JALR call pairs together. The RISC-V tests run the RV64 sample and
+  execute hooked RV64 and RV32 ELF fixtures under QEMU.
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.  The
   parser accepts address-space-qualified values such as `ram:00011220`, which
@@ -366,6 +370,9 @@ Use NASM 2.16.02 or newer. The corpus is generated with NASM 3.02; NASM
 
 The RISC-V decoder tests require `binutils-riscv64-linux-gnu`, which can
 assemble and link both RV32 and RV64 fixtures.
+The RISC-V recompilation tests also require the cross GCC, QEMU for both word
+sizes, and the RV64 sysroot. The tests accept `RISCV64_CC`, `RISCV64_QEMU`,
+`RISCV32_QEMU`, and `RISCV64_SYSROOT` overrides.
 
 Build and run the sample ELF:
 
@@ -441,7 +448,7 @@ make -C test e2e-riscv
 - Use `tmp_path` for malformed or temporary inputs; do not write into the repo.
 - Do not use blanket module-level skips. Mark individual pending tests.
 - If `test/sample.c` changes, rebuild it and regenerate the Ghidra and
-  equivalent YAML fixtures.
+  equivalent YAML fixtures, including the RV64 Ghidra metadata used by recr.
 - Generated fixtures must not contain machine-specific paths, usernames, or
   timestamps. Sanitize them before committing.
 - Run the full suite before finishing:

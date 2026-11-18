@@ -12,6 +12,8 @@ from elftools.elf.elffile import ELFFile
 
 from ir import Function
 from parsers.ghidra_xml import _parse_hex
+from recompiler.riscv import plt_addresses
+from recompiler.target import X86_64, Target, executable_target
 
 
 IDENTIFIER = re.compile(r"[A-Za-z_]\w*", re.ASCII)
@@ -46,6 +48,7 @@ class Exports:
     segments: list[Segment]
     relro: list[tuple[int, int]]
     references: set[int]
+    target: Target = X86_64
 
     def address(self, name: str) -> int:
         values = self.addresses.get(name, set())
@@ -111,8 +114,8 @@ def _signature(
 def read_exports(binary: Path, xml: Path, functions: list[Function]) -> Exports:
     with binary.open("rb") as stream:
         elf = ELFFile(stream)
-        if elf.header.e_type != "ET_EXEC" or elf.header.e_machine != "EM_X86_64":
-            raise ValueError("recr requires an x86-64 non-PIE ELF executable")
+        target = executable_target(elf)
+        imports = plt_addresses(elf) if target.machine == "EM_RISCV" else {}
         segments = []
         relro = []
         for segment in elf.iter_segments():
@@ -143,6 +146,18 @@ def read_exports(binary: Path, xml: Path, functions: list[Function]) -> Exports:
         by_name[name].append(function)
         addresses[name].add(function.start_address)
         declaration = _signature(name, function_nodes[function.start_address], definitions.get(name), typedefs)
+        if declaration:
+            prototypes[name].add(declaration)
+
+    for node in root.findall("FUNCTIONS/FUNCTION"):
+        qualified = node.get("NAME", "")
+        if not qualified.startswith("<EXTERNAL>::"):
+            continue
+        name = qualified.removeprefix("<EXTERNAL>::")
+        if not IDENTIFIER.fullmatch(name) or name not in imports:
+            continue
+        addresses[name].update(imports[name])
+        declaration = _signature(name, node, definitions.get(name), typedefs)
         if declaration:
             prototypes[name].add(declaration)
 
@@ -179,4 +194,4 @@ def read_exports(binary: Path, xml: Path, functions: list[Function]) -> Exports:
         target = node.get("TO_ADDRESS")
         if target:
             reference_addresses.add(_parse_hex(target))
-    return Exports(by_name, addresses, declarations, segments, relro, reference_addresses)
+    return Exports(by_name, addresses, declarations, segments, relro, reference_addresses, target)

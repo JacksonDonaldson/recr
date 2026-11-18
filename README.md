@@ -99,8 +99,8 @@ modified:
 
 ## Recompilation with recr
 
-`recr` compiles a C extension for an x86-64 non-PIE ELF using a typed Ghidra XML
-export. Prefix a function definition with `@` to hook the original function.
+`recr` compiles a C extension for an x86-64, RV32, or RV64 non-PIE ELF using a
+typed Ghidra XML export. Prefix a function definition with `@` to hook the original function.
 Calling that name normally from the extension invokes the original through a
 trampoline. C definitions in the extension take precedence over imported names.
 
@@ -116,6 +116,11 @@ Code can be split across executable receipt ranges. Each data section needs
 a contiguous range and writable sections require writable space. Placement
 fails if the extension cannot fit. The sample hook and test-only space are in
 `test/fixtures/sample.rec` and `test/fixtures/recr_space.S`.
+
+RISC-V builds default to `riscv64-linux-gnu-gcc`. Use `--cc` to select a
+different cross-compiler. Hook and fragment jumps must reach their targets
+with a single `JAL` so they leave registers intact. The RV64 sample and both
+RISC-V hook tests run under QEMU in `test/test_recr_riscv.py`.
 
 ## Development
 

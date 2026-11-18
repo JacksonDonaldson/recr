@@ -18,15 +18,12 @@ from binary.binary import Binary
 import codezip
 from input_parser import ParseError, parse_re_file
 from ir import Address, FreeSpace, Function, Instruction, InstructionType
-from isa.x86_64 import X86_64ISA
+from isa.isa import ISA
 from recompiler.compiler import HOOK_PREFIX, compile_rec, rewrite_hooks
 from recompiler.exports import Exports, read_exports
-from recompiler.placement import Fragment, Object, Space, jump, place
+from recompiler.placement import Fragment, Object, Space, place
+from recompiler.target import Target
 from uplifter import Uplifter
-
-
-_ENDBR64 = b"\xf3\x0f\x1e\xfa"
-_JUMP_SIZE = 5
 
 
 @dataclass(frozen=True)
@@ -34,7 +31,7 @@ class Hook:
     name: str
     start: int
     instructions: tuple[Instruction, ...]
-    keep_endbr: bool
+    landing_pad: bytes
 
     @property
     def resume(self) -> int:
@@ -57,8 +54,11 @@ def _hook(
     ):
         raise ValueError(f"hook {function.name!r} is not in file-backed executable memory")
     uplifter.uplift_function(function)
-    keep_endbr = binary.read(entry, min(function.length, 4)) == _ENDBR64
-    start = entry + (4 if keep_endbr else 0)
+    target = exports.target
+    pad = target.landing_pad
+    if pad and binary.read(entry, min(function.length, len(pad))) != pad:
+        pad = b""
+    start = entry + len(pad)
     end = start
     stolen = []
     if function.has_unk_local_reference():
@@ -70,10 +70,10 @@ def _hook(
             break
         stolen.append(instruction)
         end += instruction.length
-        if end - start >= _JUMP_SIZE:
+        if end - start >= target.jump_size:
             break
-    if end - start < _JUMP_SIZE:
-        raise ValueError(f"hook {function.name!r} has no {_JUMP_SIZE}-byte entry window")
+    if end - start < target.jump_size:
+        raise ValueError(f"hook {function.name!r} has no {target.jump_size}-byte entry window")
     if any(start < address < end for address in exports.references):
         raise ValueError(f"hook {function.name!r} has a reference into its entry window")
     for address_set in exports.addresses.values():
@@ -90,16 +90,15 @@ def _hook(
                 instruction.type is InstructionType.BRANCH and entry <= target <= start
             ):
                 raise ValueError(f"hook {function.name!r} has control flow into its entry window")
-    return Hook(function.name.removeprefix("<EXTERNAL>::"), start, tuple(stolen), keep_endbr)
+    return Hook(function.name.removeprefix("<EXTERNAL>::"), start, tuple(stolen), pad)
 
 
-def _trampoline(hook: Hook, space: Space, isa: X86_64ISA) -> Fragment:
-    prefix = _ENDBR64 if hook.keep_endbr else b""
-    size = len(prefix) + hook.size + _JUMP_SIZE
-    address = space.allocate(size, 1, 5)
+def _trampoline(hook: Hook, space: Space, isa: ISA, target: Target) -> Fragment:
+    size = len(hook.landing_pad) + hook.size + target.jump_size
+    address = space.allocate(size, target.alignment, 5)
     if address is None:
         raise ValueError(f"insufficient cleared executable space for {hook.name!r} trampoline")
-    data = bytearray(prefix)
+    data = bytearray(hook.landing_pad)
     for instruction in hook.instructions:
         destination = address + len(data)
         if not isa.can_encode(instruction, destination):
@@ -108,7 +107,7 @@ def _trampoline(hook: Hook, space: Space, isa: X86_64ISA) -> Fragment:
         if moved.length != instruction.length:
             raise ValueError(f"cannot relocate entry instruction of {hook.name!r} in place")
         data.extend(moved.original_data)
-    data.extend(jump(address + len(data), hook.resume))
+    data.extend(target.jump(address + len(data), hook.resume))
     return Fragment(address, data)
 
 
@@ -116,13 +115,14 @@ def _build(args: argparse.Namespace, flags: list[str], directory: Path) -> None:
     if args.re_file.suffix.lower() != ".xml":
         raise ValueError("recr requires a typed Ghidra XML export")
     parsed = parse_re_file(str(args.re_file))
-    if (args.isa or parsed.isa) != "x86_64":
-        raise ValueError("recr currently supports x86-64")
     exports = read_exports(args.binary, args.re_file, parsed.functions)
+    target = exports.target
+    if (args.isa or parsed.isa) != target.isa:
+        raise ValueError(f"the export ISA does not match the {target.isa} executable")
     rewritten, names = rewrite_hooks(args.rec.read_text(encoding="utf-8"))
-    isa = X86_64ISA()
     original = Binary(args.binary)
-    uplifter = Uplifter("x86_64", original)
+    uplifter = Uplifter(target.isa, original)
+    isa = uplifter.isa
     hooks = []
     for name in names:
         functions = exports.functions.get(name, [])
@@ -134,8 +134,8 @@ def _build(args: argparse.Namespace, flags: list[str], directory: Path) -> None:
 
     extension = Object.read(compile_rec(
         args.rec.resolve(), rewritten, names, exports.declarations,
-        flags, args.cc, directory,
-    ))
+        flags, args.cc or target.compiler, directory, target,
+    ), target)
     for name in names:
         hook = extension.symbols.get(HOOK_PREFIX + name)
         if hook is None or not extension.sections[hook.section].flags & 4:
@@ -148,6 +148,7 @@ def _build(args: argparse.Namespace, flags: list[str], directory: Path) -> None:
     options = codezip.build_arg_parser().parse_args([
         str(args.binary), str(args.re_file), "-o", str(compacted), "--receipt",
         str(receipt_path), *(["-v"] if args.verbose else []),
+        "--isa", target.isa,
     ])
     if codezip.run_pipeline(options, protected_entries=protected):
         raise ValueError("codezip could not prepare the original binary")
@@ -157,17 +158,19 @@ def _build(args: argparse.Namespace, flags: list[str], directory: Path) -> None:
     image = Binary(compacted)
     trampolines = []
     for hook in hooks:
-        trampoline = _trampoline(hook, space, isa)
+        trampoline = _trampoline(hook, space, isa, target)
         if hook.name in imports:
             imports[hook.name] = trampoline.address
         trampolines.append(trampoline)
-    placed = place(extension, space, imports, isa)
+    placed = place(extension, space, imports, isa, target)
     patches = []
     for hook in hooks:
         symbol = extension.symbols[HOOK_PREFIX + hook.name]
-        target = extension.sections[symbol.section].address(symbol.offset)
+        destination = extension.sections[symbol.section].address(symbol.offset)
         patches.append(Fragment(
-            hook.start, bytearray(jump(hook.start, target) + b"\x90" * (hook.size - _JUMP_SIZE)),
+            hook.start, bytearray(
+                target.jump(hook.start, destination) + target.padding(hook.size - target.jump_size)
+            ),
         ))
 
     for fragment in (*trampolines, *placed, *patches):
@@ -207,7 +210,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("-r", "--receipt", type=Path)
     parser.add_argument("--isa")
-    parser.add_argument("--cc", default=os.environ.get("CC", "gcc"), help="GCC executable")
+    parser.add_argument("--cc", default=os.environ.get("CC"), help="GCC executable or command")
     parser.add_argument("-v", "--verbose", action="store_true")
     args, interspersed = parser.parse_known_args(argv)
     args.output = args.output or args.binary.with_name(args.binary.name + ".recr")
