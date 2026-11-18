@@ -53,7 +53,9 @@ writes the modified binary.
 
 ## Input formats
 
-YAML:
+YAML exports use `.yaml` or `.yml`. Use integer scalars for addresses, offsets,
+and lengths. Use `-1` when the file offset is unknown. Extra top-level fields
+are ignored.
 
 ```yaml
 isa: x86_64

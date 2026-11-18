@@ -109,6 +109,9 @@ Implemented:
   parser accepts address-space-qualified values such as `ram:00011220`, which
   Ghidra 12.2 emits for RISC-V. The generic little-endian RISC-V languages
   select the RV32 or RV64 implementation.
+- YAML parsing (`parsers/yaml.py`) validates function records from `.yaml`
+  and `.yml` exports. A paired sample fixture matches the Ghidra function
+  records, rewritten ELF, and receipt.
 - ELF access (`binary/elf.py`) using `pyelftools`: `PT_LOAD` virtual-to-file
   mapping, reads with BSS zero-fill, in-memory patching via
   `write(address, data)`, `write_to_disk(path)` (metadata fixups are currently
@@ -330,7 +333,6 @@ Implemented:
 
 Still stubs:
 
-- YAML parser
 - PE and raw binary backends
 - Verification passes
 
@@ -430,7 +432,8 @@ make -C test e2e-riscv
 - Add tests for new behavior and failure paths.
 - Use `tmp_path` for malformed or temporary inputs; do not write into the repo.
 - Do not use blanket module-level skips. Mark individual pending tests.
-- If `test/sample.c` changes, rebuild it and regenerate the Ghidra fixture.
+- If `test/sample.c` changes, rebuild it and regenerate the Ghidra and
+  equivalent YAML fixtures.
 - Generated fixtures must not contain machine-specific paths, usernames, or
   timestamps. Sanitize them before committing.
 - Run the full suite before finishing:

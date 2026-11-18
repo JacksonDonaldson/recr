@@ -6,12 +6,14 @@ import logging
 from pathlib import Path
 import re
 import shutil
+import subprocess
 
 from binary.binary import Binary
 from codezip import _render_receipt, build_arg_parser, main
 from ir import Address, FreeSpace
 
 GHIDRA_XML = Path(__file__).parent / "fixtures" / "sample_ghidra.xml"
+YAML_EXPORT = GHIDRA_XML.with_suffix(".yaml")
 
 # Ranges freed by the unreferenced-function pass and the outliner.
 FREE_RANGES = (
@@ -210,6 +212,26 @@ def test_receipt_records_freed_and_modified_ranges(
         "  - address: 0x401bf3\n"
         "    length: 0x1d\n"
     )
+
+
+def test_yaml_and_ghidra_produce_the_same_sample_output(
+    sample_elf: Path, tmp_path: Path,
+) -> None:
+    xml_output, yaml_output = tmp_path / "from-xml", tmp_path / "from-yaml"
+    xml_receipt, yaml_receipt = tmp_path / "xml.receipt.yaml", tmp_path / "yaml.receipt.yaml"
+    for export, output, receipt in (
+        (GHIDRA_XML, xml_output, xml_receipt),
+        (YAML_EXPORT, yaml_output, yaml_receipt),
+    ):
+        assert main([
+            str(sample_elf), str(export), "-o", str(output), "--receipt", str(receipt),
+        ]) == 0
+
+    assert xml_output.read_bytes() == yaml_output.read_bytes()
+    assert xml_receipt.read_bytes() == yaml_receipt.read_bytes()
+    original = subprocess.run([sample_elf], capture_output=True, check=True)
+    rewritten = subprocess.run([yaml_output], capture_output=True, check=True)
+    assert (rewritten.stdout, rewritten.stderr) == (original.stdout, original.stderr)
 
 
 def test_receipt_with_no_free_space() -> None:

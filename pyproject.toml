@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Recover unused space in compiled binaries without changing their layout."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["pyelftools>=0.31"]
+dependencies = ["pyelftools>=0.31", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]

@@ -7,7 +7,7 @@ from pathlib import Path
 from parsers import ghidra_xml, yaml
 from parsers.base import ParseError, ParseResult
 
-# Order matters: the first parser whose ``is_supported`` returns true wins.
+# The first successful content probe wins for formats that use probing.
 PARSER_LIST = (yaml, ghidra_xml)
 
 __all__ = ["PARSER_LIST", "ParseError", "ParseResult", "parse_re_file"]
@@ -19,11 +19,15 @@ def parse_re_file(filename: str) -> ParseResult:
     if not path.is_file():
         raise ParseError(f"input export does not exist: {filename}")
 
+    suffix = path.suffix.lower()
+    # Dispatch YAML directly so malformed exports retain their schema diagnostics.
+    if suffix in yaml.EXTENSIONS:
+        return yaml.parse(filename)
+
     for parser in PARSER_LIST:
         if parser.is_supported(filename):
             return parser.parse(filename)
 
-    suffix = path.suffix.lower()
     if suffix == ".xml":
         raise ParseError(
             f"{filename} has an .xml extension but is not a Ghidra XML export"

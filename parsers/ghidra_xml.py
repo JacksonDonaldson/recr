@@ -6,9 +6,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from ir import Function
-from parsers.base import ParseError, ParseResult
-
-UNKNOWN_FILE_OFFSET = -1
+from parsers.base import UNKNOWN_FILE_OFFSET, ParseError, ParseResult
 
 
 def is_supported(filename: str) -> bool:

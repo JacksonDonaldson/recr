@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 from ir import Function
 
+UNKNOWN_FILE_OFFSET = -1
+
 
 class ParseError(Exception):
     """Raised when an input file is not a valid supported export."""

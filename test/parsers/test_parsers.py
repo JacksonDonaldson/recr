@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from input_parser import ParseError, parse_re_file
-from parsers import ghidra_xml
+from parsers import ghidra_xml, yaml
 
 FIXTURES = Path(__file__).parents[1] / "fixtures"
 
@@ -52,15 +52,84 @@ EXPECTED_USER_FUNCTIONS = {
 }
 
 
-@pytest.mark.skip(reason="YAML parser is not implemented yet")
 def test_sample_yaml_parses() -> None:
-    result = parse_re_file(str(FIXTURES / "sample.yaml"))
+    path = str(FIXTURES / "sample.yaml")
+    assert yaml.is_supported(path)
+    result = parse_re_file(path)
     assert result.isa == "x86_64"
-    assert {function.name for function in result.functions} == {
-        "_start",
-        "main",
-        "helper",
-    }
+    assert [(f.name, f.start_address, f.file_offset, f.length) for f in result.functions] == [
+        ("_start", 0x401000, 0x1000, 0x20),
+        ("main", 0x401020, 0x1020, 0x40),
+        ("helper", 0x401060, 0x1060, 0x10),
+    ]
+    assert result.warnings == []
+
+
+def test_equivalent_yaml_and_ghidra_exports_parse_identically() -> None:
+    yaml_export = parse_re_file(str(FIXTURES / "sample_ghidra.yaml"))
+    xml_export = parse_re_file(str(FIXTURES / "sample_ghidra.xml"))
+    assert yaml_export.isa == xml_export.isa
+    assert yaml_export.functions == xml_export.functions
+
+
+def test_yaml_accepts_yml_extension_and_empty_function_mapping(tmp_path: Path) -> None:
+    path = tmp_path / "empty.YML"
+    path.write_text("isa: riscv64\nfunctions: {}\n", encoding="utf-8")
+    assert yaml.is_supported(str(path))
+    assert parse_re_file(str(path)).functions == []
+
+
+@pytest.mark.parametrize(
+    "text,reason",
+    [
+        ("functions: [", "invalid YAML export"),
+        ("!!map []", "expected a mapping node"),
+        ("!!python/object/apply:builtins.str [hello]", "could not determine a constructor"),
+        ("[]", "document must be a mapping"),
+        ("isa: true\nfunctions: {}", "'isa' must be a nonempty string"),
+        ("functions: {}", "'isa' must be a nonempty string"),
+        ("isa: x86_64\nfunctions: []", "'functions' must be a mapping"),
+        ("isa: x86_64\nfunctions: {42: {}}", "function names must be nonempty strings"),
+        ("isa: x86_64\nfunctions: {main: []}", "function 'main' must be a mapping"),
+        ("isa: x86_64\nfunctions: {main: {}, main: {}}", "duplicate mapping key 'main'"),
+    ],
+)
+def test_invalid_yaml_exports_are_rejected(tmp_path: Path, text: str, reason: str) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text(text, encoding="utf-8")
+    assert not yaml.is_supported(str(path))
+    with pytest.raises(ParseError, match=reason):
+        parse_re_file(str(path))
+
+
+@pytest.mark.parametrize(
+    "record,field",
+    [
+        ("start_address: -1, file_offset: 0, length: 1", "start_address"),
+        ("start_address: 0x10000000000000000, file_offset: 0, length: 1", "start_address"),
+        ("start_address: 1, file_offset: 0, length: 0", "length"),
+        ("start_address: 1, file_offset: 0, length: true", "length"),
+        ("start_address: 1, file_offset: 0, length: '0x1'", "length"),
+        ("start_address: 1, file_offset: -2, length: 1", "file_offset"),
+        ("start_address: 1, length: 1", "file_offset"),
+    ],
+)
+def test_invalid_yaml_function_numbers_are_rejected(tmp_path: Path, record: str, field: str) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text(f"isa: x86_64\nfunctions:\n  main: {{{record}}}\n", encoding="utf-8")
+    with pytest.raises(ParseError, match=f"function 'main' field '{field}'"):
+        parse_re_file(str(path))
+
+
+def test_yaml_rejects_a_function_extending_past_address_space(tmp_path: Path) -> None:
+    path = tmp_path / "overflow.yaml"
+    path.write_text(
+        "isa: riscv64\nfunctions:\n"
+        "  example: {start_address: 0xffffffffffffffff, file_offset: -1, length: 2}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ParseError, match="extends past the 64-bit address space"):
+        parse_re_file(str(path))
 
 
 def test_sample_ghidra_xml_parses() -> None:
