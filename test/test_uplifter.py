@@ -332,10 +332,10 @@ def test_sample_jump_table_function_is_uplifted(uplifted_sample) -> None:
     parsed, _, _ = uplifted_sample
     function = _function(parsed, "switch_dispatch")
 
-    assert function.start_address == 0x401B1E
+    assert function.start_address == 0x401B37
     assert function.has_unk_local_reference()
     assert function.outgoing_references == [
-        Reference(Address.absolute(0x401B3A), Address.unknown_local())
+        Reference(Address.absolute(0x401B53), Address.unknown_local())
     ]
 
     # The indirect jump hides every case body, including the default.  Each
@@ -343,17 +343,17 @@ def test_sample_jump_table_function_is_uplifted(uplifted_sample) -> None:
     assert [block.start_location for block in function.basic_blocks] == [
         Address.absolute(address)
         for address in (
-            0x401B1E,
-            0x401B2F,
-            0x401B3D,
-            0x401B44,
-            0x401B4B,
-            0x401B52,
-            0x401B59,
-            0x401B60,
-            0x401B67,
-            0x401B6E,
-            0x401B73,
+            0x401B37,
+            0x401B48,
+            0x401B56,
+            0x401B5D,
+            0x401B64,
+            0x401B6B,
+            0x401B72,
+            0x401B79,
+            0x401B80,
+            0x401B87,
+            0x401B8C,
         )
     ]
 
@@ -568,5 +568,5 @@ def test_pretty_print_renders_incoming_references(
 
     assert "incoming references (2 references):" in output
     assert "0x40189e -> 0x401156" in output
-    assert "0x401bc7 -> 0x401156" in output
+    assert "0x401be0 -> 0x401156" in output
 

@@ -32,7 +32,7 @@ def test_unreferenced_function_is_marked_as_free_space(
     parsed, uplifter, free_space = optimized_sample
     unused = _function(parsed, "unreferenced_function")
 
-    assert unused.start_address == 0x401B75
+    assert unused.start_address == 0x401B8E
     assert unused.length == 0x34
     assert unused.incoming_references == []
 

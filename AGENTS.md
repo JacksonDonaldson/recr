@@ -85,6 +85,7 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 | Path | Responsibility |
 | --- | --- |
 | `codezip.py` | CLI and pipeline orchestration |
+| `recr.py`, `recompiler/` | Compile and place .rec extensions and function hooks |
 | `input_parser.py` | Select and run an input parser |
 | `parsers/` | YAML and Ghidra XML exports |
 | `ir.py` | IR data model |
@@ -102,8 +103,13 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 Implemented:
 
 - `pyproject.toml` supports editable and wheel installs and provides the
-  `codezip` command. The distribution bundles the x86-64 and RISC-V SLEIGH
+  `codezip` and `recr` commands. The distribution bundles the x86-64 and RISC-V SLEIGH
   tables and the optional CUDA kernel source.
+- `recr` compiles .rec hooks for x86-64 non-PIE ELF with typed Ghidra XML.
+  It retains original functions used by the extension, places code and data
+  in codezip receipt ranges, and installs fixed-width entry jumps and original
+  call trampolines. Code can span disjoint ranges. Writable data requires
+  writable cleared space. GCC accepts flags, objects, and static libraries.
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.  The
   parser accepts address-space-qualified values such as `ram:00011220`, which
@@ -307,6 +313,8 @@ Implemented:
   The current freed-byte breakdown is `pcre2test` 515 bytes in 63 ranges and
   `pcre2grep` 2146 bytes in 48 ranges (2661 bytes total). The pre-red-zone
   baseline was 360 and 2105 bytes (2465 total).
+  The default codezip output is byte-identical on these inputs with recr's
+  protected-entry support in place.
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,

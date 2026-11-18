@@ -97,6 +97,26 @@ modified:
     length: 0x9
 ```
 
+## Recompilation with recr
+
+`recr` compiles a C extension for an x86-64 non-PIE ELF using a typed Ghidra XML
+export. Prefix a function definition with `@` to hook the original function.
+Calling that name normally from the extension invokes the original through a
+trampoline. C definitions in the extension take precedence over imported names.
+
+```sh
+recr ./a.out ./functions.xml ./hooks.rec -o ./a.out.recr -- -Iinclude -Llib -lexample
+```
+
+GCC accepts extra compiler flags, object files, and static libraries after
+`--`. Calls can use shared-library imports already present in the original
+ELF. Recr uses Ghidra's scalar, pointer, and array types for implicit declarations.
+Supply a C declaration for symbols with missing or unsupported type metadata.
+Code can be split across executable receipt ranges. Each data section needs
+a contiguous range and writable sections require writable space. Placement
+fails if the extension cannot fit. The sample hook and test-only space are in
+`test/fixtures/sample.rec` and `test/fixtures/recr_space.S`.
+
 ## Development
 
 ```sh

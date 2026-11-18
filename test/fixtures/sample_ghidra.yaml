@@ -38,11 +38,11 @@ functions:
   "max_array": {start_address: 0x40163b, file_offset: -1, length: 0x66}
   "bubble_sort": {start_address: 0x4016a1, file_offset: -1, length: 0xef}
   "binary_search": {start_address: 0x401790, file_offset: -1, length: 0x9b}
-  "main": {start_address: 0x40182b, file_offset: -1, length: 0x2f3}
-  "switch_dispatch": {start_address: 0x401b1e, file_offset: -1, length: 0x57}
-  "unreferenced_function": {start_address: 0x401b75, file_offset: -1, length: 0x34}
-  "mix_a": {start_address: 0x401ba9, file_offset: -1, length: 0x25}
-  "mix_b": {start_address: 0x401bce, file_offset: -1, length: 0x25}
-  "mix_c": {start_address: 0x401bf3, file_offset: -1, length: 0x25}
-  "mix_total": {start_address: 0x401c18, file_offset: -1, length: 0x3a}
-  "_fini": {start_address: 0x401c54, file_offset: -1, length: 0xd}
+  "main": {start_address: 0x40182b, file_offset: -1, length: 0x30c}
+  "switch_dispatch": {start_address: 0x401b37, file_offset: -1, length: 0x57}
+  "unreferenced_function": {start_address: 0x401b8e, file_offset: -1, length: 0x34}
+  "mix_a": {start_address: 0x401bc2, file_offset: -1, length: 0x25}
+  "mix_b": {start_address: 0x401be7, file_offset: -1, length: 0x25}
+  "mix_c": {start_address: 0x401c0c, file_offset: -1, length: 0x25}
+  "mix_total": {start_address: 0x401c31, file_offset: -1, length: 0x3a}
+  "_fini": {start_address: 0x401c6c, file_offset: -1, length: 0xd}

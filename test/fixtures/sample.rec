@@ -1,0 +1,20 @@
+int add(int a, int b)
+{
+    return a + b + 3;
+}
+
+char other_global_string[] = "hook global string";
+
+int @min_int(int a, int b)
+{
+    printf("min_int just got called\n");
+    int result = min_int(a - 1, b);
+    printf("original min_int=%d add=%d subtract=%d\n",
+           result, add(1, 2), subtract(2, 1));
+    printf("typed result=%.1f\n", recr_scale(2.0));
+    global_string[0] = 'a';
+    other_global_string[0] = 'c';
+    printf("in hook: global_string=%s other_global_string=%s\n",
+           global_string, other_global_string);
+    return result;
+}

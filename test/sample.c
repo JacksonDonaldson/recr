@@ -12,6 +12,10 @@
 int switch_dispatch(int value);
 int mix_total(int value);
 
+
+char global_string[] = "global string";
+char other_global_string[] = "other global string";
+
 int add(int a, int b)
 {
     return a + b;
@@ -318,6 +322,9 @@ int main(void)
     fact = factorial(6);
     printf("total=%d factorial=%llu first=%d last=%d\n",
            total, fact, values[0], values[count - 1]);
+
+    printf("global_string=%s other_global_string=%s\n",
+           global_string, other_global_string);
 
     return 0;
 }

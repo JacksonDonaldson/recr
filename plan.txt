@@ -33,6 +33,12 @@ Overview:
 
 Overall project structure:
 
+recr.py and recompiler/:
+    - compile .rec C extensions against typed Ghidra symbols
+    - invoke codezip with the original functions needed by the extension protected
+    - map linked sections into cleared ranges and install function hooks
+    - retain callable originals using relocated entry instructions and a return jump
+
 codezip.py:
     - orchestrator
     - takes arguments, invokes functions in other parts of project as necessary

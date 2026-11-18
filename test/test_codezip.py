@@ -18,18 +18,18 @@ YAML_EXPORT = GHIDRA_XML.with_suffix(".yaml")
 # Ranges freed by the unreferenced-function pass and the outliner.
 FREE_RANGES = (
     (0x4010A0, 0x5),
-    (0x401B83, 0x26),
-    (0x401BC6, 0x8),
-    (0x401BEB, 0x8),
-    (0x401C10, 0x8),
+    (0x401B9C, 0x26),
+    (0x401BDF, 0x8),
+    (0x401C04, 0x8),
+    (0x401C29, 0x8),
 )
 
 # Live code rewritten by outlining: the shared block and its three callers.
 MODIFIED_RANGES = (
-    (0x401B75, 0xE),
-    (0x401BA9, 0x1D),
-    (0x401BCE, 0x1D),
-    (0x401BF3, 0x1D),
+    (0x401B8E, 0xE),
+    (0x401BC2, 0x1D),
+    (0x401BE7, 0x1D),
+    (0x401C0C, 0x1D),
 )
 
 SHARED_BLOCK = bytes.fromhex("897dfc8b45fc01c083c00389c7c3")
@@ -105,7 +105,7 @@ def test_pipeline_writes_binary_with_free_space_filled(
     assert "removing unreferenced functions" in caplog.text
     assert "marked 2 function(s) as free space" in caplog.text
     assert (
-        "free space 0x401b75 (0x34 bytes): "
+        "free space 0x401b8e (0x34 bytes): "
         "unreferenced function unreferenced_function"
     ) in caplog.text
     assert re.search(
@@ -194,22 +194,22 @@ def test_receipt_records_freed_and_modified_ranges(
         "freed:\n"
         "  - address: 0x4010a0\n"
         "    length: 0x5\n"
-        "  - address: 0x401b83\n"
+        "  - address: 0x401b9c\n"
         "    length: 0x26\n"
-        "  - address: 0x401bc6\n"
+        "  - address: 0x401bdf\n"
         "    length: 0x8\n"
-        "  - address: 0x401beb\n"
+        "  - address: 0x401c04\n"
         "    length: 0x8\n"
-        "  - address: 0x401c10\n"
+        "  - address: 0x401c29\n"
         "    length: 0x8\n"
         "modified:\n"
-        "  - address: 0x401b75\n"
+        "  - address: 0x401b8e\n"
         "    length: 0xe\n"
-        "  - address: 0x401ba9\n"
+        "  - address: 0x401bc2\n"
         "    length: 0x1d\n"
-        "  - address: 0x401bce\n"
+        "  - address: 0x401be7\n"
         "    length: 0x1d\n"
-        "  - address: 0x401bf3\n"
+        "  - address: 0x401c0c\n"
         "    length: 0x1d\n"
     )
 

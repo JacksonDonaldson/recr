@@ -146,9 +146,10 @@ def run_optimizer(
     uplifter: "Uplifter",
     isa: "ISA",
     free_space: list[FreeSpace],
+    *, protected_entries: frozenset[int] = frozenset(),
 ) -> ExtractionResult | None:
     """Extract repeated regions and relink them into free space."""
-    result = extract_instruction_regions(binary, uplifter, isa)
+    result = extract_instruction_regions(binary, uplifter, isa, protected_entries=protected_entries)
     if result is None:
         return None
 
@@ -176,7 +177,8 @@ def run_optimizer(
 
 
 def extract_instruction_regions(
-    binary: "Binary", uplifter: "Uplifter", isa: "ISA"
+    binary: "Binary", uplifter: "Uplifter", isa: "ISA", *,
+    protected_entries: frozenset[int] = frozenset(),
 ) -> ExtractionResult | None:
     """Find profitable matches and regenerate the functions they touch."""
     if not isa.supports_outlining:
@@ -187,7 +189,10 @@ def extract_instruction_regions(
         return None
 
     cache: dict[int, bytes | None] = {}
-    functions = _eligible_functions(uplifter, isa)
+    functions = [
+        function for function in _eligible_functions(uplifter, isa)
+        if function.start_address not in protected_entries
+    ]
     index = _build_instruction_index(functions, isa, cache)
     result = ExtractionResult()
     seen: set[tuple[frozenset[int], frozenset[bytes]]] = set()

@@ -15,13 +15,14 @@ test = ["pytest>=8.0"]
 
 [project.scripts]
 codezip = "codezip:main"
+recr = "recr:main"
 
 [tool.setuptools]
-py-modules = ["cache", "codezip", "input_parser", "ir", "uplifter"]
+py-modules = ["cache", "codezip", "input_parser", "ir", "recr", "uplifter"]
 include-package-data = false
 
 [tool.setuptools.packages.find]
-include = ["binary", "gpu", "isa", "isa.*", "optimizers", "parsers"]
+include = ["binary", "gpu", "isa", "isa.*", "optimizers", "parsers", "recompiler"]
 namespaces = false
 
 [tool.setuptools.package-data]

@@ -490,9 +490,9 @@ def test_sample_outliner_selects_the_shared_mix_expression(
     assert {
         (space.start.value, space.size) for space in result.free_space
     } == {
-        (0x401BC6, 0x8),
-        (0x401BEB, 0x8),
-        (0x401C10, 0x8),
+        (0x401BDF, 0x8),
+        (0x401C04, 0x8),
+        (0x401C29, 0x8),
     }
 
 

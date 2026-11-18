@@ -112,7 +112,9 @@ def _render_receipt(
     return "\n".join(lines) + "\n"
 
 
-def run_pipeline(args: argparse.Namespace) -> int:
+def run_pipeline(
+    args: argparse.Namespace, *, protected_entries: frozenset[int] = frozenset(),
+) -> int:
     """Parse, uplift, remove functions, outline, fill free space, and write."""
     _configure_logging(args.verbose)
 
@@ -196,7 +198,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
 
     LOGGER.info("removing unreferenced functions")
     free_space = function_remover.run_optimizer(
-        binary, uplifter, uplifter.isa
+        binary, uplifter, uplifter.isa, protected_entries=protected_entries,
     )
     LOGGER.info("marked %d function(s) as free space", len(free_space))
     for space in free_space:
@@ -229,7 +231,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
     LOGGER.info("outlining repeated instruction regions")
     try:
         outline_result = outliner.run_optimizer(
-            binary, uplifter, uplifter.isa, free_space
+            binary, uplifter, uplifter.isa, free_space, protected_entries=protected_entries,
         )
     except (ValueError, NotImplementedError) as exc:
         LOGGER.error("outlining failed: %s", exc)
