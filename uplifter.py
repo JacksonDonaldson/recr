@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from itertools import chain
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,14 @@ _BLOCK_ENDING_TYPES = frozenset(
         InstructionType.RET,
     }
 )
+
+
+class FunctionExtentError(ValueError):
+    """The decoded instructions are inconsistent with the declared extent."""
+
+    def __init__(self, message: str, covered_end: int) -> None:
+        super().__init__(message)
+        self.covered_end = covered_end
 
 
 class Uplifter:
@@ -69,6 +78,42 @@ class Uplifter:
         function.basic_blocks = basic_blocks
         function.outgoing_references = outgoing_references
         self.function_map[Address.absolute(start)] = function
+
+    def entries_to_preserve(
+        self, rejected_ranges: Sequence[tuple[int, int]]
+    ) -> frozenset[int]:
+        """Preserve overlapping functions and targets referenced by rejected bytes."""
+        if not rejected_ranges:
+            return frozenset()
+
+        functions = self.function_map.values()
+        owners = {
+            instruction.address: function.start_address
+            for function in functions
+            for block in function.basic_blocks
+            for instruction in block.instructions
+        }
+        targets = set(owners)
+        protected = set()
+        for start, end in rejected_ranges:
+            protected.update(
+                function.start_address for function in functions
+                if function.start_address < end
+                and start < function.start_address + function.length
+            )
+            protected.update(
+                owners[target]
+                for _, target in chain(
+                    self.isa.iter_pointer_references(self.binary, start, end, targets),
+                    self.isa.iter_address_references(self.binary, start, end, targets),
+                )
+            )
+            for flow in self.isa.decode_control_flow_range(self.binary, start, end):
+                protected.update(
+                    owners[target.value] for target in flow.flows_to
+                    if target.kind is AddressKind.ABSOLUTE and target.value in owners
+                )
+        return frozenset(protected)
 
     def build_xrefs(self) -> None:
         """Recover cross-references across the full binary.
@@ -163,9 +208,10 @@ class Uplifter:
                     f"{address:#x} has non-positive length"
                 )
             if address + instruction.length > end:
-                raise ValueError(
+                raise FunctionExtentError(
                     f"cannot uplift function {function.name}: instruction at "
-                    f"{address:#x} extends past the function end {end:#x}"
+                    f"{address:#x} extends past the function end {end:#x}",
+                    address + instruction.length,
                 )
 
             instructions[address] = instruction
@@ -252,10 +298,11 @@ class Uplifter:
 
         unreachable = sorted(set(instructions) - visited)
         if unreachable:
-            raise ValueError(
+            raise FunctionExtentError(
                 f"cannot uplift function {function.name}: "
                 f"{len(unreachable)} decoded instruction(s) are unreachable "
-                f"from entry {start:#x} (first at {unreachable[0]:#x})"
+                f"from entry {start:#x} (first at {unreachable[0]:#x})",
+                end,
             )
 
         return (

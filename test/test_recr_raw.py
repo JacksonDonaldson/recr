@@ -95,6 +95,81 @@ def test_built_static_raw_fixture_runs(firmware: Firmware, tmp_path: Path) -> No
     assert firmware.run(firmware.binary, tmp_path / "original") == 14
 
 
+@pytest.mark.parametrize("failure", ["unreachable", "overrun", "decode"])
+def test_recr_classifies_uplift_failures(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture, failure: str,
+) -> None:
+    image = tmp_path / "original.bin"
+    manifest = tmp_path / "original.yaml"
+    hook = tmp_path / "change.re.c"
+    output = tmp_path / "result.bin"
+    receipt = tmp_path / "receipt.yaml"
+    base = 0x400000
+    bad, neighbor = 0x40, 0x60
+    data = bytearray(b"\xcc" * 0x200)
+    data[:6] = bytes.fromhex("b8 07 00 00 00 c3")
+    data[0x100:0x180] = b"\x90" * 0x7f + b"\xc3"
+    if failure == "unreachable":
+        data[bad:bad + 4] = bytes.fromhex("eb 02 90 90")
+        # The only reachable branch into neighbor targets its second instruction.
+        disp = neighbor + 1 - (bad + 9)
+        data[bad + 4:bad + 9] = b"\xe9" + disp.to_bytes(4, "little", signed=True)
+        data[neighbor:neighbor + 4] = bytes.fromhex("90 90 90 c3")
+        length = 9
+        reason = "2 decoded instruction(s) are unreachable"
+    elif failure == "overrun":
+        neighbor = bad + 2
+        data[bad:neighbor + 4] = bytes.fromhex("b8 90 90 90 90 c3")
+        length = 2
+        reason = "extends past the function end"
+    else:
+        bad, length = len(data) - 1, 1
+        data[bad] = 0x0f
+        data[neighbor:neighbor + 4] = bytes.fromhex("90 90 90 c3")
+        reason = "failed to decode instruction"
+    image.write_bytes(data)
+    manifest.write_text(yaml.safe_dump({
+        "binary": image.name,
+        "isa": "x86_64",
+        "regions": [dict(start_address=base, file_offset=0, length=len(data), permissions="rx")],
+        "functions": {
+            "transform": dict(start_address=base, length=6, declaration="int transform(void);"),
+            "bad": dict(start_address=base + bad, length=length),
+            "neighbor": dict(start_address=base + neighbor, length=4),
+            "spare": dict(start_address=base + 0x100, length=0x80),
+        },
+    }))
+    hook.write_text("int @transform(void) { return 17; }\n")
+    args = [str(manifest), str(hook), "-o", str(output), "-r", str(receipt), "--cc", "gcc"]
+    assert main(args) == (1 if failure == "decode" else 0)
+    stderr = capsys.readouterr().err
+    if failure == "decode":
+        assert reason in caplog.text
+        assert "failed to uplift bad" in caplog.text
+        assert not output.exists()
+        assert not receipt.exists()
+        return
+
+    assert reason in stderr
+    assert "recr: warning: cannot uplift function bad:" in stderr
+    assert "[-Winvalid-function-extent]" in stderr
+    rewritten = output.read_bytes()
+    assert rewritten[bad:bad + length] == data[bad:bad + length]
+    assert rewritten[neighbor:neighbor + 4] == data[neighbor:neighbor + 4]
+    assert rewritten[:6] != data[:6]
+    previous_receipt = receipt.read_bytes()
+
+    assert main([*args, "-Werror"]) == 1
+    assert "recr: error: cannot uplift function bad:" in capsys.readouterr().err
+    assert output.read_bytes() == rewritten
+    assert receipt.read_bytes() == previous_receipt
+
+    assert main([*args, "-Werror", "-Wno-invalid-function-extent"]) == 0
+    assert reason not in capsys.readouterr().err
+    assert output.read_bytes() == rewritten
+    assert receipt.read_bytes() == previous_receipt
+
+
 @pytest.mark.parametrize("with_ghidra_export", [False, True], ids=["yaml-functions", "ghidra-functions"])
 @pytest.mark.parametrize(("warning_flags", "warns"), [
     ([], True),

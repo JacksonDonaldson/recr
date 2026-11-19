@@ -25,10 +25,11 @@ from recompiler.exports import Exports, read_exports
 from recompiler.placement import Fragment, Object, Space, place
 from recompiler.raw import FUNCTION_OUTSIDE_EXECUTABLE_RANGE, SKIP_SHORT_FUNCTIONS, RawInput, read_raw_input
 from recompiler.target import Target
-from uplifter import Uplifter
+from uplifter import FunctionExtentError, Uplifter
 
 
 IGNORING_THUNK_FUNCTION = "ignoring-thunk-function"
+INVALID_FUNCTION_EXTENT = "invalid-function-extent"
 
 
 class WarningError(Exception):
@@ -222,10 +223,18 @@ def _build(
         str(receipt_path), *(["-v"] if args.verbose else []),
         "--isa", target.isa,
     ])
+
+    def warn_invalid_extent(function: Function, error: FunctionExtentError) -> None:
+        for hook in hooks:
+            if hook.start < error.covered_end and function.start_address < hook.resume:
+                raise ValueError(f"{error}. The rejected extent overlaps hook {hook.name!r}")
+        warnings.emit(str(error), INVALID_FUNCTION_EXTENT)
+
     if codezip.run_pipeline(
         options, protected_entries=protected,
         binary=raw.binary if raw is not None else None,
         parsed=parsed, warn=warnings.emit,
+        warn_invalid_extent=warn_invalid_extent,
     ):
         raise ValueError("codezip could not prepare the original binary")
     receipt = yaml.safe_load(receipt_path.read_text(encoding="utf-8"))
@@ -279,10 +288,12 @@ def main(argv: list[str] | None = None) -> int:
     suppress_range_warning = f"-Wno-{FUNCTION_OUTSIDE_EXECUTABLE_RANGE}"
     suppress_short_warning = f"-Wno-{SKIP_SHORT_FUNCTIONS}"
     suppress_thunk_warning = f"-Wno-{IGNORING_THUNK_FUNCTION}"
+    suppress_extent_warning = f"-Wno-{INVALID_FUNCTION_EXTENT}"
     suppressible_warnings = {
         suppress_range_warning: FUNCTION_OUTSIDE_EXECUTABLE_RANGE,
         suppress_short_warning: SKIP_SHORT_FUNCTIONS,
         suppress_thunk_warning: IGNORING_THUNK_FUNCTION,
+        suppress_extent_warning: INVALID_FUNCTION_EXTENT,
     }
     parser = argparse.ArgumentParser(
         prog="recr", description="Place compiled .rec hooks into space recovered by codezip.",
@@ -294,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
             f"  {suppress_range_warning}  suppress warnings for raw functions outside executable regions\n"
             f"  {suppress_short_warning:<38}  suppress warnings for raw functions shorter than the target alignment\n"
             f"  {suppress_thunk_warning:<38}  suppress warnings when a short hook candidate is ignored\n"
+            f"  {suppress_extent_warning:<38}  suppress warnings for inconsistent function extents\n"
             "\nPass additional GCC flags, objects, and static archives after --."
         ),
     )

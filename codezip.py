@@ -18,10 +18,10 @@ from pathlib import Path
 
 from binary.binary import Binary
 from input_parser import ParseError, parse_re_file
-from ir import FreeSpace
+from ir import FreeSpace, Function
 from optimizers import function_remover, outliner
 from parsers.base import ParseResult
-from uplifter import Uplifter
+from uplifter import FunctionExtentError, Uplifter
 
 LOGGER = logging.getLogger("codezip")
 
@@ -118,6 +118,7 @@ def run_pipeline(
     args: argparse.Namespace, *, protected_entries: frozenset[int] = frozenset(),
     binary: Binary | None = None, parsed: ParseResult | None = None,
     warn: Callable[[str], None] | None = None,
+    warn_invalid_extent: Callable[[Function, FunctionExtentError], None] | None = None,
 ) -> int:
     """Compact and write the image, using caller-supplied input metadata when available."""
     _configure_logging(args.verbose)
@@ -157,6 +158,7 @@ def run_pipeline(
         return 1
 
     failures = 0
+    rejected_ranges: list[tuple[int, int]] = []
     for function in parsed.functions:
         LOGGER.debug(
             "uplifting %s @ %#x (%#x bytes)",
@@ -166,6 +168,13 @@ def run_pipeline(
         )
         try:
             uplifter.uplift_function(function)
+        except FunctionExtentError as exc:
+            if warn_invalid_extent is None:
+                failures += 1
+                LOGGER.error("failed to uplift %s: %s", function.name, exc)
+            else:
+                warn_invalid_extent(function, exc)
+                rejected_ranges.append((function.start_address, exc.covered_end))
         except (ValueError, NotImplementedError) as exc:
             failures += 1
             LOGGER.error("failed to uplift %s: %s", function.name, exc)
@@ -173,7 +182,7 @@ def run_pipeline(
             failures += 1
             LOGGER.error("failed to uplift %s: %s", function.name, exc)
 
-    uplifted = len(parsed.functions) - failures
+    uplifted = len(parsed.functions) - failures - len(rejected_ranges)
     LOGGER.info(
         "uplifted %d/%d function(s)", uplifted, len(parsed.functions)
     )
@@ -192,6 +201,7 @@ def run_pipeline(
     LOGGER.info("recovering cross-references")
     try:
         uplifter.build_xrefs()
+        protected_entries |= uplifter.entries_to_preserve(rejected_ranges)
     except ValueError as exc:
         LOGGER.error("failed to recover cross-references: %s", exc)
         return 1

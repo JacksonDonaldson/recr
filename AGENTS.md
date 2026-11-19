@@ -127,6 +127,10 @@ Implemented:
   RISC-V placement checks JAL reach, relinks ELF immediates, and keeps
   AUIPC/JALR call pairs together. The RISC-V tests run the RV64 sample and
   execute hooked RV64 and RV32 ELF fixtures under QEMU.
+  During compaction, unreachable decoded instructions and instructions crossing
+  a declared function end warn with `invalid-function-extent`. Recr excludes
+  those ranges, protects overlapping functions and recovered reference targets,
+  and requires valid hook extents. Standalone codezip rejects extent mismatches.
 - `recr <manifest.yaml> [<functions.xml>] <hooks.rec>` also accepts static
   raw images. The manifest names the image, gives disjoint virtual regions
   with permissions, and lists entry points to preserve. Regions without a
@@ -144,7 +148,10 @@ Implemented:
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.  The
   parser accepts address-space-qualified values such as `ram:00011220`, which
   Ghidra 12.2 emits for RISC-V. The generic little-endian RISC-V languages
-  select the RV32 or RV64 implementation.
+  select the RV32 or RV64 implementation. The parser skips multi-range bodies
+  and starts single-range bodies at the exported entry, omitting any bytes
+  before it. If the export marks no memory sections as artificial, the parser
+  skips functions named in the `<EXTERNAL>` namespace.
 - YAML parsing (`parsers/yaml.py`) validates function records from `.yaml`
   and `.yml` exports. A paired sample fixture matches the Ghidra function
   records, rewritten ELF, and receipt.
@@ -347,7 +354,7 @@ Implemented:
   baseline was 360 and 2105 bytes (2465 total).
   The default codezip outputs and receipts are byte-identical on these inputs
   with recr's protected entries, raw-image function filtering, warning controls,
-  and runtime-only region support.
+  runtime-only region support, and invalid-extent recovery.
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,
