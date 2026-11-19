@@ -35,8 +35,17 @@ def input_image(tmp_path_factory):
         str(TEST / "sample.c"), str(FIXTURES / "recr_space.S"), "-o", str(binary),
     ], check=True, capture_output=True)
     root = ET.parse(GHIDRA_XML)
+    markup = root.getroot().find("MARKUP")
+    if markup is None:
+        markup = ET.SubElement(root.getroot(), "MARKUP")
     with binary.open("rb") as stream:
         symbols = ELFFile(stream).get_section_by_name(".symtab")
+        caller, = symbols.get_symbol_by_name("main")
+        callee, = symbols.get_symbol_by_name("min_int")
+        ET.SubElement(
+            markup, "MEMORY_REFERENCE",
+            ADDRESS=f"{caller['st_value']:x}", TO_ADDRESS=f"{callee['st_value']:x}",
+        )
         for symbol in symbols.iter_symbols():
             if not symbol.name.startswith(("recr_spare_", "recr_scale")):
                 continue
@@ -52,8 +61,14 @@ def input_image(tmp_path_factory):
     return binary, export
 
 
-def test_hook_uses_original_functions_and_shadows_exports(input_image, tmp_path):
+@pytest.mark.parametrize("namespace", ["", "main_app::console::"], ids=["global", "nested-namespace"])
+def test_hook_uses_original_functions_and_shadows_exports(input_image, tmp_path, namespace):
     binary, export = input_image
+    if namespace:
+        xml = ET.parse(export)
+        xml.find("./FUNCTIONS/FUNCTION[@NAME='min_int']").set("NAME", f"{namespace}min_int")
+        export = tmp_path / "namespaced.xml"
+        xml.write(export)
     output = tmp_path / "hooked"
     receipt = tmp_path / "receipt.yaml"
     assert main([str(binary), str(export), str(FIXTURES / "sample.rec"), "-o", str(output), "-r", str(receipt)]) == 0
@@ -115,15 +130,23 @@ def test_recr_rejects_missing_hook(sample_elf, tmp_path, capsys):
     assert not output.exists()
 
 
-def test_recr_rejects_ambiguous_hook(sample_elf, tmp_path, capsys):
+@pytest.mark.parametrize("namespaced", [False, True], ids=["duplicate-record", "namespace-collision"])
+def test_recr_rejects_ambiguous_hook(sample_elf, tmp_path, capsys, namespaced):
     root = ET.parse(GHIDRA_XML)
     nodes = root.find("FUNCTIONS")
-    nodes.append(nodes.find("FUNCTION[@NAME='min_int']"))
+    function = nodes.find("FUNCTION[@NAME='min_int']")
+    if namespaced:
+        function.set("NAME", "main_app::min_int")
+        nodes.find("FUNCTION[@NAME='abs_int']").set("NAME", "other_app::min_int")
+    else:
+        nodes.append(function)
     export, rec = tmp_path / "duplicate.xml", tmp_path / "duplicate.rec"
+    output = tmp_path / "output"
     root.write(export)
     rec.write_text("int @min_int(int a, int b) { return a + b; }")
-    assert main([str(sample_elf), str(export), str(rec), "-o", str(tmp_path / "output")]) == 1
+    assert main([str(sample_elf), str(export), str(rec), "-o", str(output)]) == 1
     assert "must match exactly one original function, found 2" in capsys.readouterr().err
+    assert not output.exists()
 
 
 def test_placement_failure_preserves_an_existing_output(sample_elf, tmp_path, capsys):

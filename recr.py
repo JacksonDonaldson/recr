@@ -70,7 +70,7 @@ class Hook:
 
 
 def _hook(
-    function: Function, binary: Binary, uplifter: Uplifter, exports: Exports,
+    name: str, function: Function, binary: Binary, uplifter: Uplifter, exports: Exports,
 ) -> Hook:
     entry = function.start_address
     if not any(
@@ -116,7 +116,7 @@ def _hook(
                 instruction.type is InstructionType.BRANCH and entry <= target <= start
             ):
                 raise ValueError(f"hook {function.name!r} has control flow into its entry window")
-    return Hook(function.name.removeprefix("<EXTERNAL>::"), start, tuple(stolen), pad)
+    return Hook(name, start, tuple(stolen), pad)
 
 
 def _trampoline(hook: Hook, space: Space, isa: ISA, target: Target) -> Fragment:
@@ -158,7 +158,7 @@ def _build(
         functions = exports.functions.get(name, [])
         if len(functions) != 1:
             raise ValueError(f"hook {name!r} must match exactly one original function, found {len(functions)}")
-        hooks.append(_hook(functions[0], original, uplifter, exports))
+        hooks.append(_hook(name, functions[0], original, uplifter, exports))
     if len({hook.start for hook in hooks}) != len(hooks):
         raise ValueError("multiple hooks alias the same function entry")
 

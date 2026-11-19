@@ -147,12 +147,13 @@ def read_ghidra_exports(
     addresses: dict[str, set[int]] = defaultdict(set)
     prototypes: dict[str, set[str]] = defaultdict(set)
     for function in functions:
-        name = function.name.removeprefix("<EXTERNAL>::")
+        name = function.name.rpartition("::")[2]
         if not IDENTIFIER.fullmatch(name):
             continue
         by_name[name].append(function)
         addresses[name].add(function.start_address)
-        declaration = _signature(name, function_nodes[function.start_address], definitions.get(name), typedefs)
+        definition = definitions.get(function.name, definitions.get(name))
+        declaration = _signature(name, function_nodes[function.start_address], definition, typedefs)
         if declaration:
             prototypes[name].add(declaration)
 
@@ -198,7 +199,7 @@ def read_ghidra_exports(
     }
     reference_addresses = set()
     for node in root.findall("MARKUP/MEMORY_REFERENCE"):
-        target = node.get("TO_ADDRESS")
-        if target:
-            reference_addresses.add(_parse_hex(target))
+        to_address = node.get("TO_ADDRESS")
+        if to_address:
+            reference_addresses.add(_parse_hex(to_address))
     return Exports(by_name, addresses, declarations, segments, relro or [], reference_addresses, target)

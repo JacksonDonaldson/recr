@@ -106,11 +106,14 @@ Implemented:
   `codezip` and `recr` commands. The distribution bundles the x86-64 and RISC-V SLEIGH
   tables and the optional CUDA kernel source.
 - `recr` compiles .rec hooks for x86-64, RV32, and RV64 non-PIE ELF with typed
-  Ghidra XML.
+  Ghidra XML. Hooks match the final component of Ghidra function names and
+  require a unique match.
   It retains original functions used by the extension, places code and data
   in codezip receipt ranges, and installs fixed-width entry jumps and original
-  call trampolines. Code can span disjoint ranges. Writable data requires
-  writable cleared space. GCC accepts flags, objects, and static libraries.
+  call trampolines. It rejects hooks with a Ghidra memory reference into the
+  interior of the overwritten entry window. Code can span disjoint ranges.
+  Writable data requires writable cleared space. GCC accepts flags, objects,
+  and static libraries.
   RISC-V placement checks JAL reach, relinks ELF immediates, and keeps
   AUIPC/JALR call pairs together. The RISC-V tests run the RV64 sample and
   execute hooked RV64 and RV32 ELF fixtures under QEMU.
@@ -458,6 +461,16 @@ make -C test e2e-riscv
 
 - Use pytest.
 - Add tests for new behavior and failure paths.
+- Inspect which optional records each consumer receives from pinned exports.
+  Supplement sections that are absent or empty with populated fixtures that
+  follow the export format. Cover absent and incomplete records where they
+  have distinct behavior.
+- Assert both the data extracted from optional records and the configuration
+  passed through to the next stage, such as the ISA and ABI. Run regression
+  tests against the old code to verify that they reproduce the reported failure.
+- Exercise metadata that governs safe rewriting through the CLI. Include a
+  permitted boundary and a nearby rejected value. Check the diagnostic and
+  the contents of any existing binary and receipt after rejection.
 - Use `tmp_path` for malformed or temporary inputs; do not write into the repo.
 - Do not use blanket module-level skips. Mark individual pending tests.
 - If `test/sample.c` changes, rebuild it and regenerate the Ghidra and

@@ -122,7 +122,7 @@ def test_recr_hooks_static_raw_image(
     export_args = []
     if with_ghidra_export:
         export = tmp_path / "firmware.xml"
-        _write_ghidra_export(firmware, export)
+        _write_ghidra_export(firmware, export, transform_name="main_app::transform")
         export_args.append(str(export))
         manifest = {key: value for key, value in firmware.layout.items() if key not in {"isa", "functions", "symbols"}}
     else:
@@ -159,22 +159,59 @@ def test_recr_hooks_static_raw_image(
     assert {entries["_start"], entries["dispatched"]}.isdisjoint(modified)
 
 
-def _write_ghidra_export(firmware: Firmware, output: Path) -> None:
+def _write_ghidra_export(firmware: Firmware, output: Path, *, transform_name: str = "transform") -> None:
     root = ET.Element("PROGRAM")
     language = "RISCV:LE:64:default:gcc" if firmware.isa == "riscv64" else "x86:LE:64:default:gcc"
     ET.SubElement(root, "PROCESSOR", LANGUAGE_PROVIDER=language)
     functions = ET.SubElement(root, "FUNCTIONS")
     for name, record in firmware.layout["functions"].items():
         start, length = record["start_address"], record["length"]
-        function = ET.SubElement(functions, "FUNCTION", NAME=name, ENTRY_POINT=f"{start:x}")
+        export_name = transform_name if name == "transform" else name
+        function = ET.SubElement(functions, "FUNCTION", NAME=export_name, ENTRY_POINT=f"{start:x}")
         ET.SubElement(function, "ADDRESS_RANGE", START=f"{start:x}", END=f"{start + length - 1:x}")
         if name == "transform":
             ET.SubElement(function, "RETURN_TYPE", DATATYPE="int")
-            ET.SubElement(function, "TYPEINFO_CMT").text = "int transform(int value)"
-    counter = f"{firmware.layout['symbols']['counter']['address']:x}"
+            ET.SubElement(function, "TYPEINFO_CMT").text = f"int {export_name}(int value)"
+    counter_address = firmware.layout["symbols"]["counter"]["address"]
+    counter = f"{counter_address:x}"
     ET.SubElement(ET.SubElement(root, "DATA"), "DEFINED_DATA", ADDRESS=counter, DATATYPE="int")
     ET.SubElement(ET.SubElement(root, "SYMBOL_TABLE"), "SYMBOL", NAME="counter", ADDRESS=counter)
+    markup = ET.SubElement(root, "MARKUP")
+    entry = firmware.layout["functions"]["_start"]["start_address"]
+    transform = firmware.layout["functions"]["transform"]["start_address"]
+    dispatched = firmware.layout["functions"]["dispatched"]["start_address"]
+    ET.SubElement(markup, "MEMORY_REFERENCE", ADDRESS=f"ram:{entry:x}", TO_ADDRESS=f"ram:{transform:x}")
+    # The dispatch pointer follows the four-byte counter in the assembly fixture.
+    ET.SubElement(markup, "MEMORY_REFERENCE", ADDRESS=f"ram:{counter_address + 4:x}", TO_ADDRESS=f"ram:{dispatched:x}")
     ET.ElementTree(root).write(output)
+
+
+@pytest.mark.parametrize("malformed", [False, True], ids=["inside-entry-window", "malformed-address"])
+def test_recr_rejects_unsafe_ghidra_reference(
+    firmware: Firmware, tmp_path: Path, capsys: pytest.CaptureFixture[str], malformed: bool,
+) -> None:
+    export = tmp_path / "firmware.xml"
+    _write_ghidra_export(firmware, export)
+    xml = ET.parse(export)
+    entry = firmware.layout["functions"]["_start"]["start_address"]
+    transform = firmware.layout["functions"]["transform"]["start_address"]
+    destination = "ram:not-hex" if malformed else f"ram:{transform + 2:x}"
+    ET.SubElement(xml.getroot().find("MARKUP"), "MEMORY_REFERENCE", ADDRESS=f"ram:{entry:x}", TO_ADDRESS=destination)
+    xml.write(export)
+    manifest = {key: value for key, value in firmware.layout.items() if key not in {"functions", "symbols"}}
+    firmware.manifest.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    output, receipt = tmp_path / "output", tmp_path / "receipt.yaml"
+    output.write_bytes(b"previous output")
+    receipt.write_bytes(b"previous receipt")
+
+    assert main([
+        str(firmware.manifest), str(export), str(HOOK), "--cc", shlex.join(firmware.compiler),
+        "-o", str(output), "-r", str(receipt),
+    ]) == 1
+    expected = "not-hex" if malformed else "hook 'transform' has a reference into its entry window"
+    assert expected in capsys.readouterr().err
+    assert output.read_bytes() == b"previous output"
+    assert receipt.read_bytes() == b"previous receipt"
 
 
 @pytest.mark.parametrize(("regions", "reason"), [

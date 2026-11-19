@@ -100,9 +100,12 @@ modified:
 ## Recompilation with recr
 
 `recr` compiles a C extension for an x86-64, RV32, or RV64 non-PIE ELF using a
-typed Ghidra XML export. Prefix a function definition with `@` to hook the original function.
-Calling that name normally from the extension invokes the original through a
-trampoline. C definitions in the extension take precedence over imported names.
+typed Ghidra XML export. Prefix a function definition with `@` to hook the
+original function. Use the final component of a qualified Ghidra name, such as
+`@AppVprintf` for `main_app::AppVprintf`. The hook name must identify exactly
+one function. Calling that name normally from the extension invokes the
+original through a trampoline. C definitions in the extension take precedence
+over imported names.
 
 ```sh
 recr ./a.out ./functions.xml ./hooks.rec -o ./a.out.recr -- -Iinclude -Llib -lexample
