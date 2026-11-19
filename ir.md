@@ -77,6 +77,12 @@ Types:
         Address from
         Address to
 
+    class JumpRange:
+        int minimum
+        int maximum
+
+        Inclusive offsets from the start of a fixed-width direct jump.
+
     class FreeSpace:
         Address start
         uint size
@@ -104,6 +110,7 @@ ISA contract:
         function add_extra_stack_space(instruction, pointer_size) -> Instruction
         function make_call_instruction() -> Instruction
         function outline_call_target_bounds(first, last) -> (min, max) | None
+        function jump_displacement_range() -> JumpRange
         function make_return_instruction() -> Instruction
         function uses_red_zone(function) -> bool
         function can_outline_region(function, block, instructions,
@@ -134,6 +141,11 @@ ISA contract:
         reachable from both source addresses. An empty interval rejects all
         destinations. None leaves the search unrestricted. Every candidate
         still requires the final set_instruction_target check.
+
+        jump_displacement_range describes the recompiler's direct entry,
+        return, and fragment jumps without address wrapping. Placement uses
+        it to constrain source or destination addresses and still validates
+        the final encoding, including alignment.
 
         uses_red_zone tracks the stack depth through the function's control-flow
         graph.  It returns true when a memory access is below the current RSP,

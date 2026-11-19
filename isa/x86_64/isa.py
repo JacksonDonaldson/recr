@@ -17,6 +17,7 @@ from ir import (
     AddressKind,
     Instruction,
     InstructionType,
+    JumpRange,
     StateSpaceKind,
 )
 from isa.isa import DecodedFlow, ISA
@@ -1148,6 +1149,11 @@ class X86_64ISA(ISA):
     def call_instruction_length(self) -> int:
         """Return the length of a ``call rel32`` used at an outline site."""
         return 5
+
+    def jump_displacement_range(self) -> JumpRange:
+        # JMP rel32 measures its signed displacement from the end of the instruction.
+        reach = 1 << 31
+        return JumpRange(5 - reach, 5 + reach - 1)
 
     def ret_instruction_length(self) -> int:
         """Return the length of a one-byte ``ret`` used at a target site."""

@@ -97,6 +97,27 @@ def test_built_static_raw_fixture_runs(firmware: Firmware, tmp_path: Path) -> No
     assert firmware.run(firmware.binary, tmp_path / "original") == 14
 
 
+@pytest.mark.parametrize("firmware", ["riscv64"], indirect=True)
+def test_recr_places_riscv_hook_and_trampoline_in_reach(firmware: Firmware, tmp_path: Path) -> None:
+    far = 0x900000
+    data = bytes.fromhex("13000000") * 7 + bytes.fromhex("67800000")
+    offset = firmware.binary.stat().st_size
+    with firmware.binary.open("ab") as image:
+        image.write(data)
+    firmware.layout["regions"].append(dict(start_address=far, file_offset=offset, length=len(data), permissions="rx"))
+    firmware.layout["functions"]["far_spare"] = dict(start_address=far, length=len(data))
+    firmware.manifest.write_text(yaml.safe_dump(firmware.layout), encoding="utf-8")
+
+    output = tmp_path / "hooked.bin"
+    receipt = tmp_path / "receipt.yaml"
+    assert main([
+        str(firmware.manifest), str(HOOK), "--cc", shlex.join(firmware.compiler), "-o", str(output), "-r", str(receipt),
+    ]) == 0
+    assert firmware.run(output, tmp_path / "hooked") == 24
+    assert output.read_bytes()[offset:] == b"\xff" * len(data)
+    assert any(item["address"] == far for item in yaml.safe_load(receipt.read_text())["freed"])
+
+
 @pytest.mark.parametrize("failure", ["unreachable", "overrun", "decode"])
 def test_recr_classifies_uplift_failures(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.enums import ENUM_RELOC_TYPE_x64
 from elftools.elf.relocation import RelocationSection
 
-from ir import Address, Instruction, InstructionType
+from ir import Address, Instruction, InstructionType, JumpRange
 from isa.isa import ISA
 from isa.riscv.encoding import UPPER, relative_immediate
 from isa.x86_64 import X86_64ISA
@@ -192,6 +193,12 @@ class Space:
     def aligned(address: int, align: int) -> int:
         return (address + align - 1) // align * align
 
+    @staticmethod
+    def nearest(lower: int, upper: int, align: int, near: int | None) -> int:
+        if near is None:
+            return lower
+        return min(upper, max(lower, (near + (align - 1) // 2) // align * align))
+
     def take(self, index: int, start: int, size: int) -> int:
         region = self.ranges.pop(index)
         end = start + size
@@ -201,28 +208,52 @@ class Space:
             self.ranges.append(Range(end, region.end, region.flags))
         return start
 
-    def allocate(self, size: int, align: int, flags: int) -> int | None:
-        candidates = []
+    def spans(
+        self, size: int, align: int, flags: int, bounds: tuple[int, int] | None,
+    ) -> Iterator[tuple[int, int, int]]:
+        """Yield each eligible range and its inclusive aligned start bounds."""
         for index, region in enumerate(self.ranges):
-            start = self.aligned(region.start, align)
-            if region.flags & flags == flags and start + size <= region.end:
-                # Preserve writable space for data when placing code or constants.
-                excess_permissions = (region.flags & ~flags).bit_count()
-                candidates.append((excess_permissions, region.end - region.start, start, index))
-        if candidates:
-            _, _, start, index = min(candidates)
-            return self.take(index, start, size)
+            if region.flags & flags != flags:
+                continue
+            lower, upper = region.start, region.end - size
+            if bounds is not None:
+                lower, upper = max(lower, bounds[0]), min(upper, bounds[1])
+            first, last = self.aligned(lower, align), upper // align * align
+            if first <= last:
+                yield index, first, last
+
+    def candidates(
+        self, size: int, align: int, flags: int, *, bounds: tuple[int, int] | None = None,
+        near: int | None = None, endpoints: bool = False,
+    ) -> Iterator[tuple[int, int]]:
+        candidates = []
+        for index, first, last in self.spans(size, align, flags, bounds):
+            region = self.ranges[index]
+            start = self.nearest(first, last, align, near)
+            starts = {start, first, last} if endpoints else (start,)
+            # Preserve writable and larger ranges for objects that need them.
+            excess = (region.flags & ~flags).bit_count()
+            for address in starts:
+                distance = abs(address - near) if near is not None else 0
+                candidates.append((excess, region.end - region.start, distance, address, index))
+        for _, _, _, address, index in sorted(candidates):
+            yield index, address
+
+    def allocate(
+        self, size: int, align: int, flags: int, *, bounds: tuple[int, int] | None = None,
+        near: int | None = None,
+    ) -> int | None:
+        candidate = next(self.candidates(size, align, flags, bounds=bounds, near=near), None)
+        if candidate is not None:
+            return self.take(*candidate, size)
         return None
 
-    def describe_capacity(self, align: int, flags: int) -> str:
+    def describe_capacity(self, align: int, flags: int, bounds: tuple[int, int] | None = None) -> str:
         permissions = "".join(letter for bit, letter in ((4, "r"), (2, "w"), (1, "x")) if flags & bit)
-        available = [
-            region.end - self.aligned(region.start, align)
-            for region in self.ranges if region.flags & flags == flags
-        ]
-        usable = [size for size in available if size > 0]
+        usable = [self.ranges[index].end - first for index, first, _ in self.spans(1, align, flags, bounds)]
+        reach = f" with a start address in [{bounds[0]:#x}, {bounds[1]:#x}]" if bounds is not None else ""
         return (
-            f"needs {permissions} permissions and {align}-byte alignment. "
+            f"needs {permissions} permissions and {align}-byte alignment{reach}. "
             f"{sum(usable)} usable bytes across {len(usable)} cleared ranges, "
             f"with {max(usable, default=0)} bytes in the largest"
         )
@@ -311,44 +342,57 @@ def _instructions(section: Section, isa: ISA, target: Target = X86_64) -> list[_
     return items
 
 
-def _split(section: Section, space: Space, isa: ISA, target: Target) -> None:
+def _split(
+    section: Section, space: Space, isa: ISA, target: Target,
+    hook_bounds: dict[int, tuple[int, int]], jump: JumpRange,
+) -> None:
     items = _instructions(section, isa, target)
+    offsets = {item.offset for item in items}
+    for offset in hook_bounds.keys() - offsets:
+        raise ValueError(f"hook entry at {section.name}+{offset:#x} is not an instruction boundary")
     remaining = items
     groups = []
+    bridge_bounds = None
     pair_interiors = {
         relocation.offset + 4 for relocation in section.relocations
         if target.machine == "EM_RISCV" and relocation.kind in riscv.CALL_PAIRS
     }
     while remaining:
         align = max(section.alignment, target.alignment) if not groups else target.alignment
-        candidates = []
-        for index, region in enumerate(space.ranges):
-            if region.flags & 5 != 5:
-                continue
-            start = space.aligned(region.start, align)
-            candidates.append((region.end - start, start, index))
-        for available, start, index in sorted(candidates, reverse=True):
+        candidates = [
+            (space.ranges[index].end, first, index, last)
+            for index, first, last in space.spans(1, align, section.permissions, bridge_bounds)
+        ]
+        candidates.sort(key=lambda item: (item[0] - item[1], item[1], item[2]), reverse=True)
+        for end, first, index, last in candidates:
             count = 0
             payload = 0
             for i, item in enumerate(remaining, 1):
+                bounds = hook_bounds.get(item.offset)
+                if bounds is not None:
+                    # Promotion can change the offset of an entry within a fragment.
+                    first = max(first, space.aligned(bounds[0] - payload, align))
+                    last = min(last, (bounds[1] - payload) // align * align)
                 payload += len(item.data)
-                if payload > available:
+                if first > last or first + payload > end:
                     break
                 if i < len(remaining) and remaining[i].offset in pair_interiors:
                     continue
                 glue = target.jump_size if i < len(remaining) and item.falls_through else 0
-                if payload + glue <= available:
-                    count, total = i, payload + glue
+                if first + payload + glue <= end:
+                    count, start, total, glue_size = i, first, payload + glue, glue
             if count:
                 break
         else:
+            reach = " while satisfying hook entry jump ranges" if hook_bounds else ""
             raise ValueError(
-                f"insufficient cleared executable space for {section.name}+{remaining[0].offset:#x}. "
+                f"insufficient cleared executable space for {section.name}+{remaining[0].offset:#x}{reach}. "
                 f"The next fragment starts with a {len(remaining[0].data)}-byte instruction and "
-                f"{space.describe_capacity(align, 5)}"
+                f"{space.describe_capacity(align, section.permissions, bridge_bounds)}"
             )
 
         space.take(index, start, total)
+        bridge_bounds = jump.destinations(start + total - glue_size) if glue_size else None
         fragment = Fragment(start, bytearray(total))
         section.fragments.append(fragment)
         members, remaining = remaining[:count], remaining[count:]
@@ -396,17 +440,41 @@ def _split(section: Section, space: Space, isa: ISA, target: Target) -> None:
 
 def place(
     object_: Object, space: Space, imports: dict[str, int], isa: ISA, target: Target = X86_64,
+    *, hook_entries: dict[Symbol, int] | None = None,
 ) -> list[Fragment]:
+    jump = isa.jump_displacement_range()
+    entry_bounds: dict[int | str, dict[int, tuple[int, int]]] = {}
+    for symbol, source in (hook_entries or {}).items():
+        sites = entry_bounds.setdefault(symbol.section, {})
+        lower, upper = jump.destinations(source)
+        if symbol.offset in sites:
+            old_lower, old_upper = sites[symbol.offset]
+            lower, upper = max(lower, old_lower), min(upper, old_upper)
+        sites[symbol.offset] = lower, upper
+
     sections = sorted(
-        object_.sections.values(),
-        key=lambda section: (not bool(section.flags & 1), bool(section.flags & 4), -len(section.data)),
+        object_.sections.items(),
+        key=lambda item: (
+            not bool(item[1].flags & 1), bool(item[1].flags & 4),
+            item[0] not in entry_bounds, -len(item[1].data),
+        ),
     )
     split = []
-    for section in sections:
+    for index, section in sections:
+        sites = entry_bounds.get(index, {})
+        bounds = None
+        near = None
+        if sites:
+            lower = max(start - offset for offset, (start, _) in sites.items())
+            upper = min(end - offset for offset, (_, end) in sites.items())
+            bounds = lower, upper
+            near = (lower + upper) // 2
         alignment = max(section.alignment, target.alignment) if section.flags & 4 else section.alignment
-        address = space.allocate(len(section.data), alignment, section.permissions)
+        address = space.allocate(len(section.data), alignment, section.permissions, bounds=bounds, near=near)
         if address is not None:
             section.fragments.append(Fragment(address, bytearray(section.data)))
+        elif sites and section.flags & 4:
+            _split(section, space, isa, target, sites, jump)
         elif section.flags & 4:
             split.append(section)
         else:
@@ -415,12 +483,12 @@ def place(
                 f"The section {space.describe_capacity(alignment, section.permissions)}"
             )
     for section in split:
-        _split(section, space, isa, target)
+        _split(section, space, isa, target, {}, jump)
 
     def resolve(symbol: Symbol, addend: int) -> int:
         return _symbol_address(object_, symbol, addend, imports)
 
-    for section in sections:
+    for _, section in sections:
         for relocation in section.relocations:
             try:
                 if target.machine == "EM_RISCV":
@@ -433,7 +501,7 @@ def place(
                     else _X86_RELOCATION_NAMES.get(relocation.kind, f"x86-64 relocation type {relocation.kind}")
                 )
                 raise ValueError(f"{relocation.describe(section, kind)} failed. {exc}") from exc
-    return [fragment for section in sections for fragment in section.fragments]
+    return [fragment for _, section in sections for fragment in section.fragments]
 
 
 def _symbol_address(object_: Object, symbol: Symbol, addend: int, imports: dict[str, int]) -> int:

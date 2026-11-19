@@ -157,13 +157,30 @@ def _hook(
 
 
 def _trampoline(hook: Hook, space: Space, isa: ISA, target: Target) -> Fragment:
-    size = len(hook.landing_pad) + hook.size + target.jump_size
-    address = space.allocate(size, target.alignment, 5)
-    if address is None:
-        raise ValueError(
-            f"insufficient cleared executable space for {hook.name!r} trampoline ({size} contiguous bytes). "
-            f"The trampoline {space.describe_capacity(target.alignment, 5)}"
-        )
+    return_offset = len(hook.landing_pad) + hook.size
+    size = return_offset + target.jump_size
+    lower, upper = isa.jump_displacement_range().sources(hook.resume)
+    bounds = lower - return_offset, upper - return_offset
+    failure = None
+    for index, address in space.candidates(size, target.alignment, 5, bounds=bounds, near=hook.start, endpoints=True):
+        try:
+            fragment = _trampoline_at(hook, address, isa, target)
+        except ValueError as exc:
+            if failure is None:
+                failure = exc
+            continue
+        space.take(index, address, size)
+        return fragment
+    if failure is not None:
+        raise ValueError(f"no encodable trampoline placement for hook {hook.name!r}. {failure}") from failure
+    raise ValueError(
+        f"insufficient cleared executable space for {hook.name!r} trampoline ({size} contiguous bytes) "
+        f"within jump range of its return to {hook.resume:#x}. "
+        f"The trampoline {space.describe_capacity(target.alignment, 5, bounds)}"
+    )
+
+
+def _trampoline_at(hook: Hook, address: int, isa: ISA, target: Target) -> Fragment:
     data = bytearray(hook.landing_pad)
     for instruction in hook.instructions:
         destination = address + len(data)
@@ -337,7 +354,8 @@ def _build(
         if hook.name in imports:
             imports[hook.name] = trampoline.address
         trampolines.append(trampoline)
-    placed = place(extension, space, imports, isa, target)
+    entries = {extension.symbols[HOOK_PREFIX + hook.name]: hook.start for hook in hooks}
+    placed = place(extension, space, imports, isa, target, hook_entries=entries)
     patches = []
     for hook in hooks:
         symbol = extension.symbols[HOOK_PREFIX + hook.name]

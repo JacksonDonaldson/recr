@@ -15,7 +15,7 @@ from isa.riscv.liveness import link_live_before, live_block_exits
 from isa.riscv.references import scan
 from isa.riscv.sleigher import RISCVSlaSpec
 from isa.sleigher.sla import ResolvedConstructor
-from ir import Address, AddressKind, BasicBlock, Function, Instruction, InstructionType, StateSpace, StateSpaceKind
+from ir import Address, AddressKind, BasicBlock, Function, Instruction, InstructionType, JumpRange, StateSpace, StateSpaceKind
 
 if TYPE_CHECKING:
     from binary.binary import Binary
@@ -271,6 +271,10 @@ class _RISCVISA(ISA):
 
     def ret_instruction_length(self) -> int:
         return 4
+
+    def jump_displacement_range(self) -> JumpRange:
+        reach = 1 << (JUMP.width - 1)
+        return JumpRange(-reach, reach - JUMP.alignment)
 
     def outline_call_target_bounds(self, first: int, last: int) -> tuple[int, int] | None:
         reach = 1 << (JUMP.width - 1)

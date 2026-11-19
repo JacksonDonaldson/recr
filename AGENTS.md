@@ -128,6 +128,9 @@ Implemented:
   placement checks JAL reach, relinks ELF immediates, and keeps
   AUIPC/JALR call pairs together. The RISC-V tests run the RV64 sample and
   execute hooked RV64 and RV32 ELF fixtures under QEMU.
+  Recr constrains trampoline returns, hook entries, and split-section
+  continuation jumps to the ISA's fixed-width jump range before allocation.
+  Candidate trampolines also pass relocation checks before consuming space.
   Relocation errors identify the section offset, symbol, and encoding limit
   when known. Placement errors report permissions, alignment, and available
   cleared space. Hook errors identify conflicting entries or reference addresses.

@@ -14,7 +14,12 @@ import pytest
 import yaml
 
 from binary.binary import Binary
-from recr import main
+from ir import Address
+from isa import create_isa
+from recr import Hook, _trampoline, main
+from recompiler.exports import Exports, Segment
+from recompiler.placement import Object, Section, Space, Symbol, _Image, place
+from recompiler.target import raw_target
 
 
 TEST = Path(__file__).resolve().parent
@@ -22,6 +27,66 @@ FIXTURES = TEST / "fixtures"
 RISCV64_CC = shlex.split(os.environ.get("RISCV64_CC", "riscv64-linux-gnu-gcc"))
 RISCV64_SYSROOT = os.environ.get("RISCV64_SYSROOT", "/usr/riscv64-linux-gnu")
 RISCV64_XML = FIXTURES / "sample_riscv64_ghidra.xml"
+
+
+@pytest.mark.parametrize("offset", [0x100000, 0x100002], ids=["last-reachable", "out-of-range"])
+def test_trampoline_placement_checks_reach_from_the_return_instruction(offset):
+    isa = create_isa("riscv64")
+    target = raw_target("riscv64", {"march": "rv64ic", "abi": "lp64"})
+    original = 0x400000
+    instruction = isa.disassemble(_Image(bytes.fromhex("13051500")), 0)
+    instruction.address = original
+    hook = Hook("transform", original, (instruction,), b"")
+    slot = original + offset
+    segments = [Segment(address, 8, 8, 5) for address in (0x10000, slot)]
+    space = Space([(s.start, s.size) for s in segments], Exports({}, {}, {}, segments, [], set(), target))
+
+    if offset == 0x100002:
+        before = space.ranges.copy()
+        with pytest.raises(ValueError, match=r"within jump range of its return to 0x400004"):
+            _trampoline(hook, space, isa, target)
+        assert space.ranges == before
+        return
+
+    trampoline = _trampoline(hook, space, isa, target)
+    assert trampoline.address == slot
+    return_jump = isa.disassemble(_Image(bytes(trampoline.data[4:])), 0)
+    assert return_jump.flows_to == [Address.absolute(-(1 << 20) & 0xffffffffffffffff)]
+    assert slot + 4 - (1 << 20) == hook.resume
+
+
+def test_split_riscv_hook_uses_reachable_first_and_continuation_fragments():
+    isa = create_isa("riscv64")
+    target = raw_target("riscv64", {"march": "rv64ic", "abi": "lp64"})
+    original = 0x400000
+    section = Section(".text.hook", b"\x01\x00" * 12 + bytes.fromhex("67800000"), 6, 2)
+    symbol = Symbol("hook", 1, 0)
+    segments = [Segment(address, size, size, 5) for address, size in ((0x20000, 28), (0x300100, 16), (0x300200, 16))]
+    space = Space([(s.start, s.size) for s in segments], Exports({}, {}, {}, segments, [], set(), target))
+    placed = place(Object({1: section}, {}), space, {}, isa, target, hook_entries={symbol: original})
+
+    first, second = placed
+    assert {first.address, second.address} == {0x300100, 0x300200}
+    assert section.address(symbol.offset) == first.address
+    assert first.data[-4:] == target.jump(first.address + len(first.data) - 4, second.address)
+
+
+def test_riscv_entry_jump_range_applies_to_the_symbol_inside_its_section():
+    isa = create_isa("riscv64")
+    target = raw_target("riscv64", {"march": "rv64ic", "abi": "lp64"})
+    original = 0x400000
+    section = Section(".text.hook", b"\x01\x00" * 2 + bytes.fromhex("67800000"), 6, 2)
+    symbol = Symbol("hook", 1, 4)
+    last_target = original + 0xffffe
+    slot = last_target - symbol.offset
+    segments = [Segment(address, 8, 8, 5) for address in (0x10000, slot)]
+    space = Space([(s.start, s.size) for s in segments], Exports({}, {}, {}, segments, [], set(), target))
+    placed, = place(Object({1: section}, {}), space, {}, isa, target, hook_entries={symbol: original})
+
+    assert placed.address == slot
+    assert section.address(symbol.offset) == last_target
+    jump = isa.disassemble(_Image(target.jump(original, last_target)), 0)
+    assert jump.flows_to == [Address.absolute(0xffffe)]
 
 
 def _qemu_command(binary: Path, bits: int) -> list[str | Path]:

@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, AbstractSet, ClassVar, Iterator
 
-from ir import Address, AddressKind, Instruction, InstructionType
+from ir import Address, AddressKind, Instruction, InstructionType, JumpRange
 
 if TYPE_CHECKING:
     from binary.binary import Binary
@@ -129,6 +129,10 @@ class ISA(ABC):
     def outline_call_target_bounds(self, first: int, last: int) -> tuple[int, int] | None:
         """Return inclusive bounds for a destination reachable from both call sites."""
         return None
+
+    def jump_displacement_range(self) -> JumpRange:
+        """Return non-wrapping bounds for the recompiler's fixed-width direct jump."""
+        raise NotImplementedError(f"fixed-width direct jump placement is unavailable for {self.name}")
 
     def iter_address_references(
         self, binary: "Binary", start: int, end: int, targets: AbstractSet[int],

@@ -43,6 +43,20 @@ class Address:
         return cls(AddressKind.UNK_NONLOCAL)
 
 
+@dataclass(frozen=True, slots=True)
+class JumpRange:
+    """Inclusive destination offsets measured from the jump instruction's start."""
+
+    minimum: int
+    maximum: int
+
+    def destinations(self, source: int) -> tuple[int, int]:
+        return source + self.minimum, source + self.maximum
+
+    def sources(self, destination: int) -> tuple[int, int]:
+        return destination - self.maximum, destination - self.minimum
+
+
 class StateSpaceKind(Enum):
     REGISTER = auto()
     FLAG = auto()
