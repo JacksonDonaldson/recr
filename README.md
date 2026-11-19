@@ -109,8 +109,10 @@ recr ./a.out ./functions.xml ./hooks.rec -o ./a.out.recr -- -Iinclude -Llib -lex
 ```
 
 GCC accepts extra compiler flags, object files, and static libraries after
-`--`. Calls can use shared-library imports already present in the original
-ELF. Recr uses Ghidra's scalar, pointer, and array types for implicit declarations.
+`--`. Before `--`, `-Wall` enables all recr warnings and `-Werror` makes
+enabled warnings fatal. Recr also passes both flags to GCC. Calls can use
+shared-library imports already present in the original ELF. Recr uses Ghidra's
+scalar, pointer, and array types for implicit declarations.
 Supply a C declaration for symbols with missing or unsupported type metadata.
 Code can be split across executable receipt ranges. Each data section needs
 a contiguous range and writable sections require writable space. Placement
@@ -160,8 +162,13 @@ entry addresses that firmware can reach from outside the mapped image under
 `entry_points` so codezip preserves their functions.
 
 Use `functions` to identify hooks and give codezip the extents it can analyze
-for reclaimable space. Each function must fit in one executable region. Its
-file offset is derived from the mapping. If you pass a Ghidra XML export,
+for reclaimable space. Recr skips functions whose full extent falls outside a
+single executable region and warns by default. Use
+`-Wno-function-outside-executable-range` to suppress this warning, including
+with `-Wall` or `-Werror`. Recr also skips functions shorter than the target's
+instruction alignment and warns by default. Use `-Wno-skip-short-functions`
+to suppress that warning. The file offset of each retained function is
+derived from the mapping. If you pass a Ghidra XML export,
 it supplies the ISA, functions, and C types, so omit `isa` and `functions`
 from the manifest. `symbols` binds additional names to fixed virtual addresses.
 An optional `declaration` supplies the C declaration implicitly visible in

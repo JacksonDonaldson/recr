@@ -23,9 +23,33 @@ from parsers.yaml import EXTENSIONS as YAML_EXTENSIONS
 from recompiler.compiler import HOOK_PREFIX, compile_rec, rewrite_hooks
 from recompiler.exports import Exports, read_exports
 from recompiler.placement import Fragment, Object, Space, place
-from recompiler.raw import RawInput, read_raw_input
+from recompiler.raw import FUNCTION_OUTSIDE_EXECUTABLE_RANGE, SKIP_SHORT_FUNCTIONS, RawInput, read_raw_input
 from recompiler.target import Target
 from uplifter import Uplifter
+
+
+class WarningError(Exception):
+    """A recr warning promoted to a build error."""
+
+
+@dataclass(frozen=True)
+class WarningOptions:
+    all_warnings: bool
+    warnings_as_errors: bool
+    disabled: frozenset[str]
+
+    def emit(
+        self, message: str, option: str | None = None, *, enabled_by_default: bool = True,
+    ) -> None:
+        if not (enabled_by_default or self.all_warnings):
+            return
+        if option is not None:
+            if option in self.disabled:
+                return
+            message = f"{message} [-W{option}]"
+        if self.warnings_as_errors:
+            raise WarningError(f"error: {message}")
+        print(f"recr: warning: {message}", file=sys.stderr)
 
 
 @dataclass(frozen=True)
@@ -113,7 +137,10 @@ def _trampoline(hook: Hook, space: Space, isa: ISA, target: Target) -> Fragment:
     return Fragment(address, data)
 
 
-def _build(args: argparse.Namespace, flags: list[str], directory: Path, raw: RawInput | None) -> None:
+def _build(
+    args: argparse.Namespace, flags: list[str], directory: Path, raw: RawInput | None,
+    warnings: WarningOptions,
+) -> None:
     if raw is None:
         parsed = parse_re_file(str(args.re_file))
         exports = read_exports(args.binary, args.re_file, parsed.functions)
@@ -158,7 +185,7 @@ def _build(args: argparse.Namespace, flags: list[str], directory: Path, raw: Raw
     if codezip.run_pipeline(
         options, protected_entries=protected,
         binary=raw.binary if raw is not None else None,
-        parsed=raw.parsed if raw is not None else None,
+        parsed=parsed, warn=warnings.emit,
     ):
         raise ValueError("codezip could not prepare the original binary")
     receipt = yaml.safe_load(receipt_path.read_text(encoding="utf-8"))
@@ -209,25 +236,45 @@ def main(argv: list[str] | None = None) -> int:
     if "--" in argv:
         index = argv.index("--")
         argv, flags = argv[:index], argv[index + 1:]
+    suppress_range_warning = f"-Wno-{FUNCTION_OUTSIDE_EXECUTABLE_RANGE}"
+    suppress_short_warning = f"-Wno-{SKIP_SHORT_FUNCTIONS}"
+    suppressible_warnings = {
+        suppress_range_warning: FUNCTION_OUTSIDE_EXECUTABLE_RANGE,
+        suppress_short_warning: SKIP_SHORT_FUNCTIONS,
+    }
     parser = argparse.ArgumentParser(
         prog="recr", description="Place compiled .rec hooks into space recovered by codezip.",
-        epilog="Pass additional GCC flags, objects, and static archives after --.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Warnings --\n"
+            "  -Wall                                   enable all recr warnings\n"
+            "  -Werror                                 treat warnings as errors\n"
+            f"  {suppress_range_warning}  suppress warnings for raw functions outside executable regions\n"
+            f"  {suppress_short_warning:<38}  suppress warnings for raw functions shorter than the target alignment\n"
+            "\nPass additional GCC flags, objects, and static archives after --."
+        ),
     )
     parser.add_argument("input", type=Path, metavar="INPUT", help="ELF executable or raw-image YAML manifest")
     parser.add_argument("re_file", type=Path, nargs="?", metavar="EXPORT", help="Ghidra XML function export")
-    parser.add_argument("rec", type=Path, metavar="REC", help=".rec source file")
+    parser.add_argument("rec", type=Path, metavar="REC", help=".re.c source file")
     parser.add_argument("-o", "--output", type=Path)
     parser.add_argument("-r", "--receipt", type=Path)
     parser.add_argument("--isa")
     parser.add_argument("--cc", default=os.environ.get("CC"), help="GCC executable or command")
     parser.add_argument("-v", "--verbose", action="store_true")
     args, interspersed = parser.parse_known_intermixed_args(argv)
+    warnings = WarningOptions(
+        all_warnings="-Wall" in interspersed,
+        warnings_as_errors="-Werror" in interspersed,
+        disabled=frozenset(suppressible_warnings[flag] for flag in interspersed if flag in suppressible_warnings),
+    )
+    compiler_flags = [flag for flag in interspersed if flag not in suppressible_warnings] + flags
     try:
         raw = None
         if args.re_file is not None and args.re_file.suffix.lower() != ".xml":
             raise ValueError("the separate function export must be Ghidra XML")
         if args.input.suffix.lower() in YAML_EXTENSIONS:
-            raw = read_raw_input(args.input, args.re_file)
+            raw = read_raw_input(args.input, args.re_file, warn=warnings.emit)
             args.re_file = args.re_file or args.input
             args.binary = raw.binary.path
         else:
@@ -241,8 +288,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.receipt is not None and args.receipt.resolve() in inputs | {args.output.resolve()}:
             raise ValueError("recr receipt must use a separate path from input and output files")
         with TemporaryDirectory(prefix="recr-") as directory:
-            _build(args, [*interspersed, *flags], Path(directory), raw)
-    except (ValueError, OSError, ParseError, ELFError, ET.ParseError) as exc:
+            _build(args, compiler_flags, Path(directory), raw, warnings)
+    except (ValueError, OSError, ParseError, ELFError, ET.ParseError, WarningError) as exc:
         print(f"recr: {exc}", file=sys.stderr)
         return 1
     return 0

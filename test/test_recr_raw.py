@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from recr import main
+from recompiler.raw import read_raw_input
 from test.test_recr_riscv import RISCV64_CC, _qemu_command
 
 
@@ -94,19 +95,48 @@ def test_built_static_raw_fixture_runs(firmware: Firmware, tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("with_ghidra_export", [False, True], ids=["yaml-functions", "ghidra-functions"])
-def test_recr_hooks_static_raw_image(firmware: Firmware, tmp_path: Path, with_ghidra_export: bool) -> None:
+@pytest.mark.parametrize(("warning_flags", "warns"), [
+    ([], True),
+    (["-Wall", "-Werror=unused-variable"], True),
+    (["-Wall", "-Werror", "-Wno-function-outside-executable-range", "-Wno-skip-short-functions"], False),
+    (["-Wno-skip-short-functions", "-Wno-function-outside-executable-range", "-Werror", "-Wall"], False),
+], ids=["default", "all", "suppress-after", "suppress-before"])
+def test_recr_hooks_static_raw_image(
+    firmware: Firmware, tmp_path: Path, capsys: pytest.CaptureFixture[str], with_ghidra_export: bool,
+    warning_flags: list[str], warns: bool,
+) -> None:
     receipt = tmp_path / "receipt.yaml"
     before = firmware.binary.read_bytes()
+    text = firmware.layout["regions"][-1]
+    ignored = {
+        "unmapped": {"start_address": 0x500000, "length": 4, "declaration": "invalid declaration"},
+        "in_data": {"start_address": firmware.layout["regions"][0]["start_address"], "length": 4},
+        "crosses_text_end": {"start_address": text["start_address"] + 2, "length": text["length"]},
+    }
+    short_length = 1 if firmware.isa == "riscv64" else 0
+    # Ghidra represents extents as inclusive address ranges.
+    has_short_record = short_length > 0 or not with_ghidra_export
+    if has_short_record:
+        firmware.layout["functions"]["short"] = {"start_address": text["start_address"] + 4, "length": short_length}
+    firmware.layout["functions"].update(ignored)
     export_args = []
     if with_ghidra_export:
         export = tmp_path / "firmware.xml"
         _write_ghidra_export(firmware, export)
         export_args.append(str(export))
         manifest = {key: value for key, value in firmware.layout.items() if key not in {"isa", "functions", "symbols"}}
-        firmware.manifest.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    else:
+        manifest = firmware.layout
+    firmware.manifest.write_text(yaml.safe_dump(manifest), encoding="utf-8")
     assert main([
         str(firmware.manifest), *export_args, str(HOOK), "--cc", shlex.join(firmware.compiler), "-r", str(receipt),
+        *warning_flags,
     ]) == 0
+    stderr = capsys.readouterr().err
+    assert stderr.count("[-Wfunction-outside-executable-range]") == (len(ignored) if warns else 0)
+    assert ("[-Wskip-short-functions]" in stderr) == (warns and has_short_record)
+    for name in ignored:
+        assert (f"warning: skipping raw function {name!r}" in stderr) == warns
     output = firmware.binary.with_suffix(".bin.recr")
     assert firmware.run(output, tmp_path / "hooked") == 24
     assert firmware.binary.read_bytes() == before
@@ -170,10 +200,13 @@ def test_recr_rejects_invalid_raw_mappings(tmp_path: Path, capsys, regions: list
 @pytest.mark.parametrize(("metadata", "reason"), [
     ({"functions": {"transform": {"start_address": 0x1000, "length": 2, "file_offset": 1}}},
      "file_offset disagrees"),
-    ({"functions": {"transform": {"start_address": 0x1001, "length": 9}}},
-     "must fit in one executable region"),
+    ({"functions": {"first": {"start_address": 0x1000, "length": 4},
+                    "second": {"start_address": 0x1002, "length": 4}}},
+     "overlaps another function"),
     ({"entry_points": [0x3000]}, "outside mapped executable memory"),
     ({"isa": "riscv32", "riscv": {"march": "rv32i", "abi": "lp64"}}, "riscv.abi"),
+    ({"isa": "riscv32", "riscv": {"march": "rv32i", "abi": "ilp32"},
+      "functions": {"misaligned": {"start_address": 0x1000, "length": 5}}}, "misaligned for the target ISA"),
 ])
 def test_recr_rejects_invalid_raw_metadata(tmp_path: Path, capsys, metadata: dict, reason: str) -> None:
     binary, manifest = tmp_path / "image.bin", tmp_path / "image.yaml"
@@ -187,3 +220,58 @@ def test_recr_rejects_invalid_raw_metadata(tmp_path: Path, capsys, metadata: dic
     assert main([str(manifest), str(HOOK)]) == 1
     assert reason in capsys.readouterr().err
     assert not binary.with_suffix(".bin.recr").exists()
+
+
+@pytest.mark.parametrize(("metadata", "suppression", "diagnostic"), [
+    ({"functions": {"outside": {"start_address": 0x1002, "length": 8}}},
+     "-Wno-skip-short-functions", "error: skipping raw function 'outside'"),
+    ({"isa": "riscv32", "riscv": {"march": "rv32i", "abi": "ilp32"},
+      "functions": {"short": {"start_address": 0x1002, "length": 3}}},
+     "-Wno-function-outside-executable-range",
+     "error: skipping raw function 'short' at 0x1002: length 3 is below the target alignment of 4 bytes"),
+], ids=["outside-executable-range", "short-function"])
+def test_recr_treats_raw_function_warning_as_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], metadata: dict, suppression: str, diagnostic: str,
+) -> None:
+    binary, manifest, output, receipt = (tmp_path / name for name in ("image.bin", "image.yaml", "output", "receipt"))
+    binary.write_bytes(b"12345678")
+    manifest.write_text(yaml.safe_dump({
+        "binary": binary.name, "isa": "x86_64",
+        "regions": [{"start_address": 0x1000, "file_offset": 0, "length": 8}],
+        **metadata,
+    }), encoding="utf-8")
+    output.write_bytes(b"previous output")
+    assert main([str(manifest), str(HOOK), "-Werror", suppression, "-o", str(output), "-r", str(receipt)]) == 1
+    assert diagnostic in capsys.readouterr().err
+    assert output.read_bytes() == b"previous output"
+    assert not receipt.exists()
+
+
+def test_raw_input_retains_function_at_alignment(tmp_path: Path) -> None:
+    binary, manifest = tmp_path / "image.bin", tmp_path / "image.yaml"
+    binary.write_bytes(bytes.fromhex("67800000"))
+    manifest.write_text(yaml.safe_dump({
+        "binary": binary.name, "isa": "riscv32", "riscv": {"march": "rv32i", "abi": "ilp32"},
+        "regions": [{"start_address": 0x1000, "file_offset": 0, "length": 4}],
+        "functions": {"exact": {"start_address": 0x1000, "length": 4}},
+    }), encoding="utf-8")
+    function, = read_raw_input(manifest).parsed.functions
+    assert (function.name, function.length, function.file_offset) == ("exact", 4, 0)
+
+
+def test_recr_treats_ghidra_warning_as_error(
+    firmware: Firmware, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    export = tmp_path / "firmware.xml"
+    _write_ghidra_export(firmware, export)
+    xml = ET.parse(export)
+    ET.SubElement(xml.getroot().find("FUNCTIONS"), "FUNCTION", NAME="missing_range", ENTRY_POINT="500000")
+    xml.write(export)
+    manifest = {key: value for key, value in firmware.layout.items() if key not in {"functions", "symbols"}}
+    firmware.manifest.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    assert main([
+        str(firmware.manifest), str(export), str(HOOK), "--cc", shlex.join(firmware.compiler),
+        "-Wno-function-outside-executable-range", "-Werror",
+    ]) == 1
+    assert "error: skipping function missing_range: no ADDRESS_RANGE" in capsys.readouterr().err
+    assert not firmware.binary.with_suffix(".bin.recr").exists()

@@ -8,6 +8,7 @@ function remover.  Unwind information is intentionally out of scope for now.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -147,9 +148,10 @@ def run_optimizer(
     isa: "ISA",
     free_space: list[FreeSpace],
     *, protected_entries: frozenset[int] = frozenset(),
+    warn: Callable[[str], None] | None = None,
 ) -> ExtractionResult | None:
     """Extract repeated regions and relink them into free space."""
-    result = extract_instruction_regions(binary, uplifter, isa, protected_entries=protected_entries)
+    result = extract_instruction_regions(binary, uplifter, isa, protected_entries=protected_entries, warn=warn)
     if result is None:
         return None
 
@@ -179,13 +181,11 @@ def run_optimizer(
 def extract_instruction_regions(
     binary: "Binary", uplifter: "Uplifter", isa: "ISA", *,
     protected_entries: frozenset[int] = frozenset(),
+    warn: Callable[[str], None] | None = None,
 ) -> ExtractionResult | None:
     """Find profitable matches and regenerate the functions they touch."""
     if not isa.supports_outlining:
-        LOGGER.warning(
-            "ISA %s does not support function outlining",
-            isa.name or "<unknown>",
-        )
+        (warn or LOGGER.warning)(f"ISA {isa.name or '<unknown>'} does not support function outlining")
         return None
 
     cache: dict[int, bytes | None] = {}

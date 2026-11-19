@@ -118,9 +118,13 @@ Implemented:
   raw images. The manifest names the image, gives disjoint file-backed
   virtual regions with permissions, and lists entry points to preserve.
   Functions and C declarations come from the manifest or a Ghidra export.
-  RISC-V raw images declare their architecture and ABI. Native x86-64 and
-  QEMU RV64 tests build static fixtures, patch the raw bytes, and execute
-  them at their mapped addresses using both metadata sources.
+  Functions shorter than the target's instruction alignment or extending
+  outside one executable region are skipped with warnings. Recr accepts
+  `-Wno-skip-short-functions` and `-Wno-function-outside-executable-range`
+  alongside `-Wall` and `-Werror` before `--`. RISC-V raw images declare
+  their architecture and ABI. Native x86-64 and QEMU RV64 tests build static
+  fixtures, patch the raw bytes, and execute them at their mapped addresses
+  using both metadata sources.
 - Ghidra XML parsing (`parsers/ghidra_xml.py`) and parser dispatch with
   `ParseError` handling; tests are pinned to a real Ghidra 12.2 export.  The
   parser accepts address-space-qualified values such as `ram:00011220`, which
@@ -327,7 +331,7 @@ Implemented:
   `pcre2grep` 2146 bytes in 48 ranges (2661 bytes total). The pre-red-zone
   baseline was 360 and 2105 bytes (2465 total).
   The default codezip outputs and receipts are byte-identical on these inputs
-  after adding recr's protected entries and raw-image support.
+  with recr's protected entries, raw-image function filtering, and warning controls.
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,

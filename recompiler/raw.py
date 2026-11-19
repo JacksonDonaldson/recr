@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from bisect import bisect_left
+from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 
 from binary.raw import RawBinary, Region
@@ -13,6 +15,11 @@ from parsers.base import UNKNOWN_FILE_OFFSET, ParseResult
 from parsers.yaml import load_document, parse_functions
 from recompiler.exports import IDENTIFIER, Exports, Segment, read_ghidra_exports
 from recompiler.target import raw_target
+
+
+FUNCTION_OUTSIDE_EXECUTABLE_RANGE = "function-outside-executable-range"
+SKIP_SHORT_FUNCTIONS = "skip-short-functions"
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -94,34 +101,62 @@ def _entry_points(binary: RawBinary, records: object) -> set[int]:
     return entries
 
 
-def _check_functions(binary: RawBinary, functions: list[Function], alignment: int) -> None:
-    end = 0
-    for function in sorted(functions, key=lambda item: item.start_address):
+def _log_warning(message: str, option: str) -> None:
+    LOGGER.warning("%s [-W%s]", message, option)
+
+
+def _check_functions(
+    binary: RawBinary, functions: list[Function], alignment: int, warn: Callable[[str, str], None],
+) -> list[Function]:
+    accepted = []
+    for function in functions:
         start = function.start_address
-        if start % alignment or function.length % alignment:
-            raise ValueError(f"raw function {function.name!r} is misaligned for the target ISA")
-        if start < end:
-            raise ValueError(f"raw function {function.name!r} overlaps another function")
+        if function.length < alignment:
+            warn(
+                f"skipping raw function {function.name!r} at {start:#x}: "
+                f"length {function.length} is below the target alignment of {alignment} bytes",
+                SKIP_SHORT_FUNCTIONS,
+            )
+            continue
         end = start + function.length
         try:
             region = binary.region_at(start)
         except ValueError:
             region = None
         if region is None or end > region.end_address or not region.flags & 1:
-            raise ValueError(f"raw function {function.name!r} must fit in one executable region")
+            warn(
+                f"skipping raw function {function.name!r} at {start:#x}: must fit in one executable region",
+                FUNCTION_OUTSIDE_EXECUTABLE_RANGE,
+            )
+            continue
+        if start % alignment or function.length % alignment:
+            raise ValueError(
+                f"raw function {function.name!r} is misaligned for the target ISA. "
+                f"Is at {start:#x}, length {function.length:#x}, but must be aligned to {alignment:#x}"
+            )
         offset = binary.virtual_to_file(start)
         if function.file_offset not in (UNKNOWN_FILE_OFFSET, offset):
             raise ValueError(f"raw function {function.name!r} file_offset disagrees with the region map")
         function.file_offset = offset
+        accepted.append(function)
+
+    end = 0
+    for function in sorted(accepted, key=lambda item: item.start_address):
+        if function.start_address < end:
+            raise ValueError(f"raw function {function.name!r} overlaps another function")
+        end = function.start_address + function.length
+    return accepted
 
 
-def read_raw_input(manifest: Path, xml: Path | None = None) -> RawInput:
+def read_raw_input(
+    manifest: Path, xml: Path | None = None, *, warn: Callable[[str, str], None] = _log_warning,
+) -> RawInput:
     document = {"functions": {}, **load_document(manifest)}
     path = document.get("binary")
     if not isinstance(path, str) or not path.strip():
         raise ValueError("'binary' must name the raw image file")
     if xml is None:
-        parsed = parse_functions(document, mapped_offsets=True)
+        parsed = parse_functions(document, mapped_offsets=True, allow_empty=True)
     else:
         if document["functions"] != {}:
             raise ValueError("supply function records in either the manifest or the Ghidra XML export")
@@ -134,7 +169,7 @@ def read_raw_input(manifest: Path, xml: Path | None = None) -> RawInput:
     symbol_records = document.get("symbols", {})
     symbols = _symbols(symbol_records, address_limit)
     binary = RawBinary(manifest.parent / path, regions, symbols)
-    _check_functions(binary, parsed.functions, target.alignment)
+    parsed.functions = _check_functions(binary, parsed.functions, target.alignment, warn)
     entries = _entry_points(binary, document.get("entry_points", []))
     declared_references = entries | set(symbols.values())
     points = sorted(declared_references)
@@ -143,7 +178,7 @@ def read_raw_input(manifest: Path, xml: Path | None = None) -> RawInput:
     if xml is None:
         functions = {f.name: [f] for f in parsed.functions}
         addresses = {f.name: {f.start_address} for f in parsed.functions}
-        declarations = _declarations(document["functions"])
+        declarations = _declarations({name: document["functions"][name] for name in functions})
         exports = Exports(functions, addresses, declarations, segments, [], set(), target)
     else:
         exports = read_ghidra_exports(xml, parsed.functions, segments, target)

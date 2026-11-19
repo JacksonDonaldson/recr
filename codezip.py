@@ -12,6 +12,7 @@ rewritten ranges.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import logging
 from pathlib import Path
 
@@ -116,6 +117,7 @@ def _render_receipt(
 def run_pipeline(
     args: argparse.Namespace, *, protected_entries: frozenset[int] = frozenset(),
     binary: Binary | None = None, parsed: ParseResult | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> int:
     """Compact and write the image, using caller-supplied input metadata when available."""
     _configure_logging(args.verbose)
@@ -133,7 +135,7 @@ def run_pipeline(
             return 1
 
     for warning in parsed.warnings:
-        LOGGER.warning("%s", warning)
+        (warn or LOGGER.warning)(warning)
 
     isa_name = args.isa or parsed.isa
     LOGGER.info(
@@ -215,9 +217,7 @@ def run_pipeline(
 
     if args.report_outline_matches:
         LOGGER.info("searching for profitable outline matches")
-        outline_result = outliner.extract_instruction_regions(
-            binary, uplifter, uplifter.isa
-        )
+        outline_result = outliner.extract_instruction_regions(binary, uplifter, uplifter.isa, warn=warn)
         if outline_result is None:
             print("outlining is not supported by this ISA")
         else:
@@ -235,7 +235,7 @@ def run_pipeline(
     LOGGER.info("outlining repeated instruction regions")
     try:
         outline_result = outliner.run_optimizer(
-            binary, uplifter, uplifter.isa, free_space, protected_entries=protected_entries,
+            binary, uplifter, uplifter.isa, free_space, protected_entries=protected_entries, warn=warn,
         )
     except (ValueError, NotImplementedError) as exc:
         LOGGER.error("outlining failed: %s", exc)
