@@ -122,6 +122,91 @@ def test_recr_splits_riscv64_code_and_relinks_pcrel_pairs(
     assert sum(region["address"] >= 0x80000 and region["length"] >= 100 for region in modified) >= 2
 
 
+def test_recr_hooks_a_riscv64_variadic_method(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    source = tmp_path / "app.c"
+    source.write_text("""
+        #include <stdarg.h>
+        struct main_app { int base; };
+        __attribute__((noipa))
+        int AppVprintf(struct main_app *self, char *format, ...) {
+            va_list args;
+            va_start(args, format);
+            int total = self->base + *format;
+            for (int i = 1; i <= 8; i++)
+                total += i * va_arg(args, int);
+            va_end(args);
+            return total;
+        }
+        void _start(void) {
+            struct main_app app = {3};
+            char format[] = {7, 0};
+            register long result asm("a0") = AppVprintf(&app, format, 1, 2, 3, 4, 5, 6, 7, 8);
+            register long syscall asm("a7") = 93;
+            asm volatile("ecall" : : "r"(result), "r"(syscall) : "memory");
+            __builtin_unreachable();
+        }
+    """, encoding="utf-8")
+    binary = tmp_path / "app"
+    subprocess.run([
+        *RISCV64_CC, "-march=rv64gc", "-mabi=lp64d", "-Os", "-fno-pie", "-no-pie",
+        "-fno-stack-protector", "-ffreestanding", "-nostdlib", "-static",
+        "-Wl,--no-relax,--section-start=.recr_space=0x80000", source,
+        FIXTURES / "recr_space_riscv64.S", "-o", binary,
+    ], check=True, capture_output=True)
+    root = ET.Element("PROGRAM")
+    ET.SubElement(root, "PROCESSOR", LANGUAGE_PROVIDER="RISCV:LE:64:default:gcc")
+    ET.SubElement(ET.SubElement(root, "DATATYPES"), "STRUCTURE", NAME="main_app", NAMESPACE="/", SIZE="0x4")
+    functions = ET.SubElement(root, "FUNCTIONS")
+    with binary.open("rb") as stream:
+        symbols = ELFFile(stream).get_section_by_name(".symtab")
+        for symbol in symbols.iter_symbols():
+            name = symbol.name
+            if name not in ("_start", "AppVprintf") and not name.startswith("recr_spare_"):
+                continue
+            start = symbol["st_value"]
+            qualified = "main_app::AppVprintf" if name == "AppVprintf" else name
+            function = ET.SubElement(functions, "FUNCTION", NAME=qualified, ENTRY_POINT=f"ram:{start:x}")
+            if name == "AppVprintf":
+                ET.SubElement(function, "RETURN_TYPE", DATATYPE="int")
+            ET.SubElement(function, "ADDRESS_RANGE", START=f"ram:{start:x}", END=f"ram:{start + symbol['st_size'] - 1:x}")
+            if name == "AppVprintf":
+                ET.SubElement(function, "TYPEINFO_CMT").text = "int __thiscall AppVprintf(char * format, ...)"
+                receiver = ET.SubElement(function, "REGISTER_VAR", NAME="this", REGISTER="a1",
+                                         DATATYPE="main_app *", DATATYPE_NAMESPACE="/")
+                ET.SubElement(function, "REGISTER_VAR", NAME="format", REGISTER="a1", DATATYPE="char *")
+    export, hook = tmp_path / "app.xml", tmp_path / "hook.re.c"
+    hook.write_text("""
+        #include <stdarg.h>
+        int @AppVprintf(struct main_app *self, char *format, ...) {
+            va_list args;
+            va_start(args, format);
+            int values[8];
+            for (int i = 0; i < 8; i++)
+                values[i] = va_arg(args, int);
+            va_end(args);
+            return AppVprintf(self, format, values[0], values[1], values[2], values[3],
+                              values[4], values[5], values[6], values[7]) + 5;
+        }
+    """, encoding="utf-8")
+    output, receipt = tmp_path / "hooked", tmp_path / "receipt"
+    output.write_bytes(b"previous binary")
+    receipt.write_bytes(b"previous receipt")
+    command = [str(binary), str(export), str(hook), "-o", str(output), "-r", str(receipt),
+               "--cc", shlex.join(RISCV64_CC)]
+
+    ET.ElementTree(root).write(export)
+    assert main(command) == 1
+    assert "no usable prototype for 'main_app::AppVprintf'" in capsys.readouterr().err
+    assert output.read_bytes() == b"previous binary"
+    assert receipt.read_bytes() == b"previous receipt"
+
+    receiver.set("REGISTER", "a0")
+    ET.ElementTree(root).write(export)
+    assert main(command) == 0
+    assert subprocess.run(_qemu_command(binary, 64)).returncode == 214
+    assert subprocess.run(_qemu_command(output, 64)).returncode == 219
+
+
 def test_recr_hooks_a_riscv32_elf_without_compressed_instructions(tmp_path: Path) -> None:
     assembly = tmp_path / "bare.S"
     assembly.write_text("""

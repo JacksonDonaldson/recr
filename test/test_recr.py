@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import subprocess
 import xml.etree.ElementTree as ET
 
@@ -14,9 +15,10 @@ from binary.binary import Binary
 from ir import Address
 from isa.x86_64 import X86_64ISA
 from recr import main
-from recompiler.compiler import rewrite_hooks
+from recompiler.compiler import compile_rec, rewrite_hooks
 from recompiler.exports import Exports, Segment
 from recompiler.placement import Object, Section, Space, _Image, place
+from recompiler.target import X86_64
 
 
 TEST = Path(__file__).resolve().parent
@@ -149,6 +151,23 @@ def test_recr_rejects_ambiguous_hook(sample_elf, tmp_path, capsys, namespaced):
     assert not output.exists()
 
 
+@pytest.mark.parametrize("lengths", [(8, 12), (4, 4), (4, 12, 16)], ids=["no-short-entry", "tie", "three-entries"])
+def test_recr_short_hook_exception_requires_two_unequal_entries(sample_elf, tmp_path, capsys, lengths):
+    root = ET.Element("PROGRAM")
+    ET.SubElement(root, "PROCESSOR", LANGUAGE_PROVIDER="x86:LE:64:default:gcc")
+    functions = ET.SubElement(root, "FUNCTIONS")
+    for index, length in enumerate(lengths):
+        start = 0x1000 + index * 0x10
+        node = ET.SubElement(functions, "FUNCTION", NAME="target", ENTRY_POINT=f"{start:x}")
+        ET.SubElement(node, "ADDRESS_RANGE", START=f"{start:x}", END=f"{start + length - 1:x}")
+    export, rec, output = tmp_path / "duplicate.xml", tmp_path / "duplicate.rec", tmp_path / "output"
+    ET.ElementTree(root).write(export)
+    rec.write_text("int @target(void) { return 0; }")
+    assert main([str(sample_elf), str(export), str(rec), "-o", str(output)]) == 1
+    assert f"must match exactly one original function, found {len(lengths)}" in capsys.readouterr().err
+    assert not output.exists()
+
+
 def test_placement_failure_preserves_an_existing_output(sample_elf, tmp_path, capsys):
     rec, output = tmp_path / "too_large.rec", tmp_path / "output"
     rec.write_text('int @min_int(int a, int b) { __asm__ volatile(".rept 500\\n nop\\n .endr"); return a + b; }')
@@ -189,3 +208,73 @@ def test_hook_syntax_preserves_comments_and_literals():
     rewritten, names = rewrite_hooks(source)
     assert rewritten == source.replace("@target", "__recr_hook_target")
     assert names == ("target",)
+
+
+@pytest.mark.parametrize("metadata", [
+    "return-only", "no-entry-types", "empty-parameter-list", "unsupported-formal-return",
+])
+def test_recr_requires_a_prototype_on_the_ghidra_function_entry(
+    input_image, tmp_path: Path, capsys: pytest.CaptureFixture[str], metadata: str,
+) -> None:
+    binary, original_export = input_image
+    xml = ET.parse(original_export)
+    function = xml.find("./FUNCTIONS/FUNCTION[@NAME='min_int']")
+    type_info = function.find("TYPEINFO_CMT")
+    if metadata == "empty-parameter-list":
+        type_info.text = "int min_int()"
+    elif metadata == "unsupported-formal-return":
+        type_info.text = "Result __stdcall min_int(int a, int b)"
+        function.find("RETURN_TYPE").set("DATATYPE", "Result *")
+    else:
+        function.remove(type_info)
+    if metadata == "no-entry-types":
+        function.remove(function.find("RETURN_TYPE"))
+    export, source = tmp_path / "untyped.xml", tmp_path / "hook.re.c"
+    xml.write(export)
+    source.write_text("int @min_int(int a, int b) { return a; }", encoding="utf-8")
+    output, receipt = tmp_path / "output", tmp_path / "receipt"
+    output.write_bytes(b"previous output")
+    receipt.write_bytes(b"previous receipt")
+
+    assert main([str(binary), str(export), str(source), "-o", str(output), "-r", str(receipt)]) == 1
+
+    diagnostic = capsys.readouterr().err
+    assert "Ghidra XML export has no usable prototype for 'min_int'" in diagnostic
+    assert "Ghidra does not always include function prototypes in exports" in diagnostic
+    assert "Commit all return/parameter details" in diagnostic
+    assert output.read_bytes() == b"previous output"
+    assert receipt.read_bytes() == b"previous receipt"
+
+
+@pytest.mark.parametrize(("code", "symbol"), [
+    pytest.param("long @min_int(int a, int b) { return a; }", "__recr_hook_min_int", id="return-type"),
+    pytest.param("int @min_int(unsigned a, int b) { return a; }", "__recr_hook_min_int", id="parameter-type"),
+    pytest.param("int @min_int(int a) { return a; }", "__recr_hook_min_int", id="parameter-count"),
+    pytest.param("int @min_int(int a, int b, ...) { return a; }", "__recr_hook_min_int", id="variadic"),
+    pytest.param("extern int min_int(unsigned a, int b);\n"
+                 "int @min_int(int a, int b) { return min_int(a, b); }", "min_int", id="original-redeclaration"),
+])
+def test_recr_rejects_incompatible_prototypes(
+    input_image, tmp_path: Path, capsys: pytest.CaptureFixture[str], code: str, symbol: str,
+) -> None:
+    binary, export = input_image
+    source, output, receipt = tmp_path / "hook.re.c", tmp_path / "output", tmp_path / "receipt"
+    source.write_text(code, encoding="utf-8")
+    output.write_bytes(b"previous output")
+    receipt.write_bytes(b"previous receipt")
+
+    assert main([str(binary), str(export), str(source), "-o", str(output), "-r", str(receipt)]) == 1
+
+    assert re.search(rf"conflicting types for ['‘]{symbol}['’]", capsys.readouterr().err)
+    assert output.read_bytes() == b"previous output"
+    assert receipt.read_bytes() == b"previous receipt"
+
+
+def test_rec_still_requires_declarations_for_other_imports(tmp_path: Path) -> None:
+    source = tmp_path / "missing.rec"
+    source.write_text("int @target(void) { return target() + other(); }", encoding="utf-8")
+    rewritten, names = rewrite_hooks(source.read_text(encoding="utf-8"))
+
+    with pytest.raises(ValueError, match="implicit declaration of function ['‘]other['’]") as exc:
+        compile_rec(source, rewritten, names, {"target": "extern int target(void);"}, [], "gcc", tmp_path, X86_64)
+    assert str(exc.value).count("implicit declaration of function ") == 1

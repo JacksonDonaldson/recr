@@ -78,7 +78,7 @@ def firmware(request: pytest.FixtureRequest, tmp_path: Path) -> Firmware:
             data.extend(section.data())
             data.extend(b"\xfa unmapped \x17")
         symtab = elf.get_section_by_name(".symtab")
-        for name in ("_start", "transform", "dispatched", "spare"):
+        for name in ("_start", "transform", "transform_thunk", "dispatched", "spare"):
             symbol, = symtab.get_symbol_by_name(name)
             layout["functions"][name] = dict(start_address=symbol["st_value"], length=symbol["st_size"])
         counter, = symtab.get_symbol_by_name("counter")
@@ -179,11 +179,107 @@ def _write_ghidra_export(firmware: Firmware, output: Path, *, transform_name: st
     markup = ET.SubElement(root, "MARKUP")
     entry = firmware.layout["functions"]["_start"]["start_address"]
     transform = firmware.layout["functions"]["transform"]["start_address"]
+    thunk = firmware.layout["functions"]["transform_thunk"]["start_address"]
     dispatched = firmware.layout["functions"]["dispatched"]["start_address"]
-    ET.SubElement(markup, "MEMORY_REFERENCE", ADDRESS=f"ram:{entry:x}", TO_ADDRESS=f"ram:{transform:x}")
+    ET.SubElement(markup, "MEMORY_REFERENCE", ADDRESS=f"ram:{entry:x}", TO_ADDRESS=f"ram:{thunk:x}")
+    ET.SubElement(markup, "MEMORY_REFERENCE", ADDRESS=f"ram:{thunk:x}", TO_ADDRESS=f"ram:{transform:x}")
     # The dispatch pointer follows the four-byte counter in the assembly fixture.
     ET.SubElement(markup, "MEMORY_REFERENCE", ADDRESS=f"ram:{counter_address + 4:x}", TO_ADDRESS=f"ram:{dispatched:x}")
     ET.ElementTree(root).write(output)
+
+
+@pytest.mark.parametrize(("flags", "level", "typed"), [
+    pytest.param([], "warning", True, id="default"),
+    pytest.param([], "warning", False, id="untyped"),
+    pytest.param(["-Werror"], "error", True, id="fatal"),
+    pytest.param(["-Wall", "-Werror", "-Wno-ignoring-thunk-function"], None, True, id="suppressed"),
+])
+def test_recr_hooks_the_longer_duplicate(
+    firmware: Firmware, tmp_path: Path, capsys: pytest.CaptureFixture[str], flags: list[str], level: str | None,
+    typed: bool,
+) -> None:
+    export = tmp_path / "firmware.xml"
+    qualified = "main_app::transform"
+    _write_ghidra_export(firmware, export, transform_name=qualified)
+    xml = ET.parse(export)
+    datatypes = ET.Element("DATATYPES")
+    xml.getroot().insert(1, datatypes)
+    shared_definition = ET.SubElement(datatypes, "FUNCTION_DEF", NAME=qualified)
+    ET.SubElement(shared_definition, "RETURN_TYPE", DATATYPE="void")
+    short_node = xml.find("./FUNCTIONS/FUNCTION[@NAME='transform_thunk']")
+    short_node.set("NAME", qualified)
+    ET.SubElement(short_node, "RETURN_TYPE", DATATYPE="void")
+    ET.SubElement(short_node, "TYPEINFO_CMT").text = f"void {qualified}(void)"
+    if not typed:
+        implementation = xml.find(f"./FUNCTIONS/FUNCTION[@NAME='{qualified}']")
+        implementation.remove(implementation.find("RETURN_TYPE"))
+        implementation.remove(implementation.find("TYPEINFO_CMT"))
+    xml.write(export)
+    manifest = {key: value for key, value in firmware.layout.items() if key not in {"functions", "symbols"}}
+    firmware.manifest.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    longer = firmware.layout["functions"]["transform"]
+    shorter = firmware.layout["functions"]["transform_thunk"]
+    assert shorter["length"] < 8 <= longer["length"]
+    output, receipt = tmp_path / "output", tmp_path / "receipt.yaml"
+    output.write_bytes(b"previous output")
+    receipt.write_bytes(b"previous receipt")
+
+    result = main([
+        str(firmware.manifest), str(export), str(HOOK), "--cc", shlex.join(firmware.compiler),
+        "-o", str(output), "-r", str(receipt), *flags,
+    ])
+    stderr = capsys.readouterr().err
+    if level is not None:
+        assert f"recr: {level}: ignoring presumed thunk {qualified!r} at {shorter['start_address']:#x}" in stderr
+        assert f"Choosing {qualified!r} at {longer['start_address']:#x}" in stderr
+        assert "[-Wignoring-thunk-function]" in stderr
+    else:
+        assert "[-Wignoring-thunk-function]" not in stderr
+    if not typed:
+        assert f"Ghidra XML export has no usable prototype for {qualified!r} at {longer['start_address']:#x}" in stderr
+        assert "Commit all return/parameter details" in stderr
+    if level == "error" or not typed:
+        assert result == 1
+        assert output.read_bytes() == b"previous output"
+        assert receipt.read_bytes() == b"previous receipt"
+        return
+
+    assert result == 0
+    assert firmware.run(output, tmp_path / "hooked") == 24
+    text = firmware.layout["regions"][-1]
+    offset = text["file_offset"] + shorter["start_address"] - text["start_address"]
+    end = offset + shorter["length"]
+    assert output.read_bytes()[offset:end] == firmware.binary.read_bytes()[offset:end]
+    modified = yaml.safe_load(receipt.read_text(encoding="utf-8"))["modified"]
+    assert any(region["address"] == longer["start_address"] for region in modified)
+
+
+@pytest.mark.parametrize(("declaration", "diagnostic"), [
+    pytest.param(None, "raw manifest has no declaration for hook 'transform'", id="missing"),
+    pytest.param("extern int transform();", "function declaration isn't a prototype", id="no-prototype"),
+])
+def test_recr_requires_a_manifest_hook_prototype(
+    firmware: Firmware, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    declaration: str | None, diagnostic: str,
+) -> None:
+    transform = firmware.layout["functions"]["transform"]
+    if declaration is None:
+        del transform["declaration"]
+    else:
+        transform["declaration"] = declaration
+    firmware.manifest.write_text(yaml.safe_dump(firmware.layout), encoding="utf-8")
+    output, receipt = tmp_path / "output", tmp_path / "receipt"
+    output.write_bytes(b"previous output")
+    receipt.write_bytes(b"previous receipt")
+
+    assert main([
+        str(firmware.manifest), str(HOOK), "--cc", shlex.join(firmware.compiler),
+        "-o", str(output), "-r", str(receipt),
+    ]) == 1
+
+    assert diagnostic in capsys.readouterr().err
+    assert output.read_bytes() == b"previous output"
+    assert receipt.read_bytes() == b"previous receipt"
 
 
 @pytest.mark.parametrize("malformed", [False, True], ids=["inside-entry-window", "malformed-address"])

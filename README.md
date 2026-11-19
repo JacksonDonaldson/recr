@@ -102,10 +102,12 @@ modified:
 `recr` compiles a C extension for an x86-64, RV32, or RV64 non-PIE ELF using a
 typed Ghidra XML export. Prefix a function definition with `@` to hook the
 original function. Use the final component of a qualified Ghidra name, such as
-`@AppVprintf` for `main_app::AppVprintf`. The hook name must identify exactly
-one function. Calling that name normally from the extension invokes the
-original through a trampoline. C definitions in the extension take precedence
-over imported names.
+`@AppVprintf` for `main_app::AppVprintf`. A hook name usually identifies one
+function. When exactly two entries match and the shorter is under 8 bytes,
+recr selects the longer entry and warns about the presumed thunk. Use
+`-Wno-ignoring-thunk-function` to silence that warning. Calling the hook name
+normally from the extension invokes the selected original through a trampoline.
+C definitions in the extension take precedence over other imported names.
 
 ```sh
 recr ./a.out ./functions.xml ./hooks.rec -o ./a.out.recr -- -Iinclude -Llib -lexample
@@ -116,7 +118,19 @@ GCC accepts extra compiler flags, object files, and static libraries after
 enabled warnings fatal. Recr also passes both flags to GCC. Calls can use
 shared-library imports already present in the original ELF. Recr uses Ghidra's
 scalar, pointer, and array types for implicit declarations.
-Supply a C declaration for symbols with missing or unsupported type metadata.
+Each hook must match the original function's prototype. Recr uses the
+prototype on the selected Ghidra function entry to declare the original for
+calls from the extension. Ghidra does not always include function prototypes
+in exports. If the prototype is missing, edit the function in Ghidra, select
+**Commit all return/parameter details**, and export the XML again. Supply a C
+declaration for other imports with missing or unsupported type metadata.
+
+For RISC-V `__thiscall` functions, Ghidra must export `this` in `a0` as a
+pointer to a named structure. Declare that pointer as the first C parameter
+in the hook. A variadic hook can read arguments with `<stdarg.h>`. When it
+calls the original, supply the variadic arguments explicitly. Pass a
+`va_list` to a function declared to receive one.
+
 Code can be split across executable receipt ranges. Each data section needs
 a contiguous range and writable sections require writable space. Placement
 fails if the extension cannot fit. The sample hook and test-only space are in
@@ -165,8 +179,10 @@ entry addresses that firmware can reach from outside the mapped image under
 `entry_points` so codezip preserves their functions.
 
 Use `functions` to identify hooks and give codezip the extents it can analyze
-for reclaimable space. Recr skips functions whose full extent falls outside a
-single executable region and warns by default. Use
+for reclaimable space. Give every hooked function its original C prototype in
+`declaration` when the manifest supplies the function records. Recr skips
+functions whose full extent falls outside a single executable region and
+warns by default. Use
 `-Wno-function-outside-executable-range` to suppress this warning, including
 with `-Wall` or `-Werror`. Recr also skips functions shorter than the target's
 instruction alignment and warns by default. Use `-Wno-skip-short-functions`

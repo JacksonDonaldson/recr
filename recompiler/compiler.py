@@ -18,6 +18,9 @@ _C_TOKENS = re.compile(
     r"'(?:\\[\s\S]|[^'\\])*'|@(?P<hook>[A-Za-z_][A-Za-z_0-9]*)",
     re.DOTALL,
 )
+_DIAGNOSTIC = re.compile(
+    r"^(?P<file>.+?):\d+(?::\d+)?: (?P<kind>error|warning|note): (?P<message>.*)$"
+)
 _CONFLICT = re.compile(
     r"(?:conflicting types for|(?:static|non-static) declaration of|)"
     r"\s*['‘]([A-Za-z_]\w*)['’](?: redeclared as different kind of symbol)?"
@@ -37,27 +40,23 @@ def rewrite_hooks(source: str) -> tuple[str, tuple[str, ...]]:
     return _C_TOKENS.sub(replace, source), tuple(hooks)
 
 
-def _shadowed(stderr: str, header: Path, names: set[str]) -> set[str]:
+def _shadowed(stderr: str, header: Path, names: set[str], protected: set[str]) -> set[str]:
     found: set[str] = set()
+    pending = None
     for line in stderr.splitlines():
-        if not line.startswith("["):
+        diagnostic = _DIAGNOSTIC.match(line)
+        if diagnostic is None:
             continue
-        try:
-            diagnostics = json.loads(line)
-        except ValueError:
-            continue
-        for diagnostic in diagnostics:
-            if diagnostic.get("kind") != "error":
-                continue
-            match = _CONFLICT.match(diagnostic.get("message", ""))
-            if match is None or match[1] not in names:
-                continue
-            for note in diagnostic.get("children", []):
-                if any(
-                    location.get("caret", {}).get("file") == str(header)
-                    for location in note.get("locations", [])
-                ):
-                    found.add(match[1])
+        kind = diagnostic["kind"]
+        if kind == "error":
+            match = _CONFLICT.match(diagnostic["message"])
+            pending = match[1] if match else None
+            if pending in protected:
+                return set()
+        elif kind == "warning":
+            pending = None
+        elif pending is not None and pending in names and diagnostic["file"] == str(header):
+            found.add(pending)
     return found
 
 
@@ -81,17 +80,19 @@ def compile_rec(
         "-fdata-sections", "-fno-lto", "-Werror=implicit-function-declaration",
         "-iquote", str(source.parent), "-include", str(header), "-static",
         "-r", "-nostdlib", "-no-pie", *roots,
-        str(translation_unit), *flags, "-fdiagnostics-format=json", "-o", str(obj),
+        str(translation_unit), *flags, "-fdiagnostics-format=text", "-fdiagnostics-color=never", "-o", str(obj),
     ]
-    imported = dict(declarations)
+    protected = {*hooks, *(HOOK_PREFIX + name for name in hooks)}
+    imported = {name: declaration for name, declaration in declarations.items() if name not in hooks}
+    hook_declarations = "\n".join(
+        f"{declarations[name]}\nextern __typeof__({name}) {HOOK_PREFIX}{name};" for name in hooks
+    )
     while True:
         header.write_text(
             "#include <stddef.h>\n#include <stdint.h>\ntypedef __PTRDIFF_TYPE__ ssize_t;\n"
             + "\n".join(imported.values()) + "\n"
-            + "\n".join(
-                f"extern __typeof__({name}) {HOOK_PREFIX}{name};"
-                for name in hooks if name in imported
-            ) + "\n",
+            + '#pragma GCC diagnostic push\n#pragma GCC diagnostic error "-Wstrict-prototypes"\n'
+            + hook_declarations + "\n#pragma GCC diagnostic pop\n",
             encoding="utf-8",
         )
         result = subprocess.run(
@@ -99,12 +100,8 @@ def compile_rec(
         )
         if result.returncode == 0:
             return obj
-        overridden = _shadowed(result.stderr, header, set(imported))
+        overridden = _shadowed(result.stderr, header, set(imported), protected)
         if not overridden:
-            result = subprocess.run(
-                [arg for arg in command if arg != "-fdiagnostics-format=json"],
-                capture_output=True, text=True,
-            )
             raise ValueError(f"GCC failed to compile or link {source}:\n{result.stderr.strip()}")
         for name in overridden:
             del imported[name]

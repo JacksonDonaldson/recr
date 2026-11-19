@@ -179,7 +179,13 @@ def read_raw_input(
         functions = {f.name: [f] for f in parsed.functions}
         addresses = {f.name: {f.start_address} for f in parsed.functions}
         declarations = _declarations({name: document["functions"][name] for name in functions})
-        exports = Exports(functions, addresses, declarations, segments, [], set(), target)
+        function_declarations = {
+            (f.name, f.start_address): declarations[f.name] for f in parsed.functions if f.name in declarations
+        }
+        exports = Exports(
+            functions, addresses, declarations, segments, [], set(), target,
+            function_declarations=function_declarations,
+        )
     else:
         exports = read_ghidra_exports(xml, parsed.functions, segments, target)
     for name, address in symbols.items():

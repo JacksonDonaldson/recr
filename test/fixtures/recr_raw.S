@@ -1,12 +1,13 @@
     .text
-    .global _start, transform, dispatched
+    .global _start, transform, transform_thunk, dispatched
     .type _start, @function
     .type transform, @function
+    .type transform_thunk, @function
     .type dispatched, @function
 _start:
 #ifdef __riscv
     li a0, 7
-    jal ra, transform
+    jal ra, transform_thunk
     lla t0, dispatch
     ld t0, 0(t0)
     jalr ra, 0(t0)
@@ -14,7 +15,7 @@ _start:
     ecall
 #else
     mov $7, %edi
-    call transform
+    call transform_thunk
     mov %eax, %edi
     call *dispatch(%rip)
     mov %eax, %edi
@@ -26,13 +27,23 @@ transform:
 #ifdef __riscv
     addi a0, a0, 1
     addi a0, a0, 2
+    nop
     ret
 #else
     mov %edi, %eax
     add $3, %eax
+    nop
+    nop
     ret
 #endif
     .size transform, .-transform
+transform_thunk:
+#ifdef __riscv
+    j transform
+#else
+    jmp transform
+#endif
+    .size transform_thunk, .-transform_thunk
 dispatched:
 #ifdef __riscv
     addi a0, a0, 4

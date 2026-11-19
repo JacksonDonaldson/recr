@@ -28,6 +28,9 @@ from recompiler.target import Target
 from uplifter import Uplifter
 
 
+IGNORING_THUNK_FUNCTION = "ignoring-thunk-function"
+
+
 class WarningError(Exception):
     """A recr warning promoted to a build error."""
 
@@ -67,6 +70,24 @@ class Hook:
     @property
     def size(self) -> int:
         return self.resume - self.start
+
+
+def _select_hook_function(
+    name: str, functions: list[Function], warnings: WarningOptions,
+) -> tuple[Function, Function | None]:
+    if len(functions) == 1:
+        return functions[0], None
+    if len(functions) == 2:
+        shorter, longer = sorted(functions, key=lambda function: function.length)
+        if shorter.length < 8 and shorter.length < longer.length and shorter.start_address != longer.start_address:
+            warnings.emit(
+                f"ignoring presumed thunk {shorter.name!r} at {shorter.start_address:#x} "
+                f"({shorter.length} bytes) for hook {name!r}. Choosing "
+                f"{longer.name!r} at {longer.start_address:#x} ({longer.length} bytes)",
+                IGNORING_THUNK_FUNCTION,
+            )
+            return longer, shorter
+    raise ValueError(f"hook {name!r} must match exactly one original function, found {len(functions)}")
 
 
 def _hook(
@@ -154,16 +175,32 @@ def _build(
     uplifter = Uplifter(target.isa, original)
     isa = uplifter.isa
     hooks = []
+    ignored_entries: dict[str, int] = {}
+    declarations = dict(exports.declarations)
     for name in names:
-        functions = exports.functions.get(name, [])
-        if len(functions) != 1:
-            raise ValueError(f"hook {name!r} must match exactly one original function, found {len(functions)}")
-        hooks.append(_hook(name, functions[0], original, uplifter, exports))
+        function, ignored = _select_hook_function(name, exports.functions.get(name, []), warnings)
+        declaration = exports.function_declarations.get((name, function.start_address))
+        if declaration is None:
+            if args.re_file.suffix.lower() in YAML_EXTENSIONS:
+                raise ValueError(
+                    f"raw manifest has no declaration for hook {name!r}. "
+                    "Add a C function prototype to its 'declaration' field."
+                )
+            raise ValueError(
+                f"Ghidra XML export has no usable prototype for {function.name!r} at {function.start_address:#x}. "
+                "Ghidra does not always include function prototypes in exports. "
+                "When editing the function in Ghidra, select 'Commit all return/parameter details' "
+                "and export the XML again."
+            )
+        declarations[name] = declaration
+        hooks.append(_hook(name, function, original, uplifter, exports))
+        if ignored is not None:
+            ignored_entries[name] = ignored.start_address
     if len({hook.start for hook in hooks}) != len(hooks):
         raise ValueError("multiple hooks alias the same function entry")
 
     extension = Object.read(compile_rec(
-        args.rec.resolve(), rewritten, names, exports.declarations,
+        args.rec.resolve(), rewritten, names, declarations,
         flags, args.cc or target.compiler, directory, target,
     ), target)
     for name in names:
@@ -171,7 +208,10 @@ def _build(
         if hook is None or not extension.sections[hook.section].flags & 4:
             raise ValueError(f".rec must define a function for hook {name!r}")
 
-    imports = {name: exports.address(name) for name in sorted(extension.imports())}
+    imports = {
+        name: exports.address(name, ignored_entry=ignored_entries.get(name))
+        for name in sorted(extension.imports())
+    }
     protected = frozenset((*imports.values(), *(f.start_address for name in names for f in exports.functions[name])))
     if raw is not None:
         protected |= raw.protected_entries
@@ -238,9 +278,11 @@ def main(argv: list[str] | None = None) -> int:
         argv, flags = argv[:index], argv[index + 1:]
     suppress_range_warning = f"-Wno-{FUNCTION_OUTSIDE_EXECUTABLE_RANGE}"
     suppress_short_warning = f"-Wno-{SKIP_SHORT_FUNCTIONS}"
+    suppress_thunk_warning = f"-Wno-{IGNORING_THUNK_FUNCTION}"
     suppressible_warnings = {
         suppress_range_warning: FUNCTION_OUTSIDE_EXECUTABLE_RANGE,
         suppress_short_warning: SKIP_SHORT_FUNCTIONS,
+        suppress_thunk_warning: IGNORING_THUNK_FUNCTION,
     }
     parser = argparse.ArgumentParser(
         prog="recr", description="Place compiled .rec hooks into space recovered by codezip.",
@@ -251,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
             "  -Werror                                 treat warnings as errors\n"
             f"  {suppress_range_warning}  suppress warnings for raw functions outside executable regions\n"
             f"  {suppress_short_warning:<38}  suppress warnings for raw functions shorter than the target alignment\n"
+            f"  {suppress_thunk_warning:<38}  suppress warnings when a short hook candidate is ignored\n"
             "\nPass additional GCC flags, objects, and static archives after --."
         ),
     )

@@ -106,12 +106,21 @@ Implemented:
   `codezip` and `recr` commands. The distribution bundles the x86-64 and RISC-V SLEIGH
   tables and the optional CUDA kernel source.
 - `recr` compiles .rec hooks for x86-64, RV32, and RV64 non-PIE ELF with typed
-  Ghidra XML. Hooks match the final component of Ghidra function names and
-  require a unique match.
+  Ghidra XML. Hooks match the final component of Ghidra function names. When
+  exactly two distinct entries match and one is both shorter and under eight
+  bytes, recr selects the longer entry and warns with `ignoring-thunk-function`.
+  Both entries stay protected. Other ambiguous hook names are rejected.
   It retains original functions used by the extension, places code and data
   in codezip receipt ranges, and installs fixed-width entry jumps and original
-  call trampolines. It rejects hooks with a Ghidra memory reference into the
-  interior of the overwritten entry window. Code can span disjoint ranges.
+  call trampolines. GCC checks each hook against the selected original's
+  prototype, which also declares the original for calls from the extension.
+  The prototype comes from the Ghidra function entry or the raw manifest.
+  RISC-V `__thiscall` entries use the exported `this` structure pointer in
+  `a0` as the first C parameter and retain the variadic marker.
+  Missing Ghidra prototypes trigger a diagnostic with instructions to commit
+  the return and parameter details before re-exporting. Recr rejects hooks
+  with a Ghidra memory reference into the interior of the overwritten entry window.
+  Code can span disjoint ranges.
   Writable data requires writable cleared space. GCC accepts flags, objects,
   and static libraries.
   RISC-V placement checks JAL reach, relinks ELF immediates, and keeps
