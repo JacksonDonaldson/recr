@@ -159,8 +159,8 @@ class Uplifter:
                 instruction = self.isa.disassemble(self.binary, address)
             except ValueError as exc:
                 raise ValueError(
-                    f"cannot uplift function {function.name}: "
-                    f"failed to decode instruction at {address:#x}"
+                    f"cannot uplift function {function.name}: failed to decode instruction at {address:#x} "
+                    f"in extent [{start:#x}, {end:#x}) using {self.isa.name}. {exc}"
                 ) from exc
 
             if instruction.address != address:
@@ -177,7 +177,8 @@ class Uplifter:
             if address + instruction.length > end:
                 raise FunctionExtentError(
                     f"cannot uplift function {function.name}: instruction at "
-                    f"{address:#x} extends past the function end {end:#x}",
+                    f"{address:#x} extends past the function end {end:#x}. "
+                    f"The {instruction.length}-byte instruction ends at {address + instruction.length:#x} (exclusive)",
                     address + instruction.length,
                 )
 

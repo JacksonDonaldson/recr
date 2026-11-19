@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
+from elftools.elf.enums import ENUM_RELOC_TYPE_x64
 from elftools.elf.relocation import RelocationSection
 
 from ir import Address, Instruction, InstructionType
@@ -15,6 +16,9 @@ from isa.x86_64 import X86_64ISA
 from recompiler import riscv
 from recompiler.exports import Exports
 from recompiler.target import X86_64, Target
+
+
+_X86_RELOCATION_NAMES = {value: name for name, value in ENUM_RELOC_TYPE_x64.items()}
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,12 @@ class Relocation:
     kind: int
     symbol: Symbol
     addend: int
+
+    def describe(self, section: Section, kind: str) -> str:
+        symbol = self.symbol
+        name = f"symbol {symbol.name!r}" if symbol.name else f"section {symbol.section} at offset {symbol.offset:#x}"
+        addend = f" (addend {self.addend:+#x})" if self.addend else ""
+        return f"{kind} at {section.name}+{self.offset:#x} for {name}{addend}"
 
 
 @dataclass
@@ -63,7 +73,7 @@ class Section:
             offset = address - fragment.address
             if 0 <= offset and offset + width <= len(fragment.data):
                 return fragment.data, offset
-        raise ValueError(f"relocation outside placed bytes in {self.name}")
+        raise ValueError(f"{width}-byte relocation at {address:#x} extends outside the placed bytes of {self.name}")
 
     def read_word(self, address: int, width: int) -> int:
         data, offset = self._location(address, width)
@@ -71,7 +81,12 @@ class Section:
 
     def write_word(self, address: int, value: int, width: int, *, signed: bool = False) -> None:
         data, offset = self._location(address, width)
-        data[offset:offset + width] = value.to_bytes(width, "little", signed=signed)
+        try:
+            encoded = value.to_bytes(width, "little", signed=signed)
+        except OverflowError as exc:
+            field = "signed" if signed else "unsigned"
+            raise ValueError(f"value {value:#x} at {address:#x} does not fit a {field} {width * 8}-bit field") from exc
+        data[offset:offset + width] = encoded
 
 
 @dataclass
@@ -92,7 +107,12 @@ class Object:
         with path.open("rb") as stream:
             elf = ELFFile(stream)
             if not target.accepts_object(elf):
-                raise ValueError(f"GCC must produce a relocatable ELF object matching the {target.isa} ABI")
+                endian = "little-endian" if elf.little_endian else "big-endian"
+                raise ValueError(
+                    f"GCC must produce a relocatable ELF object matching the {target.isa} ABI (flags {target.flags:#x}). "
+                    f"Produced ELF{elf.elfclass} {endian} {elf.header.e_machine} {elf.header.e_type} "
+                    f"with flags {elf.header.e_flags:#x}. Check --cc and the compiler flags after --"
+                )
             for index, section in enumerate(elf.iter_sections()):
                 flags = section["sh_flags"]
                 if not flags & 2 or not section["sh_size"]:
@@ -100,13 +120,16 @@ class Object:
                 if section.name in (".eh_frame", ".note.gnu.property"):
                     continue
                 if flags & 0x400 or section["sh_type"] not in ("SHT_PROGBITS", "SHT_NOBITS"):
-                    raise ValueError(f"unsupported loadable extension section {section.name!r}")
+                    raise ValueError(
+                        f"unsupported loadable extension section {section.name!r} "
+                        f"with type {section['sh_type']} and flags {flags:#x}"
+                    )
                 sections[index] = Section(
                     section.name, section.data(), flags, section["sh_addralign"] or 1,
                 )
             symtab = elf.get_section_by_name(".symtab")
             if symtab is None:
-                raise ValueError("the extension object has no symbol table")
+                raise ValueError("the extension object has no .symtab symbol table. Check for strip options in the compiler command")
             for entry in symtab.iter_symbols():
                 if entry.name and entry["st_shndx"] in sections:
                     symbols[entry.name] = _symbol(entry)
@@ -114,7 +137,7 @@ class Object:
                 if not isinstance(section, RelocationSection) or section["sh_info"] not in sections:
                     continue
                 if not section.is_RELA():
-                    raise ValueError("extension relocations require explicit addends")
+                    raise ValueError(f"extension relocations require explicit addends. Section {section.name!r} uses REL")
                 destination = sections[section["sh_info"]]
                 for entry in section.iter_relocations():
                     kind = entry["r_info_type"]
@@ -191,6 +214,19 @@ class Space:
             return self.take(index, start, size)
         return None
 
+    def describe_capacity(self, align: int, flags: int) -> str:
+        permissions = "".join(letter for bit, letter in ((4, "r"), (2, "w"), (1, "x")) if flags & bit)
+        available = [
+            region.end - self.aligned(region.start, align)
+            for region in self.ranges if region.flags & flags == flags
+        ]
+        usable = [size for size in available if size > 0]
+        return (
+            f"needs {permissions} permissions and {align}-byte alignment. "
+            f"{sum(usable)} usable bytes across {len(usable)} cleared ranges, "
+            f"with {max(usable, default=0)} bytes in the largest"
+        )
+
 
 @dataclass(frozen=True)
 class _Instruction:
@@ -213,7 +249,7 @@ class _Image:
 
     def read(self, address: int, length: int) -> bytes:
         if address < 0 or address + length > len(self.data):
-            raise ValueError("read outside compiled section")
+            raise ValueError(f"read of {length} bytes at section offset {address:#x} falls outside the {len(self.data)} compiled bytes")
         return self.data[address:address + length]
 
 
@@ -223,7 +259,10 @@ def _instructions(section: Section, isa: ISA, target: Target = X86_64) -> list[_
     offset = 0
     relocations = {relocation.offset: relocation.kind for relocation in section.relocations}
     while offset < len(section.data):
-        original = isa.disassemble(image, offset)
+        try:
+            original = isa.disassemble(image, offset)
+        except ValueError as exc:
+            raise ValueError(f"cannot decode compiled instruction at {section.name}+{offset:#x}. {exc}") from exc
         raw = original.original_data
         following = offset + original.length
         branch = None
@@ -303,7 +342,11 @@ def _split(section: Section, space: Space, isa: ISA, target: Target) -> None:
             if count:
                 break
         else:
-            raise ValueError(f"insufficient cleared executable space for {section.name}")
+            raise ValueError(
+                f"insufficient cleared executable space for {section.name}+{remaining[0].offset:#x}. "
+                f"The next fragment starts with a {len(remaining[0].data)}-byte instruction and "
+                f"{space.describe_capacity(align, 5)}"
+            )
 
         space.take(index, start, total)
         fragment = Fragment(start, bytearray(total))
@@ -325,22 +368,30 @@ def _split(section: Section, space: Space, isa: ISA, target: Target) -> None:
                 tail = raw[item.branch_offset:]
                 template = isa.disassemble(_Image(tail), 0)
                 branch_address = address + item.branch_offset
-                instruction = isa.set_instruction_target(
-                    Instruction(tail, template.type, len(tail), branch_address),
-                    Address.absolute(destination),
-                )
+                try:
+                    instruction = isa.set_instruction_target(
+                        Instruction(tail, template.type, len(tail), branch_address), Address.absolute(destination),
+                    )
+                except ValueError as exc:
+                    raise ValueError(
+                        f"cannot encode split branch at {section.name}+{item.offset:#x} "
+                        f"from {branch_address:#x} to {destination:#x}. {exc}"
+                    ) from exc
                 if not isa.can_encode(instruction, branch_address):
-                    raise ValueError(f"cannot encode split branch in {section.name}")
+                    raise ValueError(f"cannot encode split branch at {section.name}+{item.offset:#x} from {branch_address:#x} to {destination:#x}")
                 raw = raw[:item.branch_offset] + instruction.original_data
             elif item.relative_data:
-                raise ValueError(f"cannot split {section.name} with an unrelocated PC-relative operand")
+                raise ValueError(f"cannot split {section.name} with an unrelocated PC-relative operand at offset {item.offset:#x}")
             # ELF fixups validate the final displacements for unlinked operands.
             elif not item.elf_relocated and not isa.can_encode(item.original, address):
-                raise ValueError(f"cannot encode split instruction in {section.name}+{item.offset:#x}")
+                raise ValueError(f"cannot encode split instruction {item.original.original_data.hex(' ')} in {section.name}+{item.offset:#x} at {address:#x}")
             fragment.data[cursor:cursor + len(raw)] = raw
             cursor += len(raw)
         if cursor < len(fragment.data):
-            fragment.data[cursor:] = target.jump(fragment.address + cursor, groups[index + 1][0].address)
+            try:
+                fragment.data[cursor:] = target.jump(fragment.address + cursor, groups[index + 1][0].address)
+            except ValueError as exc:
+                raise ValueError(f"cannot join split fragments of {section.name}. {exc}") from exc
 
 
 def place(
@@ -359,7 +410,10 @@ def place(
         elif section.flags & 4:
             split.append(section)
         else:
-            raise ValueError(f"insufficient cleared space for {section.name} ({len(section.data)} bytes)")
+            raise ValueError(
+                f"insufficient cleared space for {section.name} ({len(section.data)} contiguous bytes). "
+                f"The section {space.describe_capacity(alignment, section.permissions)}"
+            )
     for section in split:
         _split(section, space, isa, target)
 
@@ -368,13 +422,17 @@ def place(
 
     for section in sections:
         for relocation in section.relocations:
-            if target.machine == "EM_RISCV":
-                try:
+            try:
+                if target.machine == "EM_RISCV":
                     riscv.apply(object_, section, relocation, resolve, target.bits)
-                except OverflowError as exc:
-                    raise ValueError(f"RISC-V relocation overflows in {section.name}") from exc
-            else:
-                _apply_x86(object_, section, relocation, imports, isa)
+                else:
+                    _apply_x86(object_, section, relocation, imports, isa)
+            except ValueError as exc:
+                kind = (
+                    riscv.relocation_name(relocation.kind) if target.machine == "EM_RISCV"
+                    else _X86_RELOCATION_NAMES.get(relocation.kind, f"x86-64 relocation type {relocation.kind}")
+                )
+                raise ValueError(f"{relocation.describe(section, kind)} failed. {exc}") from exc
     return [fragment for section in sections for fragment in section.fragments]
 
 
@@ -423,7 +481,4 @@ def _apply_x86(
 
     if relative:
         value -= address
-    try:
-        section.write_word(address, value, width, signed=signed)
-    except OverflowError as exc:
-        raise ValueError(f"relocation overflows for {symbol.name or section.name!r}") from exc
+    section.write_word(address, value, width, signed=signed)

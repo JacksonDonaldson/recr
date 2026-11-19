@@ -52,7 +52,10 @@ class RISCVSlaSpec(SlaSpec):
 
     def _memory_state_for_access(self, space_id: ConstTpl) -> StateSpace:
         if space_id.kind != "spaceid" or space_id.value not in self.spaces:
-            raise SlaError("invalid RISC-V P-code memory address space")
+            raise SlaError(
+                f"invalid RISC-V P-code memory address space. Expected a defined spaceid, "
+                f"received {space_id.kind!r} with value {space_id.value}"
+            )
         if self.spaces[space_id.value].name == "csreg":
             return _CSR
         return _RAM

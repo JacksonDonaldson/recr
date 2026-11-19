@@ -365,8 +365,10 @@ def relink_in_instructions(
 
         selected = [plan for plan in selected if plan is not failed]
         LOGGER.debug(
-            "dropping outline match at %#x: no room for shared block",
+            "dropping outline match at %#x. Could not place its %d-byte shared block and return within reach of all %d call sites",
             failed.match.blocks[0].start_location.value,
+            failed.extracted_length + isa.ret_instruction_length(),
+            failed.match.block_count,
         )
         if not selected:
             break

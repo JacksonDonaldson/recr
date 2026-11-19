@@ -56,17 +56,20 @@ class _RISCVISA(ISA):
 
     def _check_address(self, address: int) -> None:
         if not 0 <= address <= self.address_mask or address % 2:
-            raise ValueError(f"invalid RV{self.xlen} instruction address {address:#x}")
+            raise ValueError(
+                f"invalid RV{self.xlen} instruction address {address:#x}. "
+                f"Expected an even address in [0x0, {self.address_mask:#x}]"
+            )
 
     def _read_instruction(self, binary: Binary, address: int) -> bytes:
         self._check_address(address)
         first = binary.read(address, 2)
         if len(first) != 2:
-            raise ValueError(f"truncated instruction at {address:#x}")
+            raise ValueError(f"truncated instruction at {address:#x}. Expected a 2-byte first parcel, got {len(first)} bytes")
         if first[0] & 3 != 3:
             return first
         if first[0] & 0x1F == 0x1F:
-            raise ValueError(f"unsupported instruction length at {address:#x}")
+            raise ValueError(f"unsupported instruction length at {address:#x}. First parcel {first.hex(' ')} indicates more than 4 bytes")
         self._check_address(address + 2)
         return first + binary.read(address + 2, 2)
 
@@ -283,28 +286,31 @@ class _RISCVISA(ISA):
         self._check_address(address)
         original = self._resolve(data, origin)
         if original.length != length:
-            raise ValueError("invalid RISC-V instruction length")
+            raise ValueError(f"invalid RISC-V instruction length at {origin:#x}. Recorded {length}, decoded {original.length}")
         word = int.from_bytes(data, "little")
         immediate = relative_immediate(word, original.length, self.xlen)
         if target is not None and (immediate is None or immediate is UPPER):
-            raise ValueError("instruction has no direct branch or call target")
+            raise ValueError(f"instruction {data.hex(' ')} at {origin:#x} has no direct branch or call target")
         if address != origin:
             if original.constructor.template is None:
-                raise ValueError("cannot relocate an instruction with opaque semantics")
+                raise ValueError(f"cannot relocate instruction {data.hex(' ')} from {origin:#x} to {address:#x}. It has opaque semantics")
             if immediate is JUMP or (original.length == 4 and word & 0x7F == 0x67):
                 rd = (word >> 7) & 31
                 if rd not in (0, 1, 5):
-                    raise ValueError("cannot relocate an explicit non-ABI link value")
+                    raise ValueError(f"cannot relocate instruction at {origin:#x}. Moving it to {address:#x} changes the explicit link value written to x{rd}")
             if immediate is None and self.spec.mnemonic(original).lower() in {
                 "ecall", "ebreak", "c.ebreak", "unimp", "dret", "mret", "sret", "uret",
             }:
-                raise ValueError("cannot relocate a trap or exception transfer")
+                raise ValueError(f"cannot relocate a trap or exception transfer from {origin:#x} to {address:#x} ({data.hex(' ')})")
         resolved = original
         if immediate is not None:
             if target is None:
                 target = (origin + immediate.decode(word)) & self.address_mask
             displacement = sign_extend((target - address) & self.address_mask, self.xlen)
-            patched = immediate.encode(word, displacement)
+            try:
+                patched = immediate.encode(word, displacement)
+            except ValueError as exc:
+                raise ValueError(f"instruction at {origin:#x} cannot reach {target:#x} from {address:#x}. {exc}") from exc
             data = patched.to_bytes(original.length, "little")
             if patched != word:
                 resolved = self._resolve(data, address)
@@ -315,7 +321,7 @@ class _RISCVISA(ISA):
             else instruction_type
         )
         if flow.type is not expected_type:
-            raise ValueError("re-encoding changed the instruction type")
+            raise ValueError(f"re-encoding instruction at {origin:#x} for {address:#x} changed the type from {expected_type.name} to {flow.type.name}")
         return data, flow
 
     def _encode(self, instruction: Instruction, address: int, target: int | None) -> Instruction:
@@ -330,7 +336,10 @@ class _RISCVISA(ISA):
 
     def set_instruction_target(self, instruction: Instruction, new_target_address: Address) -> Instruction:
         if new_target_address.kind is not AddressKind.ABSOLUTE:
-            raise ValueError("instruction target must be an absolute address")
+            raise ValueError(
+                f"instruction target must be an absolute address. Received {new_target_address.kind.name} "
+                f"for instruction at {instruction.address:#x}"
+            )
         self._check_address(new_target_address.value)
         return self._encode(instruction, instruction.address, new_target_address.value)
 

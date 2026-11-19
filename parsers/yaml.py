@@ -104,7 +104,7 @@ def parse_functions(
             offset = _read_integer(record, "file_offset", name, UNKNOWN_FILE_OFFSET)
         length = _read_integer(record, "length", name, 0 if allow_empty else 1)
         if start + length > _ADDRESS_LIMIT:
-            raise ValueError(f"function {name!r} extends past the 64-bit address space")
+            raise ValueError(f"function {name!r} extends past the 64-bit address space. Its extent is [{start:#x}, {start + length:#x})")
         functions.append(
             Function(name=name, start_address=start, file_offset=offset, length=length)
         )
@@ -117,6 +117,6 @@ def _read_integer(record: dict, field: str, function: str, minimum: int) -> int:
     if type(value) is not int or not minimum <= value < _ADDRESS_LIMIT:
         raise ValueError(
             f"function {function!r} field {field!r} must be an integer "
-            f"between {minimum} and {_ADDRESS_LIMIT - 1:#x}"
+            f"between {minimum} and {_ADDRESS_LIMIT - 1:#x}. Received {value!r}"
         )
     return value

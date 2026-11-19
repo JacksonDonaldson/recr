@@ -41,20 +41,23 @@ class RawBinary(Binary):
         self._starts = tuple(region.start_address for region in self.regions)
         self._file_order = tuple(sorted(self.regions, key=lambda region: region.file_offset))
         if not self.regions:
-            raise ValueError("raw binary requires at least one mapped region")
+            raise ValueError(f"raw binary {self.path} requires at least one mapped region with a file_offset")
         for region in self.regions:
             if region.start_address < 0 or region.end_address > 1 << 64:
-                raise ValueError("raw region is outside the virtual address space")
+                raise ValueError(f"raw region [{region.start_address:#x}, {region.end_address:#x}) is outside the 64-bit virtual address space")
             if region.length <= 0 or region.file_offset < 0:
-                raise ValueError("raw region requires a positive length and non-negative file offset")
+                raise ValueError(f"raw region at {region.start_address:#x} requires a positive length and non-negative file offset. Received {region.length:#x} and {region.file_offset:#x}")
             if region.end_offset > len(self._data):
-                raise ValueError(f"raw region at {region.start_address:#x} extends past the end of the file")
+                raise ValueError(
+                    f"raw region at {region.start_address:#x} extends past the end of the file {self.path}. "
+                    f"File offsets [{region.file_offset:#x}, {region.end_offset:#x}) exceed the image size {len(self._data):#x}"
+                )
         for left, right in zip(self.regions, self.regions[1:]):
             if left.end_address > right.start_address:
-                raise ValueError("raw regions overlap in virtual address space")
+                raise ValueError(f"raw regions overlap in virtual address space. Region at {left.start_address:#x} ends at {left.end_address:#x}, past the start {right.start_address:#x} of the next region")
         for left, right in zip(self._file_order, self._file_order[1:]):
             if left.end_offset > right.file_offset:
-                raise ValueError("raw regions overlap in the file")
+                raise ValueError(f"raw regions overlap in the file {self.path}. Offsets [{left.file_offset:#x}, {left.end_offset:#x}) and [{right.file_offset:#x}, {right.end_offset:#x}) overlap")
 
     @classmethod
     def open(
@@ -66,7 +69,7 @@ class RawBinary(Binary):
         index = bisect_right(self._starts, address) - 1
         if index >= 0 and address < self.regions[index].end_address:
             return self.regions[index]
-        raise ValueError(f"virtual address {address:#x} is not mapped")
+        raise ValueError(f"virtual address {address:#x} is not mapped in raw image {self.path}")
 
     def mapped_ranges(self) -> list[tuple[int, int]]:
         return [(r.start_address, r.length) for r in self.regions]
@@ -85,7 +88,7 @@ class RawBinary(Binary):
 
     def read(self, address: int, length: int) -> bytes:
         if length < 0:
-            raise ValueError("read length must be non-negative")
+            raise ValueError(f"read length must be non-negative. Received {length} at {address:#x}")
         data = bytearray()
         while length:
             region = self.region_at(address)
@@ -105,7 +108,7 @@ class RawBinary(Binary):
             return
         region = self.region_at(address)
         if address + len(data) > region.end_address:
-            raise ValueError(f"write at {address:#x} crosses a raw region boundary")
+            raise ValueError(f"write at {address:#x} crosses a raw region boundary. Requested {len(data)} bytes, but the region ends at {region.end_address:#x} (exclusive)")
         offset = region.file_offset + address - region.start_address
         self._data[offset:offset + len(data)] = data
         self._revision += 1

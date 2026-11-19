@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 
 from binary.binary import Binary
+from gpu import BackendError
 from input_parser import ParseError, parse_re_file
 from ir import FreeSpace, Function
 from optimizers import function_remover, outliner
@@ -153,8 +154,8 @@ def run_pipeline(
 
     try:
         uplifter = Uplifter(isa_name, binary)
-    except ValueError as exc:
-        LOGGER.error("%s", exc)
+    except (OSError, ValueError) as exc:
+        LOGGER.error("cannot initialize ISA %r for %s (export %s). %s", isa_name, args.binary, args.re_file, exc)
         return 1
 
     failures = 0
@@ -171,16 +172,16 @@ def run_pipeline(
         except FunctionExtentError as exc:
             if warn_invalid_extent is None:
                 failures += 1
-                LOGGER.error("failed to uplift %s: %s", function.name, exc)
+                LOGGER.error("failed to uplift %s at %#x in %s. %s", function.name, function.start_address, args.binary, exc)
             else:
                 warn_invalid_extent(function, exc)
                 rejected_ranges.append((function.start_address, exc.covered_end))
         except (ValueError, NotImplementedError) as exc:
             failures += 1
-            LOGGER.error("failed to uplift %s: %s", function.name, exc)
+            LOGGER.error("failed to uplift %s at %#x in %s. %s", function.name, function.start_address, args.binary, exc)
         except Exception as exc:  # noqa: BLE001 - report every function
             failures += 1
-            LOGGER.error("failed to uplift %s: %s", function.name, exc)
+            LOGGER.error("failed to uplift %s at %#x in %s. %s: %s", function.name, function.start_address, args.binary, type(exc).__name__, exc)
 
     uplifted = len(parsed.functions) - failures - len(rejected_ranges)
     LOGGER.info(
@@ -201,9 +202,13 @@ def run_pipeline(
     LOGGER.info("recovering cross-references")
     try:
         uplifter.build_xrefs()
+    except (ValueError, BackendError) as exc:
+        LOGGER.error("failed to recover cross-references in %s using %s. %s", args.binary, isa_name, exc)
+        return 1
+    try:
         protected_entries |= uplifter.entries_to_preserve(rejected_ranges)
-    except ValueError as exc:
-        LOGGER.error("failed to recover cross-references: %s", exc)
+    except (ValueError, BackendError) as exc:
+        LOGGER.error("failed to recover references from rejected function extents in %s. %s", args.binary, exc)
         return 1
 
     xref_count = sum(
@@ -227,7 +232,11 @@ def run_pipeline(
 
     if args.report_outline_matches:
         LOGGER.info("searching for profitable outline matches")
-        outline_result = outliner.extract_instruction_regions(binary, uplifter, uplifter.isa, warn=warn)
+        try:
+            outline_result = outliner.extract_instruction_regions(binary, uplifter, uplifter.isa, warn=warn)
+        except (ValueError, NotImplementedError) as exc:
+            LOGGER.error("cannot report outline matches in %s using %s. %s", args.binary, isa_name, exc)
+            return 1
         if outline_result is None:
             print("outlining is not supported by this ISA")
         else:
@@ -248,7 +257,7 @@ def run_pipeline(
             binary, uplifter, uplifter.isa, free_space, protected_entries=protected_entries, warn=warn,
         )
     except (ValueError, NotImplementedError) as exc:
-        LOGGER.error("outlining failed: %s", exc)
+        LOGGER.error("outlining failed for %s using %s. %s", args.binary, isa_name, exc)
         return 1
 
     if outline_result is not None:
@@ -260,14 +269,22 @@ def run_pipeline(
 
     LOGGER.info("filling %d free space range(s) with 0xff", len(free_space))
     for space in free_space:
-        binary.write(space.start.value, b"\xff" * space.size)
+        try:
+            binary.write(space.start.value, b"\xff" * space.size)
+        except ValueError as exc:
+            LOGGER.error("cannot fill %d freed bytes at %#x in %s. %s", space.size, space.start.value, args.binary, exc)
+            return 1
 
     output = args.output
     if output is None:
         output = args.binary.with_name(args.binary.name + ".codezip")
 
     LOGGER.info("writing modified binary to %s", output)
-    binary.write_to_disk(output)
+    try:
+        binary.write_to_disk(output)
+    except OSError as exc:
+        LOGGER.error("cannot write modified binary to %s. %s", output, exc)
+        return 1
 
     if args.receipt is not None:
         modified_ranges = (
@@ -276,10 +293,11 @@ def run_pipeline(
             else []
         )
         LOGGER.info("writing receipt to %s", args.receipt)
-        args.receipt.write_text(
-            _render_receipt(free_space, modified_ranges),
-            encoding="utf-8",
-        )
+        try:
+            args.receipt.write_text(_render_receipt(free_space, modified_ranges), encoding="utf-8")
+        except OSError as exc:
+            LOGGER.error("modified binary written to %s, but cannot write receipt to %s. %s", output, args.receipt, exc)
+            return 1
 
     return 0
 

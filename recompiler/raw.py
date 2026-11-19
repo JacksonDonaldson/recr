@@ -33,7 +33,7 @@ class RawInput:
 
 def _integer(value: object, label: str, minimum: int = 0) -> int:
     if type(value) is not int or value < minimum:
-        raise ValueError(f"{label} must be an integer greater than or equal to {minimum}")
+        raise ValueError(f"{label} must be an integer greater than or equal to {minimum}. Received {value!r}")
     return value
 
 
@@ -49,10 +49,10 @@ def _regions(records: object, address_limit: int) -> tuple[list[Region], list[Se
         start = _integer(record.get("start_address"), f"{label} start_address")
         length = _integer(record.get("length"), f"{label} length", 1)
         if start + length > address_limit:
-            raise ValueError(f"{label} extends past the target address space")
+            raise ValueError(f"{label} [{start:#x}, {start + length:#x}) extends past the target address space ending at {address_limit:#x} (exclusive)")
         permissions = record.get("permissions", "rx")
         if permissions not in ("r", "rw", "rx", "rwx"):
-            raise ValueError(f"{label} permissions must be r, rw, rx, or rwx")
+            raise ValueError(f"{label} permissions must be r, rw, rx, or rwx. Received {permissions!r}")
         flags = 4 | (2 if "w" in permissions else 0) | (1 if "x" in permissions else 0)
         file_size = 0
         if "file_offset" in record:
@@ -64,7 +64,10 @@ def _regions(records: object, address_limit: int) -> tuple[list[Region], list[Se
     virtual_order = sorted(segments, key=lambda segment: segment.start)
     for left, right in zip(virtual_order, virtual_order[1:]):
         if left.start + left.memory_size > right.start:
-            raise ValueError(f"raw regions overlap in virtual address space at {right.start:#x}")
+            raise ValueError(
+                f"raw regions overlap in virtual address space at {right.start:#x}. "
+                f"The region starting at {left.start:#x} ends at {left.start + left.memory_size:#x} (exclusive)"
+            )
     return file_regions, segments
 
 
@@ -79,7 +82,7 @@ def _symbols(records: object, address_limit: int) -> dict[str, int]:
             raise ValueError(f"symbol {name!r} must be a mapping")
         address = _integer(record.get("address"), f"symbol {name!r} address")
         if address >= address_limit:
-            raise ValueError(f"symbol {name!r} is outside the target address space")
+            raise ValueError(f"symbol {name!r} at {address:#x} is outside the target address space ending at {address_limit:#x} (exclusive)")
         symbols[name] = address
     return symbols
 
@@ -100,8 +103,8 @@ def _entry_points(binary: RawBinary, records: object) -> set[int]:
     if not isinstance(records, list):
         raise ValueError("'entry_points' must be a list of executable virtual addresses")
     entries = set()
-    for value in records:
-        address = _integer(value, "entry point")
+    for index, value in enumerate(records, 1):
+        address = _integer(value, f"entry point {index}")
         try:
             region = binary.region_at(address)
         except ValueError:
@@ -147,15 +150,21 @@ def _check_functions(
             )
         offset = binary.virtual_to_file(start)
         if function.file_offset not in (UNKNOWN_FILE_OFFSET, offset):
-            raise ValueError(f"raw function {function.name!r} file_offset disagrees with the region map")
+            raise ValueError(
+                f"raw function {function.name!r} file_offset disagrees with the region map. "
+                f"The export declares {function.file_offset:#x}, while {start:#x} maps to {offset:#x}"
+            )
         function.file_offset = offset
         accepted.append(function)
 
-    end = 0
-    for function in sorted(accepted, key=lambda item: item.start_address):
-        if function.start_address < end:
-            raise ValueError(f"raw function {function.name!r} overlaps another function")
-        end = function.start_address + function.length
+    ordered = sorted(accepted, key=lambda item: item.start_address)
+    for left, right in zip(ordered, ordered[1:]):
+        end = left.start_address + left.length
+        if right.start_address < end:
+            raise ValueError(
+                f"raw function {right.name!r} at {right.start_address:#x} overlaps another function, "
+                f"{left.name!r} in [{left.start_address:#x}, {end:#x})"
+            )
     return accepted
 
 
@@ -173,7 +182,7 @@ def read_raw_input(
             raise ValueError("supply function records in either the manifest or the Ghidra XML export")
         parsed = parse_re_file(str(xml))
         if "isa" in document and document["isa"] != parsed.isa:
-            raise ValueError(f"the manifest ISA disagrees with the {parsed.isa} Ghidra export")
+            raise ValueError(f"the manifest ISA {document['isa']!r} disagrees with the {parsed.isa} Ghidra export {xml}")
     target = raw_target(parsed.isa, document.get("riscv"))
     address_limit = 1 << target.bits
     file_regions, segments = _regions(document.get("regions"), address_limit)

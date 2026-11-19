@@ -28,6 +28,20 @@ BRANCH_RELOCS = frozenset((BRANCH_RELOC, JAL, RVC_BRANCH, RVC_JUMP))
 _IMMEDIATES = {
     BRANCH_RELOC: BRANCH, JAL: JUMP, RVC_BRANCH: COMPRESSED_BRANCH, RVC_JUMP: COMPRESSED_JUMP,
 }
+_RELOCATION_NAMES = {
+    ABS32: "32", ABS64: "64", BRANCH_RELOC: "BRANCH", JAL: "JAL", CALL: "CALL", CALL_PLT: "CALL_PLT",
+    PCREL_HI20: "PCREL_HI20", PCREL_LO12_I: "PCREL_LO12_I", PCREL_LO12_S: "PCREL_LO12_S",
+    HI20: "HI20", LO12_I: "LO12_I", LO12_S: "LO12_S", ALIGN: "ALIGN",
+    RVC_BRANCH: "RVC_BRANCH", RVC_JUMP: "RVC_JUMP", RELAX: "RELAX", PCREL32: "32_PCREL",
+}
+
+
+def relocation_name(kind: int) -> str:
+    if 33 <= kind <= 40:
+        operation = "ADD" if kind <= 36 else "SUB"
+        return f"R_RISCV_{operation}{8 << ((kind - 33) % 4)}"
+    name = _RELOCATION_NAMES.get(kind)
+    return f"R_RISCV_{name}" if name is not None else f"RISC-V relocation type {kind}"
 
 
 def plt_addresses(elf: ELFFile) -> dict[str, set[int]]:
@@ -83,9 +97,10 @@ def _upper(value: int, xlen: int) -> tuple[int, int]:
     return high, value - rounded
 
 
-def _encode_upper(word: int, value: int, xlen: int) -> tuple[int, int]:
+def _encode_upper(word: int, value: int, xlen: int, *, absolute: bool = False) -> tuple[int, int]:
     high, low = _upper(value, xlen)
-    return UPPER.encode(word, high), low
+    label = "Rounded LUI immediate" if absolute else "Rounded AUIPC displacement"
+    return UPPER.encode(word, high, label=label), low
 
 
 def validate_fixed_hi20(object_: Object, imports: dict[str, int], xlen: int) -> None:
@@ -101,7 +116,20 @@ def validate_fixed_hi20(object_: Object, imports: dict[str, int], xlen: int) -> 
                 address = imports[symbol.name]
             else:
                 continue
-            _encode_upper(0, address + relocation.addend, xlen)
+            try:
+                _encode_upper(0, address + relocation.addend, xlen, absolute=True)
+            except ValueError as exc:
+                hint = ""
+                if symbol.section == "SHN_UNDEF" and xlen == 64:
+                    hint = (
+                        "\n  Try passing -- -mcmodel=medany to recr to generate PC-relative references. "
+                        "The symbol must still be within reach of the placed code."
+                    )
+                site = relocation.describe(section, relocation_name(relocation.kind))
+                raise ValueError(
+                    f"{site} resolves to {address + relocation.addend:#x} "
+                    f"and cannot encode an absolute RV{xlen} address.\n  {exc}.{hint}"
+                ) from exc
 
 
 def _patch_low(section: Section, address: int, value: int, store: bool) -> None:
@@ -125,8 +153,12 @@ def apply(
         # Preserve existing padding only where it meets the requested alignment.
         padding = relocation.addend
         alignment = 1 << padding.bit_length()
-        if section.address(offset + padding) % alignment:
-            raise ValueError(f"RISC-V alignment requires relaxation in {section.name}")
+        following = section.address(offset + padding)
+        if following % alignment:
+            raise ValueError(
+                f"RISC-V alignment requires relaxation. Address {following:#x} after "
+                f"{padding} padding bytes is not aligned to {alignment} bytes"
+            )
         return
     if kind in (PCREL_LO12_I, PCREL_LO12_S):
         anchor = relocation.symbol
@@ -137,7 +169,8 @@ def apply(
             if candidate.offset == offset and candidate.kind == PCREL_HI20
         ), None) if anchor_section is not None else None
         if high is None:
-            raise ValueError(f"RISC-V PCREL_LO12 is missing its HI20 anchor in {section.name}")
+            anchor_name = anchor_section.name if anchor_section is not None else f"section {anchor.section}"
+            raise ValueError(f"RISC-V PCREL_LO12 is missing its R_RISCV_PCREL_HI20 anchor at {anchor_name}+{offset:#x}")
         value = resolve(high.symbol, high.addend) - anchor_section.address(offset)
         _patch_low(section, place, value, kind == PCREL_LO12_S)
         return
@@ -153,15 +186,25 @@ def apply(
             kind = JAL
         width = 2 if kind in (RVC_BRANCH, RVC_JUMP) else 4
         word = section.read_word(place, width)
-        patched = _IMMEDIATES[kind].encode(word, value - place)
+        try:
+            patched = _IMMEDIATES[kind].encode(word, value - place)
+        except ValueError as exc:
+            raise ValueError(f"cannot reach {value:#x} from {place:#x} with {relocation_name(kind)}. {exc}") from exc
         section.write_word(place, patched, width)
     elif kind in CALL_PAIRS or kind in (HI20, PCREL_HI20):
         word = section.read_word(place, 4)
-        patched, low = _encode_upper(word, value if kind == HI20 else value - place, xlen)
+        try:
+            patched, low = _encode_upper(word, value if kind == HI20 else value - place, xlen, absolute=kind == HI20)
+        except ValueError as exc:
+            if kind == HI20:
+                detail = f"cannot encode absolute address {value:#x}"
+            else:
+                detail = f"cannot reach {value:#x} from {place:#x} with an AUIPC-based reference"
+            raise ValueError(f"{detail}. {exc}") from exc
         section.write_word(place, patched, 4)
         if kind in CALL_PAIRS:
             if section.address(offset + 4) != place + 4:
-                raise ValueError(f"split AUIPC/JALR pair in {section.name}")
+                raise ValueError(f"split AUIPC/JALR pair at {place:#x}. Both instructions must stay adjacent")
             _patch_low(section, place + 4, low, False)
     elif kind in (LO12_I, LO12_S):
         _patch_low(section, place, value, kind == LO12_S)

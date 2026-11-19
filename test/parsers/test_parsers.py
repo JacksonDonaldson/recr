@@ -225,6 +225,15 @@ def test_parse_re_file_rejects_non_ghidra_xml(tmp_path: Path) -> None:
         parse_re_file(str(path))
 
 
+def test_parse_re_file_reports_the_location_of_malformed_ghidra_xml(tmp_path: Path) -> None:
+    path = tmp_path / "malformed.xml"
+    path.write_text("<PROGRAM>\n  <FUNCTIONS>\n</PROGRAM>\n", encoding="utf-8")
+
+    with pytest.raises(ParseError, match="mismatched tag.*line 3, column") as exc:
+        parse_re_file(str(path))
+    assert str(path) in str(exc.value)
+
+
 def test_parse_re_file_rejects_missing_file(tmp_path: Path) -> None:
     with pytest.raises(ParseError, match="does not exist"):
         parse_re_file(str(tmp_path / "missing.xml"))

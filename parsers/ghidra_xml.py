@@ -31,7 +31,7 @@ def parse(filename: str) -> ParseResult:
 
     if root.tag != "PROGRAM":
         raise ParseError(
-            f"{filename} is not a Ghidra XML program export "
+            f"{filename} is not a Ghidra XML export "
             f"(expected <PROGRAM>, found <{root.tag}>)"
         )
 
@@ -44,11 +44,11 @@ def parse(filename: str) -> ParseResult:
         if function is not None:
             functions.append(function)
 
-    return ParseResult(
-        isa=_detect_isa(root),
-        functions=functions,
-        warnings=warnings,
-    )
+    try:
+        isa = _detect_isa(root)
+    except ParseError as exc:
+        raise ParseError(f"cannot identify the ISA in Ghidra XML {filename}. {exc}") from exc
+    return ParseResult(isa=isa, functions=functions, warnings=warnings)
 
 
 def _detect_isa(root: ET.Element) -> str:

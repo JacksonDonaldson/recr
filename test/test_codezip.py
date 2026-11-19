@@ -313,3 +313,13 @@ def test_missing_export_is_reported_as_an_error(
 
     assert result == 1
     assert "does not exist" in caplog.text
+
+
+def test_receipt_write_error_reports_published_binary(caplog, sample_elf: Path, tmp_path: Path) -> None:
+    output = tmp_path / "out.elf"
+    receipt = tmp_path / "missing" / "receipt.yaml"
+
+    assert main([str(sample_elf), str(GHIDRA_XML), "-o", str(output), "--receipt", str(receipt)]) == 1
+    assert f"modified binary written to {output}, but cannot write receipt to {receipt}" in caplog.text
+    assert output.is_file()
+    assert not receipt.exists()

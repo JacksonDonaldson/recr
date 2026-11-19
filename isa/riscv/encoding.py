@@ -23,10 +23,18 @@ class RelativeImmediate:
             value |= ((word >> instruction_bit) & ((1 << width) - 1)) << immediate_bit
         return sign_extend(value, self.width)
 
-    def encode(self, word: int, displacement: int) -> int:
+    def encode(self, word: int, displacement: int, *, label: str = "RISC-V displacement") -> int:
         limit = 1 << (self.width - 1)
-        if displacement % self.alignment or not -limit <= displacement < limit:
-            raise ValueError(f"RISC-V displacement {displacement:+#x} does not fit")
+        if not -limit <= displacement < limit:
+            raise ValueError(
+                f"{label} {displacement:+#x} does not fit "
+                f"the encodable range [{-limit:+#x}, {limit - self.alignment:+#x}]"
+            )
+        if displacement % self.alignment:
+            raise ValueError(
+                f"{label} {displacement:+#x} does not fit the encoding. "
+                f"It must be a multiple of {self.alignment:#x}"
+            )
         for immediate_bit, instruction_bit, width in self.fields:
             mask = (1 << width) - 1
             word &= ~(mask << instruction_bit)

@@ -128,6 +128,9 @@ Implemented:
   placement checks JAL reach, relinks ELF immediates, and keeps
   AUIPC/JALR call pairs together. The RISC-V tests run the RV64 sample and
   execute hooked RV64 and RV32 ELF fixtures under QEMU.
+  Relocation errors identify the section offset, symbol, and encoding limit
+  when known. Placement errors report permissions, alignment, and available
+  cleared space. Hook errors identify conflicting entries or reference addresses.
   During compaction, unreachable decoded instructions and instructions crossing
   a declared function end warn with `invalid-function-extent`. Recr excludes
   those ranges, protects overlapping functions and recovered reference targets,
@@ -344,6 +347,8 @@ Implemented:
   outline selections, and per-function results, and pretty-prints every
   uplifted function. `test/test_codezip.py` covers the CLI flags, verbose
   output, receipt contents, output bytes, and exit codes.
+  CLI input, decode, and write errors identify the affected file and retain
+  parser locations or decoder details where available.
 - End-to-end check (`test/e2e/run_e2e.py`, `make -C test e2e`) builds pinned
   pcre2 10.49 with `-O0 -g3 -fno-pie ...`, exports its
   functions with Ghidra, codezips `pcre2test` and `pcre2grep`, and requires

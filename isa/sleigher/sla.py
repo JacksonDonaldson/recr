@@ -545,7 +545,11 @@ def decode_sla(path: str | Path) -> SlaElement:
     except zlib.error as exc:
         raise SlaError(f"failed to decompress {path}: {exc}") from exc
 
-    root = _PackedReader(unpacked).element()
+    reader = _PackedReader(unpacked)
+    try:
+        root = reader.element()
+    except SlaError as exc:
+        raise SlaError(f"invalid packed SLEIGH in {path} near unpacked byte {reader.position:#x}. {exc}") from exc
     if root.id != E_SLEIGH:
         raise SlaError(f"{path} does not contain a <sleigh> root element")
     return root
@@ -1304,7 +1308,11 @@ class SlaSpec:
         entry = cache.entry_path("sla", _cache_key(data), ".pickle")
         cached = _load_cached_state(entry)
         if cached is None:
-            self._parse(decode_sla(self.path))
+            root = decode_sla(self.path)
+            try:
+                self._parse(root)
+            except SlaError as exc:
+                raise SlaError(f"invalid SLEIGH specification {self.path}. {exc}") from exc
             try:
                 _store_cached_state(
                     entry,

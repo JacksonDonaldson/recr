@@ -64,13 +64,13 @@ class ELF(Binary):
 
                     if file_size > memory_size:
                         raise ELFError(
-                            f"loadable segment at {virtual_address:#x} has "
-                            "a file size larger than its memory size"
+                            f"loadable segment at {virtual_address:#x} in {self.path} has "
+                            f"a file size of {file_size:#x}, larger than its memory size of {memory_size:#x}"
                         )
                     if file_size and file_offset + file_size > len(self._data):
                         raise ELFError(
-                            f"loadable segment at {virtual_address:#x} "
-                            "extends past the end of the file"
+                            f"loadable segment at {virtual_address:#x} extends past the end of the file {self.path}. "
+                            f"File offsets [{file_offset:#x}, {file_offset + file_size:#x}) exceed the ELF size {len(self._data):#x}"
                         )
 
                     if memory_size:
@@ -140,13 +140,13 @@ class ELF(Binary):
 
     def read(self, address: int, length: int) -> bytes:
         if length < 0:
-            raise ValueError("read length must be non-negative")
+            raise ValueError(f"read length must be non-negative. Received {length} at {address:#x}")
         if length == 0:
             return b""
 
         segment = self._segment_containing(address)
         if segment is None:
-            raise ValueError(f"virtual address {address:#x} is not mapped")
+            raise ValueError(f"virtual address {address:#x} is not mapped in {self.path}")
 
         offset = address - segment.virtual_address
         if offset + length <= segment.memory_size:
@@ -166,7 +166,7 @@ class ELF(Binary):
         while remaining:
             segment = self._segment_containing(current)
             if segment is None:
-                raise ValueError(f"virtual address {current:#x} is not mapped")
+                raise ValueError(f"reading {length} bytes from {address:#x} in {self.path} reaches virtual address {current:#x}, which is not mapped")
 
             offset = current - segment.virtual_address
             chunk_length = min(remaining, segment.memory_size - offset)
@@ -186,30 +186,30 @@ class ELF(Binary):
     def virtual_to_file(self, address: int) -> int:
         segment = self._segment_containing(address)
         if segment is None:
-            raise ValueError(f"virtual address {address:#x} is not mapped")
+            raise ValueError(f"virtual address {address:#x} is not mapped in {self.path}")
 
         offset = address - segment.virtual_address
         if offset >= segment.file_size:
-            raise ValueError(f"virtual address {address:#x} is not file-backed")
+            raise ValueError(f"virtual address {address:#x} is not file-backed in {self.path}. The segment's file-backed bytes end at {segment.virtual_address + segment.file_size:#x} (exclusive)")
 
         return segment.file_offset + offset
 
     def write(self, address: int, data: bytes) -> None:
         if address < 0:
-            raise ValueError("write address must be non-negative")
+            raise ValueError(f"write address must be non-negative. Received {address:#x}")
 
         if not data:
             return
 
         segment = self._segment_containing(address)
         if segment is None:
-            raise ValueError(f"virtual address {address:#x} is not mapped")
+            raise ValueError(f"write at virtual address {address:#x} is not mapped in {self.path}")
 
         offset = address - segment.virtual_address
         if offset + len(data) > segment.file_size:
             raise ValueError(
-                f"write of {len(data)} bytes at {address:#x} is not "
-                "file-backed"
+                f"write of {len(data)} bytes at {address:#x} is not file-backed in {self.path}. "
+                f"The segment's file-backed bytes end at {segment.virtual_address + segment.file_size:#x} (exclusive)"
             )
 
         start = segment.file_offset + offset

@@ -70,9 +70,12 @@ def compile_rec(
     obj = directory / "extension.o"
     translation_unit.write_text(f"#line 1 {json.dumps(str(source))}\n{rewritten}", encoding="utf-8")
     roots = ["-Wl,--gc-sections", *(f"-Wl,-u,{HOOK_PREFIX}{name}" for name in hooks)] if hooks else []
-    driver = shlex.split(compiler)
+    try:
+        driver = shlex.split(compiler)
+    except ValueError as exc:
+        raise ValueError(f"invalid GCC command {compiler!r}. {exc}. Check --cc or CC") from exc
     if not driver:
-        raise ValueError("missing GCC executable")
+        raise ValueError(f"missing GCC executable for {target.isa}. Set --cc or CC to a compiler command")
     command = [
         *driver, *target.compiler_flags, "-std=gnu17", "-Os", "-fno-pie", "-fno-pic",
         "-fno-builtin", "-fno-stack-protector", "-fno-asynchronous-unwind-tables",
@@ -95,13 +98,20 @@ def compile_rec(
             + hook_declarations + "\n#pragma GCC diagnostic pop\n",
             encoding="utf-8",
         )
-        result = subprocess.run(
-            command, capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"},
-        )
+        try:
+            result = subprocess.run(
+                command, capture_output=True, text=True, env={**os.environ, "LC_ALL": "C"},
+            )
+        except FileNotFoundError as exc:
+            raise ValueError(f"GCC executable {driver[0]!r} was not found for {target.isa}. Check PATH or --cc") from exc
         if result.returncode == 0:
             return obj
         overridden = _shadowed(result.stderr, header, set(imported), protected)
         if not overridden:
-            raise ValueError(f"GCC failed to compile or link {source}:\n{result.stderr.strip()}")
+            detail = result.stderr.strip() or result.stdout.strip() or "The compiler produced no diagnostics."
+            raise ValueError(
+                f"GCC failed to compile or link {source} for {target.isa} "
+                f"using {shlex.join(driver)} (exit status {result.returncode}).\n{detail}"
+            )
         for name in overridden:
             del imported[name]

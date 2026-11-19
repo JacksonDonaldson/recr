@@ -87,7 +87,8 @@ def build_library() -> Path:
         raise BackendError(f"cannot run nvcc: {exc}") from exc
     if result.returncode != 0:
         temporary.unlink(missing_ok=True)
-        raise BackendError(f"nvcc failed: {result.stderr.strip()}")
+        detail = result.stderr.strip() or result.stdout.strip() or "nvcc produced no diagnostics"
+        raise BackendError(f"{nvcc} failed to compile {SOURCE} (exit status {result.returncode}). {detail}")
     os.replace(temporary, output)
     return output
 
@@ -254,7 +255,7 @@ class Device:
             ctypes.byref(self._handle),
         )
         if code != 0:
-            raise BackendError(self._library.error(code))
+            raise BackendError(f"CUDA image upload failed for {len(image)} bytes in {len(segments)} mapped segments. {self._library.error(code)}")
 
     def close(self) -> None:
         if self._handle:
@@ -273,7 +274,7 @@ class Device:
             self._handle, start, count, buffer
         )
         if code != 0:
-            raise BackendError(self._library.error(code))
+            raise BackendError(f"CUDA address check failed for {count} addresses from {start:#x}. {self._library.error(code)}")
         return bytes(buffer)
 
     def decode_range(
@@ -313,7 +314,7 @@ class Device:
             kinds,
         )
         if code != 0:
-            raise BackendError(self._library.error(code))
+            raise BackendError(f"CUDA instruction decode failed for {count} addresses from {start:#x}. {self._library.error(code)}")
         return bytes(status), bytes(types), bytes(length), targets, bytes(kinds)
 
     def scan_pointers(
@@ -338,6 +339,6 @@ class Device:
             maximum,
         )
         if code != 0:
-            raise BackendError(self._library.error(code))
+            raise BackendError(f"CUDA pointer scan failed for {count} addresses from {start:#x}. {self._library.error(code)}")
         total = min(written.value, maximum)
         return [(hits[index * 2], hits[index * 2 + 1]) for index in range(total)]

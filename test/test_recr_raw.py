@@ -150,6 +150,8 @@ def test_recr_classifies_uplift_failures(
     if failure == "decode":
         assert reason in caplog.text
         assert "failed to uplift bad" in caplog.text
+        assert f"[{base + bad:#x}, {base + bad + length:#x}) using x86_64" in caplog.text
+        assert "Available bytes are 0f" in caplog.text
         assert not output.exists()
         assert not receipt.exists()
         return
@@ -282,11 +284,30 @@ def test_recr_checks_fixed_riscv_hi20_before_compaction(
     def unexpected_compaction(*args, **kwargs):
         pytest.fail("an unencodable fixed relocation should fail before compaction")
 
-    monkeypatch.setattr(codezip, "run_pipeline", unexpected_compaction)
-    assert main([*args, "--verbose"]) == 1
-    assert "RISC-V displacement +0x80000000 does not fit" in capsys.readouterr().err
+    with monkeypatch.context() as patch:
+        patch.setattr(codezip, "run_pipeline", unexpected_compaction)
+        assert main([*args, "--verbose"]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "R_RISCV_HI20 at .text.__recr_hook_transform+" in diagnostic
+    assert "symbol 'counter' resolves to 0x7ffff800" in diagnostic
+    assert "Rounded LUI immediate +0x80000000 does not fit" in diagnostic
+    assert "[-0x80000000, +0x7ffff000]" in diagnostic
+    assert "-- -mcmodel=medany" in diagnostic
     assert output.read_bytes() == original_output
     assert receipt.read_bytes() == original_receipt
+    assert main([*args, "--", "-mcmodel=medany"]) == 0
+
+    layout["regions"][1]["start_address"] = 0xb0200c44
+    layout["symbols"]["counter"]["address"] = 0xb0200c44
+    manifest.write_text(yaml.safe_dump(layout))
+    medany_output, medany_receipt = output.read_bytes(), receipt.read_bytes()
+    assert main([*args, "--", "-mcmodel=medany"]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "R_RISCV_PCREL_HI20 at .text.__recr_hook_transform+" in diagnostic
+    assert "for symbol 'counter' failed. cannot reach 0xb0200c44 from 0x" in diagnostic
+    assert "Rounded AUIPC displacement" in diagnostic
+    assert output.read_bytes() == medany_output
+    assert receipt.read_bytes() == medany_receipt
 
 
 @pytest.mark.parametrize("with_ghidra_export", [False, True], ids=["yaml-functions", "ghidra-functions"])
@@ -564,8 +585,13 @@ def test_recr_rejects_unsafe_ghidra_reference(
         str(firmware.manifest), str(export), str(HOOK), "--cc", shlex.join(firmware.compiler),
         "-o", str(output), "-r", str(receipt),
     ]) == 1
-    expected = "not-hex" if malformed else "hook 'transform' has a reference into its entry window"
-    assert expected in capsys.readouterr().err
+    diagnostic = capsys.readouterr().err
+    if malformed:
+        assert f"invalid TO_ADDRESS {destination!r} for the MEMORY_REFERENCE at 'ram:{entry:x}'" in diagnostic
+        assert str(export) in diagnostic
+    else:
+        assert "hook 'transform' has a reference into its entry window" in diagnostic
+        assert f"at {transform + 2:#x}" in diagnostic
     assert output.read_bytes() == b"previous output"
     assert receipt.read_bytes() == b"previous receipt"
 
@@ -589,7 +615,9 @@ def test_recr_rejects_invalid_raw_mappings(tmp_path: Path, capsys, regions: list
     output.write_bytes(b"previous output")
     receipt.write_bytes(b"previous receipt")
     assert main([str(manifest), str(HOOK), "-o", str(output), "-r", str(receipt)]) == 1
-    assert reason in capsys.readouterr().err
+    diagnostic = capsys.readouterr().err
+    assert reason in diagnostic
+    assert str(manifest) in diagnostic
     assert output.read_bytes() == b"previous output"
     assert receipt.read_bytes() == b"previous receipt"
 

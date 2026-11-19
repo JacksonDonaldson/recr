@@ -142,14 +142,14 @@ class X86_64ISA(ISA):
         data = self._read_instruction_bytes(binary, address)
         instruction = self._sleigher.parse(data, address)
         if instruction is None:
-            raise ValueError(f"cannot decode instruction at {address:#x}")
+            raise ValueError(f"cannot decode instruction at {address:#x} as x86-64. Available bytes are {data.hex(' ') or '<none>'}")
         return instruction
 
     def decode_flows(self, binary: "Binary", address: int) -> DecodedFlow:
         data = self._read_instruction_bytes(binary, address)
         flow = self._sleigher.parse_flow(data, address)
         if flow is None:
-            raise ValueError(f"cannot decode instruction at {address:#x}")
+            raise ValueError(f"cannot decode instruction at {address:#x} as x86-64. Available bytes are {data.hex(' ') or '<none>'}")
         return flow
 
     # ------------------------------------------------------------ range scans
@@ -1016,7 +1016,8 @@ class X86_64ISA(ISA):
         relocated = self._sleigher.reassemble(instruction, new_base_address)
         if relocated is None:
             raise ValueError(
-                f"cannot relocate instruction to {new_base_address:#x}"
+                f"cannot relocate instruction {instruction.original_data.hex(' ')} "
+                f"from {instruction.address:#x} to {new_base_address:#x} with its existing encoding"
             )
         return relocated
 
@@ -1024,25 +1025,28 @@ class X86_64ISA(ISA):
         self, instruction: Instruction, new_target_address: Address
     ) -> Instruction:
         if new_target_address.kind is not AddressKind.ABSOLUTE:
-            raise ValueError("instruction target must be an absolute address")
+            raise ValueError(
+                f"instruction target must be an absolute address. Received {new_target_address.kind.name} "
+                f"for instruction at {instruction.address:#x}"
+            )
         if instruction.type not in (
             InstructionType.BRANCH,
             InstructionType.CALL,
             InstructionType.OUTLINE_RESULT_CALL,
         ):
             raise ValueError(
-                f"instruction type {instruction.type.name} has no direct target"
+                f"instruction type {instruction.type.name} at {instruction.address:#x} has no direct target"
             )
 
         data = bytearray(instruction.original_data)
         resolved = self._sleigher.spec.resolve(bytes(data), self._sleigher.context)
         if resolved is None:
-            raise ValueError("instruction cannot be resolved")
+            raise ValueError(f"instruction {data.hex(' ')} at {instruction.address:#x} cannot be resolved for retargeting")
         relative = self._sleigher.spec.relative_target(
             resolved, bytes(data), instruction.address
         )
         if relative is None:
-            raise ValueError("instruction has no relative target field")
+            raise ValueError(f"instruction {data.hex(' ')} at {instruction.address:#x} has no relative target field")
         _, offset, size = relative
 
         displacement = new_target_address.value - (
@@ -1052,20 +1056,27 @@ class X86_64ISA(ISA):
             encoded = displacement.to_bytes(size, "little", signed=True)
         except OverflowError as exc:
             raise ValueError(
-                f"target {new_target_address.value:#x} does not fit"
+                f"target {new_target_address.value:#x} does not fit the signed {size * 8}-bit "
+                f"displacement from instruction {instruction.address:#x} (requires {displacement:+#x})"
             ) from exc
         data[offset : offset + size] = encoded
 
         patched = bytes(data)
         decoded = self._sleigher.parse(patched, instruction.address)
         if decoded is None or decoded.length != instruction.length:
-            raise ValueError("patched instruction does not decode in place")
+            raise ValueError(
+                f"patched instruction {patched.hex(' ')} at {instruction.address:#x} does not decode in place "
+                f"with the original length of {instruction.length} bytes"
+            )
         if (
             not decoded.flows_to
             or decoded.flows_to[0].kind is not AddressKind.ABSOLUTE
             or decoded.flows_to[0].value != new_target_address.value
         ):
-            raise ValueError("patched instruction does not reach the target")
+            raise ValueError(
+                f"patched instruction {patched.hex(' ')} at {instruction.address:#x} "
+                f"does not reach the requested target {new_target_address.value:#x}"
+            )
 
         if instruction.type is InstructionType.OUTLINE_RESULT_CALL:
             flows_to = [
@@ -1087,7 +1098,10 @@ class X86_64ISA(ISA):
     def required_length(self, instruction: Instruction, address: int) -> int:
         relocated = self._sleigher.reassemble(instruction, address)
         if relocated is None:
-            raise ValueError(f"cannot encode instruction at {address:#x}")
+            raise ValueError(
+                f"cannot encode instruction {instruction.original_data.hex(' ')} "
+                f"from {instruction.address:#x} at {address:#x} with its existing encoding"
+            )
         return relocated.length
 
     def try_interpret_as_pointer(

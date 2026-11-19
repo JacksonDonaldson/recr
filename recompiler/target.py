@@ -66,18 +66,23 @@ class Target:
         try:
             if self.machine == "EM_RISCV":
                 if source % self.alignment or destination % self.alignment:
-                    raise ValueError("unaligned RISC-V jump")
+                    raise ValueError(f"RISC-V JAL source and target must be {self.alignment}-byte aligned")
                 return JUMP.encode(0x6F, destination - source).to_bytes(4, "little")
             return b"\xe9" + (destination - source - 5).to_bytes(4, "little", signed=True)
         except (OverflowError, ValueError) as exc:
-            raise ValueError(f"cannot encode jump from {source:#x} to {destination:#x}: {exc}") from exc
+            jump = "RISC-V JAL" if self.machine == "EM_RISCV" else "x86-64 rel32 JMP"
+            if self.machine == "EM_RISCV":
+                detail = str(exc)
+            else:
+                detail = f"displacement {destination - source - 5:+#x} exceeds the signed 32-bit range"
+            raise ValueError(f"cannot encode jump from {source:#x} to {destination:#x} using {jump}. {detail}") from exc
 
     def padding(self, size: int) -> bytes:
         if self.machine == "EM_X86_64":
             return b"\x90" * size
         word, remainder = divmod(size, 4)
         if remainder and (remainder != 2 or not self.compressed):
-            raise ValueError("unaligned RISC-V hook padding")
+            raise ValueError(f"cannot emit {size} bytes of RISC-V hook padding with {self.alignment}-byte alignment")
         return b"\x13\x00\x00\x00" * word + (b"\x01\x00" if remainder else b"")
 
 
@@ -95,12 +100,12 @@ def raw_target(isa: str, riscv: object) -> Target:
     bits = int(isa[-2:])
     march = riscv.get("march")
     if not isinstance(march, str) or not re.fullmatch(rf"rv{bits}[ig][a-z0-9_]*", march):
-        raise ValueError(f"'riscv.march' must be an RV{bits} GCC architecture string")
+        raise ValueError(f"'riscv.march' must be an RV{bits} GCC architecture string. Received {march!r}")
     base = "ilp32" if bits == 32 else "lp64"
     abis = (base, base + "f", base + "d")
     abi = riscv.get("abi")
     if abi not in abis:
-        raise ValueError(f"'riscv.abi' must be one of {', '.join(abis)}")
+        raise ValueError(f"'riscv.abi' must be one of {', '.join(abis)}. Received {abi!r}")
     first, *extensions = march[4:].split("_")
     compressed = "c" in first or any(re.fullmatch(r"(?:c|zca)(?:[0-9]+p[0-9]+)?", ext) for ext in extensions)
     flags = (abis.index(abi) << 1) | compressed
@@ -109,15 +114,19 @@ def raw_target(isa: str, riscv: object) -> Target:
 
 def executable_target(elf: ELFFile) -> Target:
     if elf.header.e_type != "ET_EXEC" or not elf.little_endian:
-        raise ValueError("recr requires a little-endian non-PIE ELF executable")
+        endian = "little-endian" if elf.little_endian else "big-endian"
+        raise ValueError(
+            f"recr requires a little-endian non-PIE ELF executable. Received a {endian} {elf.header.e_type} ELF. "
+            "For GCC builds, use -fno-pie when compiling and -no-pie when linking"
+        )
     if elf.header.e_machine == "EM_X86_64" and elf.elfclass == 64:
         return X86_64
     if elf.header.e_machine != "EM_RISCV" or elf.elfclass not in (32, 64):
-        raise ValueError("recr supports x86-64, RV32, and RV64 ELF executables")
+        raise ValueError(f"recr supports x86-64, RV32, and RV64 ELF executables. Received ELF{elf.elfclass} {elf.header.e_machine}")
 
     flags = elf.header.e_flags
     if flags & 8 or flags & 6 == 6:
-        raise ValueError("unsupported RISC-V embedded or quad-float ABI")
+        raise ValueError(f"unsupported RISC-V embedded or quad-float ABI (ELF flags {flags:#x})")
     bits = elf.elfclass
     attributes = elf.get_section_by_name(".riscv.attributes")
     if hasattr(attributes, "iter_subsections"):

@@ -147,7 +147,11 @@ def test_recr_rejects_ambiguous_hook(sample_elf, tmp_path, capsys, namespaced):
     root.write(export)
     rec.write_text("int @min_int(int a, int b) { return a + b; }")
     assert main([str(sample_elf), str(export), str(rec), "-o", str(output)]) == 1
-    assert "must match exactly one original function, found 2" in capsys.readouterr().err
+    diagnostic = capsys.readouterr().err
+    assert "must match exactly one original function, found 2" in diagnostic
+    assert f"{function.get('NAME')!r} at {int(function.get('ENTRY_POINT'), 16):#x}" in diagnostic
+    if namespaced:
+        assert "'other_app::min_int' at 0x" in diagnostic
     assert not output.exists()
 
 
@@ -182,7 +186,36 @@ def test_writable_data_requires_a_writable_receipt_range(sample_elf, tmp_path, c
     rec.write_text("volatile int state = 3; int @min_int(int a, int b) { return state++; }")
     output = tmp_path / "output"
     assert main([str(sample_elf), str(GHIDRA_XML), str(rec), "-o", str(output)]) == 1
-    assert "insufficient cleared space for .data" in capsys.readouterr().err
+    diagnostic = capsys.readouterr().err
+    assert re.search(r"insufficient cleared space for \.data(?:\.\w+)? \(4 contiguous bytes\)", diagnostic)
+    assert "needs rw permissions" in diagnostic
+    assert "0 usable bytes across 0 cleared ranges" in diagnostic
+    assert not output.exists()
+
+
+def test_recr_undefined_import_identifies_the_export_and_reference(sample_elf, tmp_path, capsys):
+    rec = tmp_path / "unresolved.rec"
+    rec.write_text("extern int absent_value; int @min_int(int a, int b) { return absent_value; }")
+    output = tmp_path / "output"
+    assert main([str(sample_elf), str(GHIDRA_XML), str(rec), "-o", str(output)]) == 1
+    diagnostic = capsys.readouterr().err
+    assert "import at .text.__recr_hook_min_int+" in diagnostic
+    assert "undefined exported symbol 'absent_value'" in diagnostic
+    assert str(GHIDRA_XML) in diagnostic
+    assert not output.exists()
+
+
+def test_recr_missing_compiler_names_the_executable_and_option(sample_elf, tmp_path, capsys):
+    compiler = tmp_path / "unavailable-gcc"
+    output = tmp_path / "output"
+    rec = tmp_path / "hook.rec"
+    rec.write_text("int @min_int(int a, int b) { return a; }")
+    assert main([
+        str(sample_elf), str(GHIDRA_XML), str(rec), "--cc", str(compiler), "-o", str(output),
+    ]) == 1
+    diagnostic = capsys.readouterr().err
+    assert f"GCC executable {str(compiler)!r} was not found for x86_64" in diagnostic
+    assert "Check PATH or --cc" in diagnostic
     assert not output.exists()
 
 

@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
+from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
 from ir import Function
@@ -55,9 +56,11 @@ class Exports:
         values = self.addresses.get(name, set())
         if ignored_entry is not None:
             values = values - {ignored_entry}
+        if not values:
+            raise ValueError(f"undefined exported symbol {name!r}. Check that it has an address in the export or raw manifest")
         if len(values) != 1:
-            detail = "ambiguous" if values else "undefined"
-            raise ValueError(f"{detail} exported symbol {name!r}")
+            candidates = ", ".join(f"{address:#x}" for address in sorted(values))
+            raise ValueError(f"ambiguous exported symbol {name!r}. Candidate addresses are {candidates}")
         return next(iter(values))
 
 
@@ -147,8 +150,11 @@ def _signature(
 
 def read_exports(binary: Path, xml: Path, functions: list[Function]) -> Exports:
     with binary.open("rb") as stream:
-        elf = ELFFile(stream)
-        target = executable_target(elf)
+        try:
+            elf = ELFFile(stream)
+            target = executable_target(elf)
+        except (ValueError, ELFError) as exc:
+            raise ValueError(f"cannot use ELF input {binary}. {exc}") from exc
         imports = plt_addresses(elf) if target.machine == "EM_RISCV" else {}
         segments = []
         relro = []
@@ -176,10 +182,16 @@ def read_ghidra_exports(
         name = definition.get("NAME", "")
         if name not in definitions or definition.get("NAMESPACE", "").startswith("/DWARF/"):
             definitions[name] = definition
-    function_nodes = {
-        _parse_hex(node.attrib["ENTRY_POINT"]): node
-        for node in root.findall("FUNCTIONS/FUNCTION") if node.get("ENTRY_POINT")
-    }
+    function_nodes = {}
+    for node in root.findall("FUNCTIONS/FUNCTION"):
+        entry_point = node.get("ENTRY_POINT")
+        if entry_point:
+            try:
+                function_nodes[_parse_hex(entry_point)] = node
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid ENTRY_POINT {entry_point!r} for function {node.get('NAME', '<unnamed>')!r} in {xml}"
+                ) from exc
     by_name: dict[str, list[Function]] = defaultdict(list)
     addresses: dict[str, set[int]] = defaultdict(set)
     prototypes: dict[str, set[str]] = defaultdict(set)
@@ -190,7 +202,9 @@ def read_ghidra_exports(
             continue
         by_name[name].append(function)
         addresses[name].add(function.start_address)
-        node = function_nodes[function.start_address]
+        node = function_nodes.get(function.start_address)
+        if node is None:
+            raise ValueError(f"no typed entry for {function.name!r} at {function.start_address:#x} in {xml}")
         thiscall = "__thiscall" in node.findtext("TYPEINFO_CMT", "").partition("(")[0].split()
         receiver = _riscv_receiver(node, target, structures) if thiscall else None
         # Named datatypes can be shared by multiple entries and omit variadic details.
@@ -249,7 +263,11 @@ def read_ghidra_exports(
     for node in root.findall("MARKUP/MEMORY_REFERENCE"):
         to_address = node.get("TO_ADDRESS")
         if to_address:
-            reference_addresses.add(_parse_hex(to_address))
+            try:
+                reference_addresses.add(_parse_hex(to_address))
+            except ValueError as exc:
+                source = node.get("ADDRESS", "<unknown>")
+                raise ValueError(f"invalid TO_ADDRESS {to_address!r} for the MEMORY_REFERENCE at {source!r} in {xml}") from exc
     return Exports(
         by_name, addresses, declarations, segments, relro or [], reference_addresses, target,
         function_declarations=function_declarations,

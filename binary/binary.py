@@ -28,7 +28,8 @@ def _select_backend(path: Path) -> type["Binary"]:
         )
 
     raise UnsupportedBinaryFormat(
-        f"{path} is not a supported binary format (expected ELF magic)"
+        f"{path} is not a supported binary format. Expected ELF magic, read {magic.hex(' ') or '<empty file>'}. "
+        "For a headerless image, use recr with a raw-image YAML manifest"
     )
 
 
