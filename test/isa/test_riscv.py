@@ -402,6 +402,36 @@ def test_range_parity_and_pointer_widths(backend):
     assert backend.try_interpret_as_pointer(image, end - 3) == set()
 
 
+@pytest.mark.parametrize("mixed_widths", [False, True])
+def test_batched_pointer_scan_matches_scalar_at_range_boundaries(backend, mixed_widths):
+    wide = 0x1234567800002000
+    image = Image(b"\x7f" + wide.to_bytes(8, "little") + (0x3000).to_bytes(4, "little"))
+    targets = {0x2000, 0x3000} | ({wide} if mixed_widths else set())
+    for start, end in ((0x1000, 0x100D), (0x1000, 0x100A), (0x0FFF, 0x1003)):
+        expected = {
+            (address, pointer.value)
+            for address in range(start, end)
+            for pointer in backend.try_interpret_as_pointer(image, address)
+            if pointer.value in targets
+        }
+        found = list(backend.iter_pointer_references(image, start, end, targets))
+        assert sorted(found) == sorted(expected)
+
+
+def test_batched_decode_skips_malformed_forms_and_reads_across_scan_end(backend):
+    image = Image(bytes.fromhex("1f0013000000ef00000013"))
+    for start, end in ((0x1000, 0x100B), (0x1000, 0x1008), (0x0FFF, 0x1003)):
+        expected = []
+        for address in range(start, end):
+            try:
+                expected.append(backend.decode_flows(image, address))
+            except ValueError:
+                expected.append(None)
+        assert list(backend.decode_range(image, start, end)) == expected
+    assert list(backend.decode_range(image, 0x1000, 0x100B))[-1] is None
+    assert backend.decode_flows(image, 0x1006).type is InstructionType.CALL
+
+
 def test_riscv_pipeline_keeps_materialized_addresses(tmp_path, backend):
     from binary.binary import Binary
     from codezip import main

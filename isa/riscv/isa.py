@@ -6,6 +6,7 @@ from collections.abc import Iterator, Set
 from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
+from struct import Struct
 from typing import TYPE_CHECKING
 
 from isa.isa import DecodedFlow, ISA
@@ -18,6 +19,10 @@ from ir import Address, AddressKind, BasicBlock, Function, Instruction, Instruct
 
 if TYPE_CHECKING:
     from binary.binary import Binary
+
+
+_WORD = Struct("<I")
+_DOUBLEWORD = Struct("<Q")
 
 
 @lru_cache(maxsize=2)
@@ -82,6 +87,45 @@ class _RISCVISA(ISA):
     def decode_flows(self, binary: Binary, address: int) -> DecodedFlow:
         data = self._read_instruction(binary, address)
         return self.spec.decode_flow(data, address, self._resolve(data, address))
+
+    def decode_range(
+        self, binary: Binary, start: int, end: int,
+    ) -> Iterator[DecodedFlow | None]:
+        if start >= end:
+            return
+        data = self._read_scan_range(binary, start, end)
+        if data is None or start < 0 or end - 1 > self.address_mask:
+            yield from super().decode_range(binary, start, end)
+            return
+
+        # Leave the final parcel to the scalar decoder, which can read across
+        # the end of the requested interval if the next bytes are mapped.
+        bulk_end = max(start, end - 3)
+        for address in range(start, bulk_end):
+            if address & 1:
+                yield None
+                continue
+            offset = address - start
+            first = data[offset]
+            if first & 0x1F == 0x1F:
+                yield None
+                continue
+            length = 4 if first & 3 == 3 else 2
+            raw = data[offset:offset + length]
+            try:
+                yield self.spec.decode_flow(raw, address, self._resolve(raw, address))
+            except ValueError:
+                yield None
+
+        yield from super().decode_range(binary, bulk_end, end)
+
+    @staticmethod
+    def _read_scan_range(binary: Binary, start: int, end: int) -> bytes | None:
+        try:
+            data = binary.read(start, end - start)
+        except ValueError:
+            return None
+        return data if len(data) == end - start else None
 
     def _ordinary_instruction(self, instruction: Instruction) -> bool:
         """Recognize scalar forms whose GPR destinations are definite writes."""
@@ -233,6 +277,34 @@ class _RISCVISA(ISA):
             if len(data) == width:
                 pointers.add(Address.absolute(int.from_bytes(data, "little")))
         return pointers
+
+    def iter_pointer_references(
+        self, binary: Binary, start: int, end: int, targets: Set[int],
+    ) -> Iterator[tuple[int, int]]:
+        if not targets or start >= end:
+            return
+        data = self._read_scan_range(binary, start, end)
+        if data is None:
+            yield from super().iter_pointer_references(binary, start, end, targets)
+            return
+
+        # A 64-bit reading below 2**32 duplicates its low 32-bit reading.
+        wide_targets = (
+            {target for target in targets if target >= 1 << 32}
+            if self.pointer_size == 8 else set()
+        )
+        width = _DOUBLEWORD.size if wide_targets else _WORD.size
+        limit = max(0, len(data) - width + 1)
+        for offset in range(limit):
+            word, = _WORD.unpack_from(data, offset)
+            if word in targets:
+                yield start + offset, word
+            if wide_targets:
+                doubleword, = _DOUBLEWORD.unpack_from(data, offset)
+                if doubleword in wide_targets:
+                    yield start + offset, doubleword
+
+        yield from super().iter_pointer_references(binary, start + limit, end, targets)
 
     def iter_address_references(
         self, binary: Binary, start: int, end: int, targets: Set[int],

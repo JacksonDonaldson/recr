@@ -267,8 +267,9 @@ Implemented:
   known function entry, then records unique incoming references. The
   instruction scan uses the ISA's flow-only decode, so it does not compute
   state effects. Ordinary fallthrough edges are not cross-references. It uses
-  `ISA.iter_pointer_references` and `ISA.decode_control_flow_range`, which the
-  x86-64 backend batches on the GPU.
+  `ISA.iter_pointer_references` and `ISA.decode_control_flow_range`. The x86-64
+  backend batches both scans on the GPU when available. RISC-V reads mapped
+  ranges in bulk on the CPU, with scalar lookahead at range boundaries.
 - `gpu/` is an optional CUDA backend for whole-image range scans. `gpu.available()`
   probes for `nvcc` and a device; `gpu/kernels.cu` is compiled on first use into
   the system temporary directory, keyed by the source text and compiler version.
@@ -297,24 +298,25 @@ Implemented:
   instructions by position-invariant bytes (each instruction is re-linked to
   address zero first), groups blocks that share the same instruction set, and
   estimates net free-space savings after the inserted call, the stored shared
-  block, and its return. Matches are capped at 10 per
-  source block and deduplicated globally. Each instruction's
-  position-invariant encoding is cached for the pass, so the index, the match
-  search, and every replacement plan share one SLEIGH resolution per
-  instruction. Functions with an unresolved local reference or an implicit
-  fallthrough from their last instruction are skipped. Red-zone functions are
-  eligible: each candidate source site is checked with `can_outline_region`,
+  block, and its return. The search starts with rare encodings and skips
+  candidate groups that cannot pay for the call. Matches are capped at 10 per
+  source block and deduplicated globally. The pass reuses canonical encodings
+  for matching and planning. Functions with an unresolved local reference or
+  an implicit fallthrough from their last instruction are skipped. Red-zone
+  functions are eligible: each candidate source site is checked with `can_outline_region`,
   sites that are unsafe or cannot be reordered are dropped from the match, and
   the savings are recomputed. Plans with dropped sites are deferred until full
-  matches have claimed their blocks. Block reordering moves the common
-  instructions into a contiguous window with dependency, write-write, and
-  control-transfer checks; it refuses to move across a branch or return.
+  matches have claimed their blocks. Planning groups sites by the existing
+  order of the selected instructions and caches validated windows. Block
+  reordering moves selected instructions into a contiguous window using the
+  accumulated dependencies and control-transfer checks for intervening code.
   Selected matches are applied greedily without overlapping source blocks.
   Function regeneration relocates every instruction, repatches branch targets,
   rejects any instruction that would grow, and drops the plans for a function
-  if it cannot be regenerated. Shared blocks are placed in the smallest free
-  range that can encode them, RSP-relative instructions are biased for the
-  call, and the source calls are patched to the selected target. Freed
+  if it cannot be regenerated. Retries reuse layouts for functions with the
+  same replacements. Placement checks call reach before relocating a shared
+  block into the smallest compatible free range. RSP-relative instructions
+  are biased for the call, and source calls are patched to the target. Freed
   function tails and modified live-code ranges are reported separately. The
   sample's `mix_a`/`mix_b`/`mix_c` chain shares a straight-line expression;
   those functions call helpers, so they allocate frames instead of using the
@@ -355,6 +357,7 @@ Implemented:
   The default codezip outputs and receipts are byte-identical on these inputs
   with recr's protected entries, raw-image function filtering, warning controls,
   runtime-only region support, and invalid-extent recovery.
+  Match pruning, window reuse, and layout reuse preserve these outputs.
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,
@@ -363,6 +366,7 @@ Implemented:
   `pcre2test` and 2654 bytes in 91 ranges from `pcre2grep` (4294 total).
   The RV64 pre-outlining counts were 112 and 2056 bytes (2168 total).
   The x86-64 counts above are identical before and after RISC-V outlining.
+  Bulk scans and outliner search changes preserve both RV64 outputs and receipts.
 - Mutation sensitivity check (`test/e2e/mutation_check.py`, `make -C test
   e2e-mutation`, native x86-64 only) flips random bytes in the cached
   codezipped binaries and runs the matching pcre2 test script, plus the

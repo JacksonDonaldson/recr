@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from types import SimpleNamespace
 
 from elftools.elf.elffile import ELFFile
@@ -18,6 +19,7 @@ from ir import (
     StateSpace,
     StateSpaceKind,
 )
+from isa import create_isa
 from optimizers import function_remover, outliner
 from test.uplift_sample import uplift_sample
 from uplifter import Uplifter
@@ -510,6 +512,121 @@ def test_find_basic_block_matches_is_limited_per_block(
             assert len(matches) <= outliner._MAX_MATCHES_PER_BLOCK
 
 
+def test_matching_keeps_full_intersections_and_skips_impossible_orders(
+    x86_64_isa, monkeypatch,
+) -> None:
+    binary = _MemoryBinary()
+    first, second, third = map(bytes.fromhex, ("b801000000", "b902000000", "ba03000000"))
+    sequences = [
+        first + second + third,
+        first + third + second,
+        first + third + second,
+        first + third,
+        first,
+    ]
+    functions = [
+        _decode_function(
+            x86_64_isa, binary, f"f{offset}", 0x1000 + 0x100 * offset, code + b"\xc3",
+        )
+        for offset, code in enumerate(sequences)
+    ]
+    blocks = [function.basic_blocks[0] for function in functions]
+    index = outliner._build_instruction_index(functions, x86_64_isa)
+
+    matches = outliner.find_basic_block_matches(blocks[0], index, x86_64_isa)
+    assert len(matches) == 1
+    match = matches[0]
+    assert list(match.blocks) == blocks[:3]
+    assert match.encodings == {first, second, third}
+    assert match.estimated_savings == 14
+
+    attempted = []
+    method = "convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance"
+    convert = getattr(outliner, method)
+
+    def count_attempt(block, *args):
+        attempted.append(block)
+        return convert(block, *args)
+
+    monkeypatch.setattr(outliner, method, count_attempt)
+    plan = outliner.try_generate_replacement_bytes(match, x86_64_isa)
+    assert plan is not None
+    assert attempted == blocks[1:3]
+    assert list(plan.match.blocks) == blocks[1:3]
+    assert plan.match.estimated_savings == 4
+    assert [item.original_data for item in plan.extracted_instructions] == [first, third, second]
+
+
+def test_layout_retry_reuses_functions_unaffected_by_a_rejected_plan(x86_64_isa, monkeypatch):
+    binary = _MemoryBinary()
+    code = bytes.fromhex("8b0703060fafc08902c3")
+    functions = [
+        _decode_function(x86_64_isa, binary, f"f{i}", 0x1000 + 0x100 * i, code)
+        for i in range(6)
+    ]
+    blocks = [function.basic_blocks[0] for function in functions]
+    index = outliner._build_instruction_index(functions, x86_64_isa)
+    match, = outliner.find_basic_block_matches(blocks[0], index, x86_64_isa)
+    first = outliner.try_generate_replacement_bytes(
+        replace(match, blocks=tuple(blocks[:3])), x86_64_isa,
+    )
+    second = outliner.try_generate_replacement_bytes(
+        replace(match, blocks=tuple(blocks[3:])), x86_64_isa,
+    )
+    assert first is not None and second is not None
+
+    layout = outliner._layout_function
+    attempted = []
+
+    def reject_last(function, replacements, isa):
+        attempted.append(function)
+        if function is functions[-1]:
+            return None
+        return layout(function, replacements, isa)
+
+    monkeypatch.setattr(outliner, "_layout_function", reject_last)
+    selected, layouts = outliner._layout_selected([first, second], x86_64_isa)
+    assert selected == [first]
+    assert layouts is not None
+    assert [layout.function for layout in layouts.values()] == functions[:3]
+    assert attempted == functions
+
+
+def test_placement_checks_riscv_call_reach_before_relocating_body(monkeypatch):
+    isa = create_isa("riscv64")
+    binary = _MemoryBinary()
+    function = _decode_function(
+        isa, binary, "source", 0x2000, bytes.fromhex("1305150067800000"),
+    )
+    block, = function.basic_blocks
+    call = isa.make_call_instruction()
+    call.address = block.start_location.value
+    layout = outliner._BlockLayout(block, [call], call.address)
+    match = outliner.BasicBlockMatch((block,), (), frozenset(), 4, 0)
+    shared = BasicBlock(start_location=Address.absolute(0))
+    plan = outliner._ReplacementPlan(match, [], shared, block.instructions[:1])
+    relocated = []
+    relocate = outliner._relocate
+
+    def record(isa, instruction, address):
+        relocated.append(address)
+        return relocate(isa, instruction, address)
+
+    monkeypatch.setattr(outliner, "_relocate", record)
+    last_reachable = call.address + (1 << 20) - 2
+    for destination in (last_reachable + 2, last_reachable):
+        placement = outliner._try_place(
+            plan, [(layout, 0, call)], [FreeSpace(Address.absolute(destination), 8)], isa,
+        )
+        if destination > last_reachable:
+            assert placement is None
+            assert relocated == []
+        else:
+            assert placement is not None
+            assert placement.patches[0][2].flows_to[0] == Address.absolute(destination)
+            assert relocated == [destination]
+
+
 def test_unsupported_isa_returns_none() -> None:
     class UnsupportedISA:
         supports_outlining = False
@@ -604,6 +721,21 @@ def test_convert_fails_when_dependencies_block_reordering() -> None:
         )
         is None
     )
+
+
+def test_convert_checks_gaps_against_every_later_selected_instruction() -> None:
+    first = _instruction(modifies=(R10,))
+    gap = _instruction(modifies=(R11,))
+    second = _instruction(modifies=(R12,))
+    third = _instruction(depends_on=(R11,))
+    block = BasicBlock(
+        start_location=Address.absolute(0x1000),
+        instructions=[first, gap, second, third],
+    )
+    convert = outliner.convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance
+    assert convert(block, [first, second], [first, second]) is not None
+    assert convert(block, [first, second, third], [first, second, third]) is None
+    assert convert(block, [first, second], [second, first]) is None
 
 
 def test_find_indices_uses_instruction_identity() -> None:

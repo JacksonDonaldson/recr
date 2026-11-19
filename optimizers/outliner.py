@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from ir import (
@@ -36,6 +37,7 @@ LOGGER = logging.getLogger(__name__)
 # target instead of by the address it happened to be decoded at.
 _CANONICAL_ADDRESS = 0
 _MAX_MATCHES_PER_BLOCK = 10
+_OUTLINE_WINDOW_CACHE_SIZE = 65536
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,10 @@ class ExtractionResult:
 class _InstructionIndex:
     """Position-invariant encodings mapped to the blocks containing them."""
 
-    blocks: dict[bytes, dict[int, BasicBlock]] = field(default_factory=dict)
+    blocks: list[BasicBlock] = field(default_factory=list)
+    positions: dict[int, int] = field(default_factory=dict)
+    instructions: list[dict[bytes, Instruction]] = field(default_factory=list)
+    postings: dict[bytes, set[int]] = field(default_factory=dict)
     lengths: dict[bytes, int] = field(default_factory=dict)
 
 
@@ -97,6 +102,13 @@ class _BlockReplacement:
     window_start: int
     removed_addresses: tuple[int, ...]
     replaced_first_address: int
+
+
+@dataclass(frozen=True)
+class _OutlineWindow:
+    instructions: list[Instruction]
+    start: int
+    selected: list[Instruction]
 
 
 @dataclass(eq=False)
@@ -130,6 +142,12 @@ class _FunctionLayout:
     blocks: list[_BlockLayout]
     new_end: int
     old_to_new: dict[int, Instruction]
+
+
+@dataclass(frozen=True)
+class _CachedLayout:
+    replacements: tuple[_BlockReplacement, ...]
+    layout: _FunctionLayout
 
 
 @dataclass(eq=False)
@@ -217,7 +235,7 @@ def extract_instruction_regions(
         LOGGER.info("outliner found no profitable basic-block matches")
         return result
 
-    selected = _select_plans(result.matches, isa, cache)
+    selected = _select_plans(result.matches, isa, index)
     if not selected:
         LOGGER.info("outliner could not build a replacement plan")
         return result
@@ -243,11 +261,14 @@ def extract_instruction_regions(
 
 
 def _layout_selected(
-    selected: list[_ReplacementPlan], isa: "ISA"
+    selected: list[_ReplacementPlan], isa: "ISA",
+    cache: dict[int, _CachedLayout] | None = None,
 ) -> tuple[list[_ReplacementPlan], dict[int, _FunctionLayout] | None]:
     """Regenerate functions until every remaining plan can be applied."""
+    if cache is None:
+        cache = {}
     while selected:
-        layouts, failed_function = _layout_functions(selected, isa)
+        layouts, failed_function = _layout_functions(selected, isa, cache)
         if layouts is not None:
             return selected, layouts
         selected = _drop_failed_function(selected, failed_function)
@@ -305,6 +326,7 @@ def relink_in_instructions(
     """Place extracted blocks in free space and rewrite live code."""
     selected = result.plans
     layouts = result.layouts
+    layout_cache: dict[int, _CachedLayout] = {}
 
     while selected:
         ranges = list(free_space) + _collect_free_space(layouts)
@@ -345,7 +367,7 @@ def relink_in_instructions(
         )
         if not selected:
             break
-        selected, layouts = _layout_selected(selected, isa)
+        selected, layouts = _layout_selected(selected, isa, layout_cache)
         if layouts is None:
             break
         result.plans = selected
@@ -377,69 +399,71 @@ def find_basic_block_matches(
     call_length = isa.call_instruction_length()
     ret_length = isa.ret_instruction_length()
 
-    outlinable: list[tuple[bytes, Instruction]] = []
-    seen_encodings: set[bytes] = set()
-    for instruction in block.instructions:
-        encoding = _outlinable_encoding(isa, instruction, cache)
-        if encoding is None or encoding in seen_encodings:
-            continue
-        seen_encodings.add(encoding)
-        outlinable.append((encoding, instruction))
+    position = instruction_index.positions.get(id(block))
+    outlinable = (
+        _first_by_encoding(block, isa, cache)
+        if position is None
+        else instruction_index.instructions[position]
+    )
+    postings = instruction_index.postings
+    lengths = instruction_index.lengths
+    encodings_with_postings = [encoding for encoding in outlinable if encoding in postings]
+    remaining = sum(lengths[encoding] for encoding in encodings_with_postings)
+    candidates: set[int] = set()
+    # Any profitable group must share more bytes than the call costs. Once
+    # the unvisited encodings fit in that budget, they cannot introduce a
+    # profitable candidate. Visit rare encodings first to keep the union small.
+    for encoding in sorted(encodings_with_postings, key=lambda key: len(postings[key])):
+        if remaining <= call_length:
+            break
+        candidates.update(postings[encoding])
+        remaining -= lengths[encoding]
+    if position is not None:
+        candidates.discard(position)
 
-    candidates: dict[int, tuple[BasicBlock, set[bytes]]] = {}
-    for encoding, _ in outlinable:
-        for block_id, other in instruction_index.blocks.get(
-            encoding, {}
-        ).items():
-            if block_id == id(block):
-                continue
-            if block_id not in candidates:
-                candidates[block_id] = (other, set())
-            candidates[block_id][1].add(encoding)
-
-    groups: dict[frozenset[bytes], dict[int, BasicBlock]] = {}
-    for block_id, (other, encodings) in candidates.items():
-        groups.setdefault(frozenset(encodings), {})[block_id] = other
-
-    matches: list[BasicBlockMatch] = []
-    for encodings, group_blocks in groups.items():
-        blocks_by_id = dict(group_blocks)
-        blocks_by_id[id(block)] = block
-        blocks = tuple(sorted(blocks_by_id.values(), key=_block_sort_key))
-
-        common_length = sum(
-            instruction_index.lengths[encoding] for encoding in encodings
+    anchor_encodings = set(outlinable)
+    groups: dict[frozenset[bytes], list[int]] = {}
+    for other in candidates:
+        common = frozenset(
+            anchor_encodings.intersection(instruction_index.instructions[other])
         )
-        if common_length < call_length:
-            continue
+        groups.setdefault(common, []).append(other)
 
-        # Every source site loses the shared bytes and gains a call.  The
-        # shared block itself is stored once in free space and ends in a
-        # return, so that cost is subtracted as well.
-        target_length = common_length + ret_length
-        estimated_savings = (
-            (common_length - call_length) * len(blocks) - target_length
+    encoding_order = {encoding: offset for offset, encoding in enumerate(outlinable)}
+    matches: list[tuple[BasicBlockMatch, int, int]] = []
+    for encodings, positions in groups.items():
+        common_length = sum(lengths[encoding] for encoding in encodings)
+        estimated_savings = _outline_savings(
+            common_length, len(positions) + 1, call_length, ret_length,
         )
         if estimated_savings <= 0:
             continue
 
+        # The former visitation order was the first common encoding in the
+        # anchor followed by the block's index position. Keep it for ties.
+        sources = [instruction_index.blocks[other] for other in sorted(positions)]
+        sources.append(block)
         common_instructions = tuple(
             instruction
-            for encoding, instruction in outlinable
+            for encoding, instruction in outlinable.items()
             if encoding in encodings
         )
-        matches.append(
-            BasicBlockMatch(
-                blocks=blocks,
-                common_instructions=common_instructions,
-                encodings=encodings,
-                common_length=common_length,
-                estimated_savings=estimated_savings,
-            )
+        match = BasicBlockMatch(
+            blocks=tuple(sorted(sources, key=_block_sort_key)),
+            common_instructions=common_instructions,
+            encodings=encodings,
+            common_length=common_length,
+            estimated_savings=estimated_savings,
         )
+        first_encoding = min(encoding_order[encoding] for encoding in encodings)
+        matches.append((match, first_encoding, min(positions)))
 
-    matches.sort(key=_match_sort_key)
-    return matches[:_MAX_MATCHES_PER_BLOCK]
+    matches.sort(key=lambda item: (_match_sort_key(item[0]), item[1], item[2]))
+    return [match for match, _, _ in matches[:_MAX_MATCHES_PER_BLOCK]]
+
+
+def _outline_savings(length: int, sites: int, call_length: int, ret_length: int) -> int:
+    return (length - call_length) * sites - (length + ret_length)
 
 
 def format_match(match: BasicBlockMatch) -> list[str]:
@@ -471,12 +495,78 @@ def try_generate_replacement_bytes(
     match: BasicBlockMatch,
     isa: "ISA",
     cache: dict[int, bytes | None] | None = None,
+    *,
+    index: _InstructionIndex | None = None,
+    find_window: Callable[[BasicBlock, tuple[bytes, ...]], _OutlineWindow | None] | None = None,
 ) -> _ReplacementPlan | None:
-    """Try to reorder each block so the common instructions are contiguous."""
+    """Try each viable instruction order while preserving template priority."""
+    call_length = isa.call_instruction_length()
+    ret_length = isa.ret_instruction_length()
+    per_site_savings = match.common_length - call_length
+    if not match.encodings or per_site_savings <= 0:
+        return None
+    minimum_sites = (match.common_length + ret_length) // per_site_savings + 1
+    by_order: dict[tuple[bytes, ...], list[BasicBlock]] = {}
+    by_block: dict[int, tuple[bytes, ...]] = {}
+    encodings_by_block: dict[int, dict[bytes, Instruction]] = {}
+    for block in match.blocks:
+        encodings = (
+            _first_by_encoding(block, isa, cache)
+            if index is None
+            else index.instructions[index.positions[id(block)]]
+        )
+        order = tuple(encoding for encoding in encodings if encoding in match.encodings)
+        if len(order) == len(match.encodings):
+            by_order.setdefault(order, []).append(block)
+            by_block[id(block)] = order
+            encodings_by_block[id(block)] = encodings
+
+    # Reordering can move intervening instructions but never swaps two
+    # selected instructions. Each block can therefore participate in only
+    # one order, regardless of which site supplies the shared body.
+    prepared: dict[tuple[bytes, ...], dict[int, _OutlineWindow]] = {}
     for template in match.blocks:
-        plan = _plan_for_template(match, template, isa, cache)
-        if plan is not None:
-            return plan
+        template_id = id(template)
+        order = by_block.get(template_id)
+        if order is None:
+            continue
+        if order not in prepared:
+            sites: dict[int, _OutlineWindow] = {}
+            if len(by_order[order]) >= minimum_sites:
+                for block in by_order[order]:
+                    if find_window is None:
+                        encodings = encodings_by_block[id(block)]
+                        window = _outline_window(block, [encodings[key] for key in order], isa)
+                    else:
+                        window = find_window(block, order)
+                    if window is not None:
+                        sites[id(block)] = window
+            if len(sites) < minimum_sites:
+                sites.clear()
+            prepared[order] = sites
+
+        sites = prepared[order]
+        window = sites.get(template_id)
+        if window is None:
+            continue
+        adjusted = _adjust_shared_instructions(window.selected, isa)
+        if adjusted is None:
+            continue
+
+        shared = _placeholder_block()
+        replacements = [_make_replacement(template, window, shared, isa)]
+        replacements.extend(
+            _make_replacement(block, sites[id(block)], shared, isa)
+            for block in by_order[order] if block is not template and id(block) in sites
+        )
+        filtered_match = replace(
+            match,
+            blocks=tuple(replacement.original for replacement in replacements),
+            estimated_savings=_outline_savings(
+                match.common_length, len(replacements), call_length, ret_length,
+            ),
+        )
+        return _ReplacementPlan(filtered_match, replacements, shared, adjusted)
     return None
 
 
@@ -498,95 +588,49 @@ def convert_basic_block_to_given_instruction_order_and_minimize_instruction_dist
     target_instruction_order: list[Instruction],
     isa: "ISA | None" = None,
 ) -> tuple[BasicBlock, int] | None:
-    """Reorder instructions while keeping the target instructions adjacent.
-
-    Each target instruction after the first is moved toward the position
-    immediately after its predecessor.  Non-target instructions are moved with
-    the target as a group when they cannot be swapped individually, and are
-    then moved to the far side of the target chain.
-    """
+    """Move the selected subsequence together without crossing dependencies."""
     target_ids = [id(instruction) for instruction in target_instruction_order]
-    if not target_ids or len(set(target_ids)) != len(target_ids):
+    targets = set(target_ids)
+    if not target_ids or len(targets) != len(target_ids):
         return None
-    if {id(instruction) for instruction in instructions_to_move} != set(
-        target_ids
-    ):
-        return None
-
-    items = list(basic_block.instructions)
-    target_id_set = set(target_ids)
-    if any(_index_of(items, target_id) < 0 for target_id in target_ids):
+    if {id(instruction) for instruction in instructions_to_move} != targets:
         return None
 
-    for position in range(1, len(target_ids)):
-        previous_id = target_ids[position - 1]
-        moved_id = target_ids[position]
-        previous_index = _index_of(items, previous_id)
-        moved_index = _index_of(items, moved_id)
-        if previous_index < 0 or moved_index < 0:
-            return None
+    items = basic_block.instructions
+    indices = [index for index, item in enumerate(items) if id(item) in targets]
+    if [id(items[index]) for index in indices] != target_ids:
+        return None
 
-        target_location = previous_index + 1
-        if moved_index == target_location:
-            continue
-
-        group = [items[moved_index]]
-        group_start = moved_index
-        group_end = moved_index
-        iterations = 0
-
-        if moved_index > target_location:
-            while group_start != target_location:
-                iterations += 1
-                if iterations > len(items) or group_start == 0:
-                    return None
-                neighbor = items[group_start - 1]
-                if id(neighbor) in target_id_set:
-                    return None
-                if can_swap_instruction(group, neighbor, isa):
-                    items[group_start - 1 : group_end + 1] = (
-                        group + [neighbor]
-                    )
-                    group_start -= 1
-                    group_end -= 1
-                else:
-                    group.insert(0, neighbor)
-                    group_start -= 1
-
-            # The target is at the end of the group; move the non-target
-            # instructions to the far side so the target chain is adjacent.
-            for index in range(len(group) - 1, 0, -1):
-                if not can_swap_instruction(
-                    [group[index]], group[index - 1], isa
-                ):
-                    return None
-                group[index - 1], group[index] = (
-                    group[index],
-                    group[index - 1],
-                )
-            items[group_start : group_end + 1] = group
+    first, last = indices[0], indices[-1]
+    gaps: list[Instruction] = []
+    gap_writes: set[StateSpace] = set()
+    gap_reads: set[StateSpace] = set()
+    # Every gap stays after the selected subsequence, so a later selected
+    # instruction must be able to cross every gap seen up to that point.
+    for instruction in items[first + 1:last + 1]:
+        if id(instruction) in targets:
+            if gaps and (
+                not _can_reorder(instruction, isa)
+                or not gap_writes.isdisjoint(instruction.depends_on)
+                or not gap_writes.isdisjoint(instruction.modifies)
+                or not gap_reads.isdisjoint(instruction.modifies)
+            ):
+                return None
         else:
-            while group_start != target_location:
-                iterations += 1
-                if iterations > len(items) or group_end + 1 >= len(items):
-                    return None
-                neighbor = items[group_end + 1]
-                if id(neighbor) in target_id_set:
-                    return None
-                if can_swap_instruction(group, neighbor, isa):
-                    items[group_start : group_end + 2] = [neighbor] + group
-                    group_start += 1
-                    group_end += 1
-                else:
-                    group.append(neighbor)
-                    group_end += 1
+            if not _can_reorder(instruction, isa):
+                return None
+            gaps.append(instruction)
+            gap_writes.update(instruction.modifies)
+            gap_reads.update(instruction.depends_on)
 
-    indices = [_index_of(items, target_id) for target_id in target_ids]
-    if any(index < 0 for index in indices):
-        return None
-    if indices != list(range(indices[0], indices[0] + len(target_ids))):
-        return None
-    return _clone_block_with_instructions(basic_block, items), indices[0]
+    reordered = items[:first] + target_instruction_order + gaps + items[last + 1:]
+    return _clone_block_with_instructions(basic_block, reordered), first
+
+
+def _can_reorder(instruction: Instruction, isa: "ISA | None") -> bool:
+    return not _is_non_fallthrough(instruction) and (
+        isa is None or isa.can_reorder_across(instruction)
+    )
 
 
 def can_swap_instruction(
@@ -594,13 +638,8 @@ def can_swap_instruction(
     isa: "ISA | None" = None,
 ) -> bool:
     """Return whether two instruction groups can be reordered safely."""
-    if _is_non_fallthrough(to_swap_with):
-        return False
-    if any(_is_non_fallthrough(instruction) for instruction in group_to_move):
-        return False
-    if isa is not None and not all(
-        isa.can_reorder_across(instruction)
-        for instruction in (*group_to_move, to_swap_with)
+    if not _can_reorder(to_swap_with, isa) or any(
+        not _can_reorder(instruction, isa) for instruction in group_to_move
     ):
         return False
 
@@ -621,16 +660,24 @@ def can_swap_instruction(
 def _select_plans(
     matches: list[BasicBlockMatch],
     isa: "ISA",
-    cache: dict[int, bytes | None] | None = None,
+    index: _InstructionIndex,
 ) -> list[_ReplacementPlan]:
     """Choose non-overlapping matches and build their replacement plans."""
+    @lru_cache(maxsize=_OUTLINE_WINDOW_CACHE_SIZE)
+    def cached_window(position: int, order: tuple[bytes, ...]) -> _OutlineWindow | None:
+        encodings = index.instructions[position]
+        return _outline_window(index.blocks[position], [encodings[key] for key in order], isa)
+
+    def find_window(block: BasicBlock, order: tuple[bytes, ...]) -> _OutlineWindow | None:
+        return cached_window(index.positions[id(block)], order)
+
     selected: list[_ReplacementPlan] = []
     deferred: list[_ReplacementPlan] = []
     used: set[int] = set()
     for match in matches:
         if any(id(block) in used for block in match.blocks):
             continue
-        plan = try_generate_replacement_bytes(match, isa, cache)
+        plan = try_generate_replacement_bytes(match, isa, index=index, find_window=find_window)
         if plan is None:
             continue
         if len(plan.match.blocks) < len(match.blocks):
@@ -650,193 +697,91 @@ def _select_plans(
     return selected
 
 
-def _plan_for_template(
-    match: BasicBlockMatch,
-    template: BasicBlock,
-    isa: "ISA",
-    cache: dict[int, bytes | None] | None = None,
-) -> _ReplacementPlan | None:
-    encoded_template = _encoded_instructions(template, isa, cache)
-    target_order: list[bytes] = []
-    seen: set[bytes] = set()
-    for instruction, encoding in encoded_template:
-        if encoding is None or encoding not in match.encodings:
-            continue
-        if encoding in seen:
-            continue
-        seen.add(encoding)
-        target_order.append(encoding)
-    if len(target_order) != len(match.encodings):
+def _outline_window(
+    block: BasicBlock, selected: list[Instruction], isa: "ISA",
+) -> _OutlineWindow | None:
+    function = block.containing_function
+    if function is None:
         return None
-
-    replacements: list[_BlockReplacement] = []
-    template_selection: list[Instruction] | None = None
-
-    # Check the template first so an unusable shared block fails quickly, and
-    # drop other sites that cannot participate instead of discarding the whole
-    # match.  Plans with dropped sites are deferred by the selector so they do
-    # not pre-empt a full match.
-    ordered_blocks = (template,) + tuple(
-        block for block in match.blocks if block is not template
+    converted = convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance(
+        block, selected, selected, isa,
     )
-    for block in ordered_blocks:
-        selected = _select_instructions(
-            block.instructions, isa, target_order, cache
-        )
-        if selected is None:
-            if block is template:
-                return None
-            continue
-        if block is template:
-            template_selection = selected
-
-        source_indices = find_indices(block, selected)
-        instructions_to_move = [
-            block.instructions[index] for index in source_indices
-        ]
-        converted = convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance(
-            block, instructions_to_move, selected, isa
-        )
-        if converted is None:
-            if block is template:
-                return None
-            continue
-        reordered, window_start = converted
-        window_end = window_start + len(selected)
-        window = reordered.instructions[window_start:window_end]
-        if any(
-            actual is not expected
-            for actual, expected in zip(window, selected)
-        ):
-            if block is template:
-                return None
-            continue
-
-        function = block.containing_function
-        if function is None:
-            if block is template:
-                return None
-            continue
-        if not isa.can_outline_region(
-            function,
-            block,
-            reordered.instructions,
-            window_start,
-            len(selected),
-        ):
-            if block is template:
-                # The template supplies the shared block, so its own window
-                # must be safe.  Try another block as the template.
-                return None
-            continue
-
-        call = isa.make_call_instruction()
-        call.outline_target = _placeholder_block()
-        instructions = (
-            reordered.instructions[:window_start]
-            + [call]
-            + reordered.instructions[window_end:]
-        )
-        replacements.append(
-            _BlockReplacement(
-                original=block,
-                instructions=instructions,
-                call=call,
-                window_start=window_start,
-                removed_addresses=tuple(
-                    instruction.address for instruction in selected
-                ),
-                replaced_first_address=selected[0].address,
-            )
-        )
-
-    if template_selection is None:
+    if converted is None:
         return None
+    reordered, start = converted
+    if not isa.can_outline_region(function, block, reordered.instructions, start, len(selected)):
+        return None
+    return _OutlineWindow(reordered.instructions, start, selected)
 
-    safe_blocks = tuple(
-        replacement.original for replacement in replacements
+
+def _make_replacement(
+    block: BasicBlock, window: _OutlineWindow, shared: BasicBlock, isa: "ISA",
+) -> _BlockReplacement:
+    start, selected = window.start, window.selected
+    call = isa.make_call_instruction()
+    call.outline_target = shared
+    instructions = (
+        window.instructions[:start]
+        + [call]
+        + window.instructions[start + len(selected):]
     )
-    if len(safe_blocks) < 2:
-        return None
-    estimated_savings = (
-        (match.common_length - isa.call_instruction_length())
-        * len(safe_blocks)
-        - (match.common_length + isa.ret_instruction_length())
-    )
-    if estimated_savings <= 0:
-        return None
-    filtered_match = replace(
-        match, blocks=safe_blocks, estimated_savings=estimated_savings
+    return _BlockReplacement(
+        original=block,
+        instructions=instructions,
+        call=call,
+        window_start=start,
+        removed_addresses=tuple(instruction.address for instruction in selected),
+        replaced_first_address=selected[0].address,
     )
 
+
+def _adjust_shared_instructions(
+    instructions: list[Instruction], isa: "ISA",
+) -> list[Instruction] | None:
     adjusted: list[Instruction] = []
-    for instruction in template_selection:
+    for instruction in instructions:
         try:
-            adjusted_instruction = isa.add_extra_stack_space(
-                instruction, isa.pointer_size
-            )
+            moved = isa.add_extra_stack_space(instruction, isa.pointer_size)
         except ValueError:
             return None
-        if adjusted_instruction.length != instruction.length:
+        if moved.length != instruction.length:
             return None
-        adjusted.append(adjusted_instruction)
-
-    extracted = _placeholder_block()
-    for replacement in replacements:
-        replacement.call.outline_target = extracted
-
-    return _ReplacementPlan(
-        match=filtered_match,
-        replacements=replacements,
-        extracted=extracted,
-        extracted_instructions=adjusted,
-    )
-
-
-def _select_instructions(
-    instructions: list[Instruction],
-    isa: "ISA",
-    target_order: list[bytes],
-    cache: dict[int, bytes | None] | None = None,
-) -> list[Instruction] | None:
-    """Return the first instruction for each encoding in ``target_order``."""
-    by_encoding: dict[bytes, Instruction] = {}
-    for instruction in instructions:
-        encoding = _outlinable_encoding(isa, instruction, cache)
-        if encoding is None or encoding in by_encoding:
-            continue
-        by_encoding[encoding] = instruction
-
-    selected: list[Instruction] = []
-    for encoding in target_order:
-        instruction = by_encoding.get(encoding)
-        if instruction is None:
-            return None
-        selected.append(instruction)
-    return selected
+        adjusted.append(moved)
+    return adjusted
 
 
 def _layout_functions(
-    plans: list[_ReplacementPlan], isa: "ISA"
+    plans: list[_ReplacementPlan], isa: "ISA", cache: dict[int, _CachedLayout],
 ) -> tuple[dict[int, _FunctionLayout] | None, Function | None]:
-    replacements: dict[int, _BlockReplacement] = {}
-    functions: dict[int, Function] = {}
+    functions: dict[int, tuple[Function, dict[int, _BlockReplacement]]] = {}
     for plan in plans:
         for replacement in plan.replacements:
-            replacements[id(replacement.original)] = replacement
             function = replacement.original.containing_function
             if function is None:
                 return None, None
-            functions[id(function)] = function
+            function_id = id(function)
+            if function_id not in functions:
+                functions[function_id] = function, {}
+            functions[function_id][1][id(replacement.original)] = replacement
+
+    for function_id in cache.keys() - functions.keys():
+        del cache[function_id]
 
     layouts: dict[int, _FunctionLayout] = {}
-    for function_id, function in functions.items():
+    for function_id, (function, replacements) in functions.items():
+        # Dropping a plan affects only the functions containing its sites.
+        signature = tuple(replacements.values())
+        cached = cache.get(function_id)
+        if cached is not None and cached.replacements == signature:
+            layouts[function_id] = cached.layout
+            continue
         layout = _layout_function(function, replacements, isa)
         if layout is None:
             LOGGER.debug(
                 "outliner cannot regenerate function %s", function.name
             )
             return None, function
+        cache[function_id] = _CachedLayout(signature, layout)
         layouts[function_id] = layout
     return layouts, None
 
@@ -1066,7 +1011,25 @@ def _try_place(
             candidates.append((free.size, end_start, index))
     candidates.sort(key=lambda item: (item[0], item[1]))
 
+    # Try the farthest-separated call sites first. A candidate must be
+    # reachable from both before it is worth relocating the shared body.
+    first = min(call_sites, key=lambda site: site[2].address)
+    last = max(call_sites, key=lambda site: site[2].address)
+    checks = [first]
+    if last is not first:
+        checks.append(last)
+    checks.extend(site for site in call_sites if site is not first and site is not last)
+
     for _, address, index in candidates:
+        destination = Address.absolute(address)
+        patches: list[tuple[_BlockLayout, int, Instruction]] = []
+        try:
+            for block_layout, position, call in checks:
+                patched = isa.set_instruction_target(call, destination)
+                patches.append((block_layout, position, patched))
+        except ValueError:
+            continue
+
         relocated: list[Instruction] = []
         current = address
         failed = False
@@ -1089,19 +1052,6 @@ def _try_place(
         relocated.append(return_instruction)
         current += return_instruction.length
         if current - address != needed:
-            continue
-
-        patches: list[tuple[_BlockLayout, int, Instruction]] = []
-        for block_layout, position, call in call_sites:
-            try:
-                patched = isa.set_instruction_target(
-                    call, Address.absolute(address)
-                )
-            except ValueError:
-                failed = True
-                break
-            patches.append((block_layout, position, patched))
-        if failed:
             continue
 
         target = BasicBlock(
@@ -1323,13 +1273,26 @@ def _build_instruction_index(
     index = _InstructionIndex()
     for function in functions:
         for block in function.basic_blocks:
-            for instruction in block.instructions:
-                encoding = _outlinable_encoding(isa, instruction, cache)
-                if encoding is None:
-                    continue
-                index.blocks.setdefault(encoding, {})[id(block)] = block
+            position = len(index.blocks)
+            index.positions[id(block)] = position
+            index.blocks.append(block)
+            instructions = _first_by_encoding(block, isa, cache)
+            index.instructions.append(instructions)
+            for encoding, instruction in instructions.items():
+                index.postings.setdefault(encoding, set()).add(position)
                 index.lengths.setdefault(encoding, instruction.length)
     return index
+
+
+def _first_by_encoding(
+    block: BasicBlock, isa: "ISA", cache: dict[int, bytes | None] | None,
+) -> dict[bytes, Instruction]:
+    encodings: dict[bytes, Instruction] = {}
+    for instruction in block.instructions:
+        encoding = _outlinable_encoding(isa, instruction, cache)
+        if encoding is not None:
+            encodings.setdefault(encoding, instruction)
+    return encodings
 
 
 def _eligible_functions(
@@ -1404,27 +1367,6 @@ def _relocate(isa: "ISA", instruction: Instruction, address: int) -> Instruction
     return isa.relocate_instruction(instruction, address)
 
 
-def _encoded_instructions(
-    block: BasicBlock,
-    isa: "ISA",
-    cache: dict[int, bytes | None] | None = None,
-) -> list[tuple[Instruction, bytes | None]]:
-    return _encoded_instructions_from_list(block.instructions, isa, cache)
-
-
-def _encoded_instructions_from_list(
-    instructions: list[Instruction],
-    isa: "ISA",
-    cache: dict[int, bytes | None] | None = None,
-) -> list[tuple[Instruction, bytes | None]]:
-    encoded: list[tuple[Instruction, bytes | None]] = []
-    for instruction in instructions:
-        encoded.append(
-            (instruction, _outlinable_encoding(isa, instruction, cache))
-        )
-    return encoded
-
-
 def _placeholder_block() -> BasicBlock:
     return BasicBlock(start_location=Address.absolute(0))
 
@@ -1438,13 +1380,6 @@ def _clone_block_with_instructions(
         instructions=instructions,
         used_for_outlining=block.used_for_outlining,
     )
-
-
-def _index_of(items: list[Instruction], instruction_id: int) -> int:
-    for index, instruction in enumerate(items):
-        if id(instruction) == instruction_id:
-            return index
-    return -1
 
 
 def _is_non_fallthrough(instruction: Instruction) -> bool:
