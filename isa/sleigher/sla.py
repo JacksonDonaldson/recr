@@ -8,8 +8,9 @@ runtime model that codezip needs.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
-from functools import lru_cache
+from functools import cached_property, lru_cache
 import hashlib
 from pathlib import Path
 import pickle
@@ -731,6 +732,11 @@ class Constructor:
     context_ops: list[ContextOp]
     template: ConstructTpl | None
 
+    @cached_property
+    def printed_mnemonic(self) -> str:
+        text = "".join(value for kind, value in self.print_pieces if kind == "text").strip()
+        return text.split(" ", 1)[0]
+
 
 @dataclass
 class PatternBlock:
@@ -1318,10 +1324,10 @@ class SlaSpec:
         self._resolve_cached = lru_cache(maxsize=self._DECODE_CACHE_LIMIT)(
             self._resolve_uncached
         )
-        self._state_effects_cache: dict[
+        self._state_effects_cache: OrderedDict[
             tuple[bytes, int],
             tuple[tuple[StateSpace, ...], tuple[StateSpace, ...]],
-        ] = {}
+        ] = OrderedDict()
 
     @classmethod
     def from_path(cls, path: str | Path) -> "SlaSpec":
@@ -2065,13 +2071,9 @@ class SlaSpec:
         return InstructionType.ARITHMETIC
 
     def mnemonic(self, resolved: ResolvedConstructor) -> str:
-        text = "".join(
-            value
-            for kind, value in resolved.constructor.print_pieces
-            if kind == "text"
-        ).strip()
-        if text:
-            return text.split(" ", 1)[0]
+        mnemonic = resolved.constructor.printed_mnemonic
+        if mnemonic:
+            return mnemonic
         for child in resolved.operands:
             if child.resolved is not None:
                 mnemonic = self.mnemonic(child.resolved)
@@ -2244,7 +2246,7 @@ class SlaSpec:
             data, flow, resolved, address
         )
         if len(self._state_effects_cache) >= self._DECODE_CACHE_LIMIT:
-            del self._state_effects_cache[next(iter(self._state_effects_cache))]
+            self._state_effects_cache.popitem(last=False)
         self._state_effects_cache[key] = effects
         return effects
 

@@ -12,6 +12,8 @@ from elftools.elf.elffile import ELFFile
 import pytest
 import yaml
 
+import cache
+import codezip
 from recr import main
 from recompiler.placement import Space
 from recompiler.raw import read_raw_input
@@ -97,8 +99,10 @@ def test_built_static_raw_fixture_runs(firmware: Firmware, tmp_path: Path) -> No
 
 @pytest.mark.parametrize("failure", ["unreachable", "overrun", "decode"])
 def test_recr_classifies_uplift_failures(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture, failure: str,
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch, failure: str,
 ) -> None:
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path / "cache")
     image = tmp_path / "original.bin"
     manifest = tmp_path / "original.yaml"
     hook = tmp_path / "change.re.c"
@@ -159,6 +163,10 @@ def test_recr_classifies_uplift_failures(
     assert rewritten[:6] != data[:6]
     previous_receipt = receipt.read_bytes()
 
+    def unexpected_compaction(*args, **kwargs):
+        pytest.fail("expected to reuse compaction and replay its extent warnings")
+
+    monkeypatch.setattr(codezip, "run_pipeline", unexpected_compaction)
     assert main([*args, "-Werror"]) == 1
     assert "recr: error: cannot uplift function bad:" in capsys.readouterr().err
     assert output.read_bytes() == rewritten
@@ -168,6 +176,117 @@ def test_recr_classifies_uplift_failures(
     assert reason not in capsys.readouterr().err
     assert output.read_bytes() == rewritten
     assert receipt.read_bytes() == previous_receipt
+
+
+def test_recr_reuses_raw_compaction_across_hook_edits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path / "cache")
+    image, manifest, hook = (tmp_path / name for name in ("image.bin", "image.yaml", "hook.re.c"))
+    output, receipt = tmp_path / "output", tmp_path / "receipt.yaml"
+    base = 0x400000
+    data = bytearray(b"\xcc" * 0x210)
+    data[:6] = bytes.fromhex("b8 07 00 00 00 c3")
+    data[0x100:0x180] = b"\x90" * 0x7f + b"\xc3"
+    functions = {
+        "transform": dict(start_address=base, length=6, declaration="int transform(void);"),
+        "spare": dict(start_address=base + 0x100, length=0x80),
+    }
+    sequence = bytes.fromhex("8b07 0306 0fafc0 8902 c3")
+    for index in range(3):
+        start = 0x20 + 0x20 * index
+        data[start:start + len(sequence)] = sequence
+        functions[f"retained_{index}"] = dict(start_address=base + start, length=len(sequence))
+        # The image contains pointers to the retained functions.
+        data[0x200 + 4 * index:0x204 + 4 * index] = (base + start).to_bytes(4, "little")
+    image.write_bytes(data)
+    layout = {
+        "binary": image.name, "isa": "x86_64", "functions": functions,
+        "regions": [dict(start_address=base, file_offset=0, length=len(data), permissions="rx")],
+    }
+    manifest.write_text(yaml.safe_dump(layout))
+    hook.write_text("int @transform(void) { return 17; }\n")
+    args = [str(manifest), str(hook), "--cc", "gcc", "-o", str(output), "-r", str(receipt)]
+    run_pipeline = codezip.run_pipeline
+    compactions = 0
+
+    def count_compaction(*args, **kwargs):
+        nonlocal compactions
+        compactions += 1
+        return run_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr(codezip, "run_pipeline", count_compaction)
+    assert main(args) == 0
+    assert compactions == 1
+    initial_output, initial_receipt = output.read_bytes(), receipt.read_bytes()
+    assert initial_output[0x20] == 0xe8  # An outlined call in the cached patch set.
+    assert main(args) == 0
+    assert compactions == 1
+    assert output.read_bytes() == initial_output
+    assert receipt.read_bytes() == initial_receipt
+
+    hook.write_text("int @transform(void) { return 18; }\n")
+    assert main(args) == 0
+    assert compactions == 1
+    edited_output = output.read_bytes()
+    assert edited_output != initial_output
+    assert receipt.read_bytes() == initial_receipt
+
+    entry, = tmp_path.glob("codezip-recr-*/*.json")
+    entry.write_bytes(b"incomplete")
+    assert main(args) == 0
+    assert compactions == 2
+    assert output.read_bytes() == edited_output
+
+    layout["entry_points"] = [functions["retained_0"]["start_address"]]
+    manifest.write_text(yaml.safe_dump(layout))
+    assert main(args) == 0
+    assert compactions == 3
+    assert output.read_bytes()[0x20:0x20 + len(sequence)] == sequence
+
+    data[-1] = 0x42
+    image.write_bytes(data)
+    assert main(args) == 0
+    assert compactions == 4
+    assert output.read_bytes()[-1] == 0x42
+
+
+def test_recr_checks_fixed_riscv_hi20_before_compaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path / "cache")
+    image, manifest, hook = (tmp_path / name for name in ("image.bin", "image.yaml", "hook.re.c"))
+    output, receipt = tmp_path / "output", tmp_path / "receipt.yaml"
+    base = 0x400000
+    data = bytes.fromhex("1b 05 15 00 67 80 00 00") + bytes(8)
+    data += bytes.fromhex("13 00 00 00") * 63 + bytes.fromhex("67 80 00 00")
+    image.write_bytes(data)
+    layout = {
+        "binary": image.name, "isa": "riscv64", "riscv": {"march": "rv64i", "abi": "lp64"},
+        "functions": {
+            "transform": dict(start_address=base, length=8, declaration="int transform(int value);"),
+            "spare": dict(start_address=base + 16, length=256),
+        },
+        "regions": [
+            dict(start_address=base, file_offset=0, length=len(data), permissions="rx"),
+            dict(start_address=0x7ffff7fc, length=8, permissions="rw"),
+        ],
+        "symbols": {"counter": dict(address=0x7ffff7fc, declaration="extern volatile int counter;")},
+    }
+    manifest.write_text(yaml.safe_dump(layout))
+    hook.write_text("int @transform(int value) { return value + counter; }\n")
+    args = [str(manifest), str(hook), "--cc", shlex.join(RISCV64_CC), "-o", str(output), "-r", str(receipt)]
+    assert main(args) == 0
+    original_output, original_receipt = output.read_bytes(), receipt.read_bytes()
+    layout["symbols"]["counter"]["address"] += 4
+    manifest.write_text(yaml.safe_dump(layout))
+
+    def unexpected_compaction(*args, **kwargs):
+        pytest.fail("an unencodable fixed relocation should fail before compaction")
+
+    monkeypatch.setattr(codezip, "run_pipeline", unexpected_compaction)
+    assert main([*args, "--verbose"]) == 1
+    assert "RISC-V displacement +0x80000000 does not fit" in capsys.readouterr().err
+    assert output.read_bytes() == original_output
+    assert receipt.read_bytes() == original_receipt
 
 
 @pytest.mark.parametrize("with_ghidra_export", [False, True], ids=["yaml-functions", "ghidra-functions"])

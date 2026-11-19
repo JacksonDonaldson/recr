@@ -16,7 +16,7 @@ from ir import (
     InstructionType,
     Reference,
 )
-from isa import DecodedFlow, ISA, create_isa
+from isa import ISA, create_isa
 
 if TYPE_CHECKING:
     from binary.binary import Binary
@@ -139,46 +139,13 @@ class Uplifter:
             for address, target in chain(
                 self.isa.iter_pointer_references(self.binary, start, end, targets),
                 self.isa.iter_address_references(self.binary, start, end, targets),
+                self.isa.iter_control_flow_references(self.binary, start, end, targets),
             ):
-                function = self.function_map.get(Address.absolute(target))
-                if function is None:
-                    continue
+                destination = Address.absolute(target)
                 _append_unique(
-                    function.incoming_references,
-                    Reference(
-                        Address.absolute(address), Address.absolute(target)
-                    ),
+                    self.function_map[destination].incoming_references,
+                    Reference(Address.absolute(address), destination),
                 )
-            for flow in self.isa.decode_control_flow_range(
-                self.binary, start, end
-            ):
-                self._record_flow_references(flow)
-
-    def _record_flow_references(self, flow: "DecodedFlow") -> None:
-        source = Address.absolute(flow.address)
-        fallthrough = flow.address + flow.length
-        for target in flow.flows_to:
-            if target.kind is not AddressKind.ABSOLUTE:
-                continue
-
-            # A straight-line instruction's only flow is its fallthrough.  For
-            # calls and conditional branches the fallthrough is likewise not a
-            # real cross-reference; only branch targets are.  Counting padding
-            # between functions as an incoming reference would keep otherwise
-            # unreferenced functions alive.
-            if (
-                flow.type is not InstructionType.BRANCH
-                and target.value == fallthrough
-            ):
-                continue
-
-            function = self.function_map.get(target)
-            if function is None:
-                continue
-
-            _append_unique(
-                function.incoming_references, Reference(source, target)
-            )
 
     def _decode_linear(
         self, function: Function, start: int, end: int

@@ -124,7 +124,8 @@ Implemented:
   Code can span disjoint ranges.
   Writable data requires writable cleared space. GCC accepts flags, objects,
   and static libraries.
-  RISC-V placement checks JAL reach, relinks ELF immediates, and keeps
+  Recr checks fixed RISC-V HI20 relocations before compaction. RISC-V
+  placement checks JAL reach, relinks ELF immediates, and keeps
   AUIPC/JALR call pairs together. The RISC-V tests run the RV64 sample and
   execute hooked RV64 and RV32 ELF fixtures under QEMU.
   During compaction, unreachable decoded instructions and instructions crossing
@@ -136,6 +137,9 @@ Implemented:
   with permissions, and lists entry points to preserve. Regions without a
   `file_offset` allow Ghidra data imports. Only file-backed regions are
   scanned, patched, or used for placement.
+  Non-verbose raw builds reuse completed compaction from a private per-user
+  temporary cache keyed by the input bytes, mappings, function metadata,
+  protected addresses, and implementation. Warnings are rechecked on reuse.
   Functions and C declarations come from the manifest or a Ghidra export.
   Functions shorter than the target's instruction alignment or extending
   outside one file-backed executable region are skipped with warnings. Recr
@@ -208,9 +212,11 @@ Implemented:
   CSR and reservation state, relocates direct branches and calls, and
   preserves AUIPC results when the new displacement fits. Missing P-code
   yields opaque effects. The mapped-image scan recovers pointers assembled
-  across instructions, including GP-relative references. Outlining uses
-  the alternate link register t0 without adjusting the stack. Backward CFG
-  liveness checks the reordered suffix at every site, and functions with
+  across instructions, including GP-relative references. The direct-flow scan
+  checks candidate destinations against known entries before decoding them
+  with SLEIGH. It also decodes parcels whose fallthrough is a known entry.
+  Outlining uses the alternate link register t0 without adjusting the stack.
+  Backward CFG liveness checks the reordered suffix at every site, and functions with
   LR/SC are excluded. GNU binutils fixtures check state, malformed input,
   relocation, link liveness, and exact CLI output.
 - `isa/sleigher/` parses the packed `.sla` directly: address spaces, symbols,
@@ -299,23 +305,26 @@ Implemented:
   address zero first), groups blocks that share the same instruction set, and
   estimates net free-space savings after the inserted call, the stored shared
   block, and its return. The search starts with rare encodings and skips
-  candidate groups that cannot pay for the call. Matches are capped at 10 per
-  source block and deduplicated globally. The pass reuses canonical encodings
-  for matching and planning. Functions with an unresolved local reference or
+  candidate groups that cannot pay for the call. It computes intersections
+  once per distinct encoding set among an anchor's candidate blocks. Matches
+  are capped at 10 per source block and deduplicated globally. The pass reuses
+  canonical encodings for matching and planning. Functions with an unresolved local reference or
   an implicit fallthrough from their last instruction are skipped. Red-zone
   functions are eligible: each candidate source site is checked with `can_outline_region`,
   sites that are unsafe or cannot be reordered are dropped from the match, and
   the savings are recomputed. Plans with dropped sites are deferred until full
   matches have claimed their blocks. Planning groups sites by the existing
   order of the selected instructions and caches validated windows. Block
-  reordering moves selected instructions into a contiguous window using the
-  accumulated dependencies and control-transfer checks for intervening code.
+  reordering indexes instruction positions and checks dependencies and
+  control transfers while making the selected window contiguous.
   Selected matches are applied greedily without overlapping source blocks.
   Function regeneration relocates every instruction, repatches branch targets,
   rejects any instruction that would grow, and drops the plans for a function
   if it cannot be regenerated. Retries reuse layouts for functions with the
-  same replacements. Placement checks call reach before relocating a shared
-  block into the smallest compatible free range. RSP-relative instructions
+  same replacements. RISC-V placement filters candidate addresses by
+  displacement bounds when the address space cannot wrap. Placement checks
+  call reach before relocating a shared block into the smallest compatible
+  free range. RSP-relative instructions
   are biased for the call, and source calls are patched to the target. Freed
   function tails and modified live-code ranges are reported separately. The
   sample's `mix_a`/`mix_b`/`mix_c` chain shares a straight-line expression;
@@ -356,8 +365,9 @@ Implemented:
   baseline was 360 and 2105 bytes (2465 total).
   The default codezip outputs and receipts are byte-identical on these inputs
   with recr's protected entries, raw-image function filtering, warning controls,
-  runtime-only region support, and invalid-extent recovery.
-  Match pruning, window reuse, and layout reuse preserve these outputs.
+  runtime-only region support, invalid-extent recovery, and compaction caching.
+  Match pruning, encoding-set grouping, window reuse, and layout reuse
+  preserve these outputs.
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,
@@ -366,7 +376,8 @@ Implemented:
   `pcre2test` and 2654 bytes in 91 ranges from `pcre2grep` (4294 total).
   The RV64 pre-outlining counts were 112 and 2056 bytes (2168 total).
   The x86-64 counts above are identical before and after RISC-V outlining.
-  Bulk scans and outliner search changes preserve both RV64 outputs and receipts.
+  Bulk and target-aware scans and outliner search changes preserve both RV64
+  outputs and receipts.
 - Mutation sensitivity check (`test/e2e/mutation_check.py`, `make -C test
   e2e-mutation`, native x86-64 only) flips random bytes in the cached
   codezipped binaries and runs the matching pcre2 test script, plus the

@@ -31,6 +31,14 @@ class DecodedFlow:
     type: InstructionType
     flows_to: tuple[Address, ...]
 
+    def references(self, targets: AbstractSet[int]) -> Iterator[tuple[int, int]]:
+        fallthrough = self.address + self.length
+        for target in self.flows_to:
+            if target.kind is not AddressKind.ABSOLUTE or target.value not in targets:
+                continue
+            if self.type is InstructionType.BRANCH or target.value != fallthrough:
+                yield self.address, target.value
+
 
 class ISA(ABC):
     """Interface for an instruction-set architecture."""
@@ -110,6 +118,17 @@ class ISA(ABC):
                     and pointer.value in targets
                 ):
                     yield address, pointer.value
+
+    def iter_control_flow_references(
+        self, binary: Binary, start: int, end: int, targets: AbstractSet[int],
+    ) -> Iterator[tuple[int, int]]:
+        """Yield cross-references to targets from decoded control flow."""
+        for flow in self.decode_control_flow_range(binary, start, end):
+            yield from flow.references(targets)
+
+    def outline_call_target_bounds(self, first: int, last: int) -> tuple[int, int] | None:
+        """Return inclusive bounds for a destination reachable from both call sites."""
+        return None
 
     def iter_address_references(
         self, binary: "Binary", start: int, end: int, targets: AbstractSet[int],

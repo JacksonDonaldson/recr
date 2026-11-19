@@ -28,6 +28,7 @@ class RawInput:
     parsed: ParseResult
     exports: Exports
     protected_entries: frozenset[int]
+    symbols: dict[str, int]
 
 
 def _integer(value: object, label: str, minimum: int = 0) -> int:
@@ -208,4 +209,4 @@ def read_raw_input(
         index = bisect_left(points, start)
         if index < len(points) and points[index] < start + function.length:
             protected.add(start)
-    return RawInput(binary, parsed, exports, frozenset(protected))
+    return RawInput(binary, parsed, exports, frozenset(protected), symbols)

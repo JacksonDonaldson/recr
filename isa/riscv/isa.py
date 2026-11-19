@@ -23,6 +23,13 @@ if TYPE_CHECKING:
 
 _WORD = Struct("<I")
 _DOUBLEWORD = Struct("<Q")
+_ORDINARY_COMPRESSED = frozenset({
+    "c.add", "c.addi", "c.addi16sp", "c.addi4spn", "c.addiw", "c.addw",
+    "c.and", "c.andi", "c.li", "c.lui", "c.mv", "c.or", "c.slli", "c.srai",
+    "c.srli", "c.sub", "c.subw", "c.xor", "c.lw", "c.lwsp", "c.ld",
+    "c.ldsp", "c.sw", "c.swsp", "c.sd", "c.sdsp", "c.fld", "c.fldsp",
+    "c.flw", "c.flwsp", "c.fsd", "c.fsdsp", "c.fsw", "c.fswsp",
+})
 
 
 @lru_cache(maxsize=2)
@@ -41,6 +48,8 @@ class _RISCVISA(ISA):
         self.xlen = self.pointer_size * 8
         self.address_mask = (1 << self.xlen) - 1
         self._link = StateSpace(StateSpaceKind.REGISTER, "t0", self.pointer_size)
+        # Relocation normally follows a can_encode check with the same fields.
+        self._checked_encoding = lru_cache(maxsize=1)(self._encode_fields)
         self._outline_liveness: dict[
             int, tuple[tuple[list[Instruction], ...], set[int] | None]
         ] = {}
@@ -119,6 +128,59 @@ class _RISCVISA(ISA):
 
         yield from super().decode_range(binary, bulk_end, end)
 
+    def iter_control_flow_references(
+        self, binary: Binary, start: int, end: int, targets: Set[int],
+    ) -> Iterator[tuple[int, int]]:
+        if not targets or start >= end:
+            return
+        data = self._read_scan_range(binary, start, end)
+        mask = self.address_mask
+        if data is None or start < 0 or end - 1 > mask:
+            yield from super().iter_control_flow_references(binary, start, end, targets)
+            return
+
+        bulk_end = max(start, end - 3)
+        for address in range(start + (start & 1), bulk_end, 2):
+            offset = address - start
+            first = data[offset]
+            opcode = first & 0x7f
+            if first & 0x1f == 0x1f:
+                continue
+            length = 4 if first & 3 == 3 else 2
+            # Conditional branches also report their fallthrough. The few
+            # parcels abutting known targets always get a full flow decode.
+            if (address + length) & mask not in targets:
+                if length == 4:
+                    if opcode not in (0x63, 0x67, 0x6f):
+                        continue
+                    word, = _WORD.unpack_from(data, offset)
+                else:
+                    if first & 3 != 1 or data[offset + 1] >> 5 not in (1, 5, 6, 7):
+                        continue
+                    word = first | data[offset + 1] << 8
+
+                # SLEIGH gives other transfers only unknown or fallthrough
+                # targets. Validate all surviving encodings with that decoder.
+                immediate = relative_immediate(word, length, self.xlen)
+                if immediate is not None:
+                    destination = (address + immediate.decode(word)) & mask
+                elif length == 4 and opcode == 0x67 and (word >> 15) & 31 == 0:
+                    destination = sign_extend(word >> 20, 12) & mask & ~1
+                else:
+                    continue
+                if destination not in targets:
+                    continue
+
+            raw = data[offset:offset + length]
+            try:
+                flow = self.spec.decode_flow(raw, address, self._resolve(raw, address))
+            except ValueError:
+                continue
+            if flow.type not in (InstructionType.ARITHMETIC, InstructionType.NOP):
+                yield from flow.references(targets)
+
+        yield from super().iter_control_flow_references(binary, bulk_end, end, targets)
+
     @staticmethod
     def _read_scan_range(binary: Binary, start: int, end: int) -> bytes | None:
         try:
@@ -133,13 +195,7 @@ class _RISCVISA(ISA):
             return False
         if instruction.length == 2:
             resolved = self._resolve(instruction.original_data, instruction.address)
-            return self.spec.mnemonic(resolved).lower() in {
-                "c.add", "c.addi", "c.addi16sp", "c.addi4spn", "c.addiw", "c.addw",
-                "c.and", "c.andi", "c.li", "c.lui", "c.mv", "c.or", "c.slli", "c.srai",
-                "c.srli", "c.sub", "c.subw", "c.xor", "c.lw", "c.lwsp", "c.ld",
-                "c.ldsp", "c.sw", "c.swsp", "c.sd", "c.sdsp", "c.fld", "c.fldsp",
-                "c.flw", "c.flwsp", "c.fsd", "c.fsdsp", "c.fsw", "c.fswsp",
-            }
+            return self.spec.mnemonic(resolved).lower() in _ORDINARY_COMPRESSED
         opcode = instruction.original_data[0] & 0x7F
         if opcode in (0x07, 0x27):
             return (instruction.original_data[1] >> 4) & 7 in (2, 3)
@@ -152,11 +208,14 @@ class _RISCVISA(ISA):
         )
 
     def is_outlinable(self, instruction: Instruction) -> bool:
+        flows = instruction.flows_to
         return (
             self._ordinary_instruction(instruction)
             and self._link not in instruction.modifies
             and self._link not in instruction.depends_on
-            and instruction.flows_to == [Address.absolute(instruction.address + instruction.length)]
+            and len(flows) == 1
+            and flows[0].kind is AddressKind.ABSOLUTE
+            and flows[0].value == instruction.address + instruction.length
         )
 
     def can_reorder_across(self, instruction: Instruction) -> bool:
@@ -210,17 +269,26 @@ class _RISCVISA(ISA):
     def ret_instruction_length(self) -> int:
         return 4
 
-    def _encode(self, instruction: Instruction, address: int, target: int | None) -> Instruction:
+    def outline_call_target_bounds(self, first: int, last: int) -> tuple[int, int] | None:
+        reach = 1 << (JUMP.width - 1)
+        if first < reach or last + reach > self.address_mask:
+            # A signed displacement can wrap around the architectural address space.
+            return None
+        return last - reach, first + reach - JUMP.alignment
+
+    def _encode_fields(
+        self, data: bytes, length: int, instruction_type: InstructionType,
+        origin: int, address: int, target: int | None,
+    ) -> tuple[bytes, DecodedFlow]:
         self._check_address(address)
-        data = instruction.original_data
-        original = self._resolve(data, instruction.address)
-        if original.length != instruction.length:
+        original = self._resolve(data, origin)
+        if original.length != length:
             raise ValueError("invalid RISC-V instruction length")
         word = int.from_bytes(data, "little")
         immediate = relative_immediate(word, original.length, self.xlen)
         if target is not None and (immediate is None or immediate is UPPER):
             raise ValueError("instruction has no direct branch or call target")
-        if address != instruction.address:
+        if address != origin:
             if original.constructor.template is None:
                 raise ValueError("cannot relocate an instruction with opaque semantics")
             if immediate is JUMP or (original.length == 4 and word & 0x7F == 0x67):
@@ -231,21 +299,30 @@ class _RISCVISA(ISA):
                 "ecall", "ebreak", "c.ebreak", "unimp", "dret", "mret", "sret", "uret",
             }:
                 raise ValueError("cannot relocate a trap or exception transfer")
+        resolved = original
         if immediate is not None:
             if target is None:
-                target = (instruction.address + immediate.decode(word)) & self.address_mask
+                target = (origin + immediate.decode(word)) & self.address_mask
             displacement = sign_extend((target - address) & self.address_mask, self.xlen)
             patched = immediate.encode(word, displacement)
             data = patched.to_bytes(original.length, "little")
+            if patched != word:
+                resolved = self._resolve(data, address)
 
-        resolved = self._resolve(data, address)
         flow = self.spec.decode_flow(data, address, resolved)
         expected_type = (
-            InstructionType.CALL if instruction.type is InstructionType.OUTLINE_RESULT_CALL
-            else instruction.type
+            InstructionType.CALL if instruction_type is InstructionType.OUTLINE_RESULT_CALL
+            else instruction_type
         )
         if flow.type is not expected_type:
             raise ValueError("re-encoding changed the instruction type")
+        return data, flow
+
+    def _encode(self, instruction: Instruction, address: int, target: int | None) -> Instruction:
+        data, flow = self._checked_encoding(
+            instruction.original_data, instruction.length, instruction.type,
+            instruction.address, address, target,
+        )
         return replace(instruction, address=address, original_data=data, flows_to=list(flow.flows_to))
 
     def relocate_instruction(self, instruction: Instruction, new_base_address: int) -> Instruction:
@@ -259,7 +336,10 @@ class _RISCVISA(ISA):
 
     def can_encode(self, instruction: Instruction, address: int) -> bool:
         try:
-            self._encode(instruction, address, None)
+            self._checked_encoding(
+                instruction.original_data, instruction.length, instruction.type,
+                instruction.address, address, None,
+            )
         except ValueError:
             return False
         return True

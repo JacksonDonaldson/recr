@@ -83,13 +83,16 @@ class ExtractionResult:
 
 @dataclass
 class _InstructionIndex:
-    """Position-invariant encodings mapped to the blocks containing them."""
+    """Index blocks by their complete sets of position-invariant encodings."""
 
     blocks: list[BasicBlock] = field(default_factory=list)
     positions: dict[int, int] = field(default_factory=dict)
     instructions: list[dict[bytes, Instruction]] = field(default_factory=list)
     postings: dict[bytes, set[int]] = field(default_factory=dict)
     lengths: dict[bytes, int] = field(default_factory=dict)
+    signatures: list[frozenset[bytes]] = field(default_factory=list)
+    signature_blocks: list[list[int]] = field(default_factory=list)
+    block_signatures: list[int] = field(default_factory=list)
 
 
 @dataclass(eq=False)
@@ -418,26 +421,30 @@ def find_basic_block_matches(
             break
         candidates.update(postings[encoding])
         remaining -= lengths[encoding]
-    if position is not None:
-        candidates.discard(position)
 
-    anchor_encodings = set(outlinable)
+    anchor_encodings = (
+        frozenset(outlinable) if position is None
+        else instruction_index.signatures[instruction_index.block_signatures[position]]
+    )
     groups: dict[frozenset[bytes], list[int]] = {}
-    for other in candidates:
-        common = frozenset(
-            anchor_encodings.intersection(instruction_index.instructions[other])
-        )
-        groups.setdefault(common, []).append(other)
+    for signature in candidates:
+        common = anchor_encodings & instruction_index.signatures[signature]
+        groups.setdefault(common, []).append(signature)
 
     encoding_order = {encoding: offset for offset, encoding in enumerate(outlinable)}
     matches: list[tuple[BasicBlockMatch, int, int]] = []
-    for encodings, positions in groups.items():
+    for encodings, signatures in groups.items():
         common_length = sum(lengths[encoding] for encoding in encodings)
-        estimated_savings = _outline_savings(
-            common_length, len(positions) + 1, call_length, ret_length,
-        )
-        if estimated_savings <= 0:
+        if common_length <= call_length:
             continue
+        block_groups = [instruction_index.signature_blocks[signature] for signature in signatures]
+        # The anchor is already part of its own full intersection.
+        includes_anchor = position is not None and encodings == anchor_encodings
+        sites = sum(map(len, block_groups)) + (0 if includes_anchor else 1)
+        estimated_savings = _outline_savings(common_length, sites, call_length, ret_length)
+        if sites < 2 or estimated_savings <= 0:
+            continue
+        positions = [other for group in block_groups for other in group if other != position]
 
         # The former visitation order was the first common encoding in the
         # anchor followed by the block's index position. Keep it for ties.
@@ -600,15 +607,29 @@ def convert_basic_block_to_given_instruction_order_and_minimize_instruction_dist
     indices = [index for index, item in enumerate(items) if id(item) in targets]
     if [id(items[index]) for index in indices] != target_ids:
         return None
+    reordered = _reorder_window(items, indices, target_instruction_order, isa)
+    if reordered is None:
+        return None
+    if reordered is items:
+        reordered = items.copy()
+    return _clone_block_with_instructions(basic_block, reordered), indices[0]
 
+
+def _reorder_window(
+    items: list[Instruction], indices: list[int], selected: list[Instruction], isa: ISA | None,
+) -> list[Instruction] | None:
     first, last = indices[0], indices[-1]
+    if last - first + 1 == len(selected):
+        return items
+    targets = set(indices)
     gaps: list[Instruction] = []
     gap_writes: set[StateSpace] = set()
     gap_reads: set[StateSpace] = set()
     # Every gap stays after the selected subsequence, so a later selected
     # instruction must be able to cross every gap seen up to that point.
-    for instruction in items[first + 1:last + 1]:
-        if id(instruction) in targets:
+    for index in range(first + 1, last + 1):
+        instruction = items[index]
+        if index in targets:
             if gaps and (
                 not _can_reorder(instruction, isa)
                 or not gap_writes.isdisjoint(instruction.depends_on)
@@ -623,8 +644,7 @@ def convert_basic_block_to_given_instruction_order_and_minimize_instruction_dist
             gap_writes.update(instruction.modifies)
             gap_reads.update(instruction.depends_on)
 
-    reordered = items[:first] + target_instruction_order + gaps + items[last + 1:]
-    return _clone_block_with_instructions(basic_block, reordered), first
+    return items[:first] + selected + gaps + items[last + 1:]
 
 
 def _can_reorder(instruction: Instruction, isa: "ISA | None") -> bool:
@@ -663,10 +683,17 @@ def _select_plans(
     index: _InstructionIndex,
 ) -> list[_ReplacementPlan]:
     """Choose non-overlapping matches and build their replacement plans."""
+    @lru_cache(maxsize=4096)
+    def instruction_positions(position: int) -> dict[int, int]:
+        return {id(item): offset for offset, item in enumerate(index.blocks[position].instructions)}
+
     @lru_cache(maxsize=_OUTLINE_WINDOW_CACHE_SIZE)
     def cached_window(position: int, order: tuple[bytes, ...]) -> _OutlineWindow | None:
         encodings = index.instructions[position]
-        return _outline_window(index.blocks[position], [encodings[key] for key in order], isa)
+        return _outline_window(
+            index.blocks[position], [encodings[key] for key in order], isa,
+            positions=instruction_positions(position),
+        )
 
     def find_window(block: BasicBlock, order: tuple[bytes, ...]) -> _OutlineWindow | None:
         return cached_window(index.positions[id(block)], order)
@@ -699,19 +726,30 @@ def _select_plans(
 
 def _outline_window(
     block: BasicBlock, selected: list[Instruction], isa: "ISA",
+    *, positions: dict[int, int] | None = None,
 ) -> _OutlineWindow | None:
     function = block.containing_function
     if function is None:
         return None
-    converted = convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance(
-        block, selected, selected, isa,
-    )
-    if converted is None:
+    if positions is None:
+        converted = convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance(
+            block, selected, selected, isa,
+        )
+        if converted is None:
+            return None
+        reordered, start = converted
+        instructions = reordered.instructions
+    else:
+        # The indexed order is the order in which these instructions already
+        # appear in the block. Only the intervening instructions can move.
+        indices = [positions[id(item)] for item in selected]
+        start = indices[0]
+        instructions = _reorder_window(block.instructions, indices, selected, isa)
+        if instructions is None:
+            return None
+    if not isa.can_outline_region(function, block, instructions, start, len(selected)):
         return None
-    reordered, start = converted
-    if not isa.can_outline_region(function, block, reordered.instructions, start, len(selected)):
-        return None
-    return _OutlineWindow(reordered.instructions, start, selected)
+    return _OutlineWindow(instructions, start, selected)
 
 
 def _make_replacement(
@@ -999,26 +1037,30 @@ def _try_place(
     if not call_sites:
         return None
 
+    # A candidate must be reachable from both endpoints before the encoder
+    # checks all of the sites and relocates the shared body.
+    first = min(call_sites, key=lambda site: site[2].address)
+    last = max(call_sites, key=lambda site: site[2].address)
+    bounds = isa.outline_call_target_bounds(first[2].address, last[2].address)
+    if bounds is not None and bounds[0] > bounds[1]:
+        return None
+    checks = [first]
+    if last is not first:
+        checks.append(last)
+    checks.extend(site for site in call_sites if site is not first and site is not last)
+
     needed = plan.extracted_length + isa.ret_instruction_length()
     candidates: list[tuple[int, int, int]] = []
     for index, free in enumerate(free_space):
         if free.size < needed:
             continue
         start = free.start.value
-        candidates.append((free.size, start, index))
         end_start = start + free.size - needed
-        if end_start != start:
+        if bounds is None or bounds[0] <= start <= bounds[1]:
+            candidates.append((free.size, start, index))
+        if end_start != start and (bounds is None or bounds[0] <= end_start <= bounds[1]):
             candidates.append((free.size, end_start, index))
     candidates.sort(key=lambda item: (item[0], item[1]))
-
-    # Try the farthest-separated call sites first. A candidate must be
-    # reachable from both before it is worth relocating the shared body.
-    first = min(call_sites, key=lambda site: site[2].address)
-    last = max(call_sites, key=lambda site: site[2].address)
-    checks = [first]
-    if last is not first:
-        checks.append(last)
-    checks.extend(site for site in call_sites if site is not first and site is not last)
 
     for _, address, index in candidates:
         destination = Address.absolute(address)
@@ -1271,6 +1313,7 @@ def _build_instruction_index(
 ) -> _InstructionIndex:
     """Index every outlinable instruction by its position-invariant encoding."""
     index = _InstructionIndex()
+    signature_ids: dict[frozenset[bytes], int] = {}
     for function in functions:
         for block in function.basic_blocks:
             position = len(index.blocks)
@@ -1278,9 +1321,18 @@ def _build_instruction_index(
             index.blocks.append(block)
             instructions = _first_by_encoding(block, isa, cache)
             index.instructions.append(instructions)
-            for encoding, instruction in instructions.items():
-                index.postings.setdefault(encoding, set()).add(position)
-                index.lengths.setdefault(encoding, instruction.length)
+            signature = frozenset(instructions)
+            signature_id = signature_ids.get(signature)
+            if signature_id is None:
+                signature_id = len(index.signatures)
+                signature_ids[signature] = signature_id
+                index.signatures.append(signature)
+                index.signature_blocks.append([])
+                for encoding, instruction in instructions.items():
+                    index.postings.setdefault(encoding, set()).add(signature_id)
+                    index.lengths.setdefault(encoding, instruction.length)
+            index.block_signatures.append(signature_id)
+            index.signature_blocks[signature_id].append(position)
     return index
 
 

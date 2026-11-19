@@ -252,7 +252,7 @@ def _format_addresses(addresses: list[Address]) -> str:
 
 @dataclass(frozen=True)
 class Reference:
-    """A reference between two addresses."""
+    """A reference between two addresses, possibly inferred outside the CFG."""
 
     # ``from`` is a Python keyword, so the field is named ``from_``.
     from_: Address

@@ -1,13 +1,9 @@
 """Shared on-disk cache for codezip's derived, disposable data.
 
-Two things live here: the compiled CUDA kernel library and the parsed SLEIGH
-specification.  Entries are keyed by a content digest, so changing the input
-produces a different entry rather than a stale one.  Writers go through a
-temporary file and an atomic rename, so concurrent runs either see a complete
-entry or none at all.
-
-The directory name predates the parse cache; everything derived and
-disposable lives under this one root.
+The compiled CUDA library and parsed SLEIGH specification live under one
+root. Raw recr compaction uses a private per-user directory alongside it.
+Entries are keyed by a content digest. Writers go through a temporary file
+and an atomic rename so concurrent runs see only complete entries.
 """
 
 from __future__ import annotations
@@ -28,9 +24,7 @@ def entry_path(namespace: str, key: str, suffix: str) -> Path:
 def replace(target: Path, writer: Callable[[Path], None]) -> None:
     """Fill ``target`` through a temporary file, then rename it into place."""
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.with_name(f".{os.getpid()}-{target.name}")
-    try:
+    with tempfile.TemporaryDirectory(dir=target.parent) as directory:
+        temporary = Path(directory) / target.name
         writer(temporary)
         os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)

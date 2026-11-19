@@ -16,10 +16,11 @@ import yaml
 
 from binary.binary import Binary
 import codezip
-from input_parser import ParseError, parse_re_file
+from input_parser import ParseError, ParseResult, parse_re_file
 from ir import Address, FreeSpace, Function, Instruction, InstructionType
 from isa.isa import ISA
 from parsers.yaml import EXTENSIONS as YAML_EXTENSIONS
+from recompiler import compaction_cache, riscv
 from recompiler.compiler import HOOK_PREFIX, compile_rec, rewrite_hooks
 from recompiler.exports import Exports, read_exports
 from recompiler.placement import Fragment, Object, Space, place
@@ -159,6 +160,50 @@ def _trampoline(hook: Hook, space: Space, isa: ISA, target: Target) -> Fragment:
     return Fragment(address, data)
 
 
+def _compact(
+    options: argparse.Namespace, parsed: ParseResult, raw: RawInput | None,
+    protected: frozenset[int], warnings: WarningOptions, hooks: list[Hook],
+) -> compaction_cache.Receipt:
+    def warn_extent(start: int, covered_end: int, message: str) -> None:
+        for hook in hooks:
+            if hook.start < covered_end and start < hook.resume:
+                raise ValueError(f"{message}. The rejected extent overlaps hook {hook.name!r}")
+        warnings.emit(message, INVALID_FUNCTION_EXTENT)
+
+    path = compaction_cache.entry_path(raw, protected) if raw is not None and not options.verbose else None
+    if raw is not None and path is not None:
+        cached = compaction_cache.load(path)
+        if cached is not None:
+            for event in cached.warnings:
+                if isinstance(event, str):
+                    warnings.emit(event)
+                else:
+                    warn_extent(*event)
+            cached.apply(raw.binary)
+            return cached.receipt
+
+    events: list[compaction_cache.WarningEvent] = []
+
+    def warn(message: str) -> None:
+        warnings.emit(message)
+        events.append(message)
+
+    def warn_invalid_extent(function: Function, error: FunctionExtentError) -> None:
+        event = function.start_address, error.covered_end, str(error)
+        warn_extent(*event)
+        events.append(event)
+
+    if codezip.run_pipeline(
+        options, protected_entries=protected, binary=raw.binary if raw is not None else None,
+        parsed=parsed, warn=warn, warn_invalid_extent=warn_invalid_extent,
+    ):
+        raise ValueError("codezip could not prepare the original binary")
+    receipt = yaml.safe_load(options.receipt.read_text(encoding="utf-8"))
+    if raw is not None and path is not None:
+        compaction_cache.store(path, raw.binary, receipt, events)
+    return receipt
+
+
 def _build(
     args: argparse.Namespace, flags: list[str], directory: Path, raw: RawInput | None,
     warnings: WarningOptions,
@@ -213,6 +258,11 @@ def _build(
         name: exports.address(name, ignored_entry=ignored_entries.get(name))
         for name in sorted(extension.imports())
     }
+    if target.machine == "EM_RISCV":
+        # Imports of hooked functions resolve to trampolines whose addresses
+        # are assigned after compaction.
+        fixed_imports = {name: address for name, address in imports.items() if name not in names}
+        riscv.validate_fixed_hi20(extension, fixed_imports, target.bits)
     protected = frozenset((*imports.values(), *(f.start_address for name in names for f in exports.functions[name])))
     if raw is not None:
         protected |= raw.protected_entries
@@ -224,20 +274,7 @@ def _build(
         "--isa", target.isa,
     ])
 
-    def warn_invalid_extent(function: Function, error: FunctionExtentError) -> None:
-        for hook in hooks:
-            if hook.start < error.covered_end and function.start_address < hook.resume:
-                raise ValueError(f"{error}. The rejected extent overlaps hook {hook.name!r}")
-        warnings.emit(str(error), INVALID_FUNCTION_EXTENT)
-
-    if codezip.run_pipeline(
-        options, protected_entries=protected,
-        binary=raw.binary if raw is not None else None,
-        parsed=parsed, warn=warnings.emit,
-        warn_invalid_extent=warn_invalid_extent,
-    ):
-        raise ValueError("codezip could not prepare the original binary")
-    receipt = yaml.safe_load(receipt_path.read_text(encoding="utf-8"))
+    receipt = _compact(options, parsed, raw, protected, warnings, hooks)
     free = [(item["address"], item["length"]) for item in receipt["freed"]]
     space = Space(free, exports)
     image = original if raw is not None else Binary(compacted)

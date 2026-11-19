@@ -539,6 +539,9 @@ def test_matching_keeps_full_intersections_and_skips_impossible_orders(
     assert list(match.blocks) == blocks[:3]
     assert match.encodings == {first, second, third}
     assert match.estimated_savings == 14
+    other_match, = outliner.find_basic_block_matches(blocks[1], index, x86_64_isa)
+    assert other_match.blocks == match.blocks
+    assert [item.original_data for item in other_match.common_instructions] == [first, third, second]
 
     attempted = []
     method = "convert_basic_block_to_given_instruction_order_and_minimize_instruction_distance"
@@ -594,9 +597,9 @@ def test_layout_retry_reuses_functions_unaffected_by_a_rejected_plan(x86_64_isa,
 
 def test_placement_checks_riscv_call_reach_before_relocating_body(monkeypatch):
     isa = create_isa("riscv64")
-    binary = _MemoryBinary()
+    binary = _MemoryBinary(0x202010)
     function = _decode_function(
-        isa, binary, "source", 0x2000, bytes.fromhex("1305150067800000"),
+        isa, binary, "source", 0x202000, bytes.fromhex("1305150067800000"),
     )
     block, = function.basic_blocks
     call = isa.make_call_instruction()
@@ -606,13 +609,21 @@ def test_placement_checks_riscv_call_reach_before_relocating_body(monkeypatch):
     shared = BasicBlock(start_location=Address.absolute(0))
     plan = outliner._ReplacementPlan(match, [], shared, block.instructions[:1])
     relocated = []
+    attempted = []
     relocate = outliner._relocate
+    set_target = isa.set_instruction_target
 
     def record(isa, instruction, address):
         relocated.append(address)
         return relocate(isa, instruction, address)
 
     monkeypatch.setattr(outliner, "_relocate", record)
+
+    def record_target(instruction, destination):
+        attempted.append(destination.value)
+        return set_target(instruction, destination)
+
+    monkeypatch.setattr(isa, "set_instruction_target", record_target)
     last_reachable = call.address + (1 << 20) - 2
     for destination in (last_reachable + 2, last_reachable):
         placement = outliner._try_place(
@@ -621,10 +632,12 @@ def test_placement_checks_riscv_call_reach_before_relocating_body(monkeypatch):
         if destination > last_reachable:
             assert placement is None
             assert relocated == []
+            assert attempted == []
         else:
             assert placement is not None
             assert placement.patches[0][2].flows_to[0] == Address.absolute(destination)
             assert relocated == [destination]
+            assert attempted == [destination]
 
 
 def test_unsupported_isa_returns_none() -> None:

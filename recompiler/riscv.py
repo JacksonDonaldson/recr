@@ -83,6 +83,27 @@ def _upper(value: int, xlen: int) -> tuple[int, int]:
     return high, value - rounded
 
 
+def _encode_upper(word: int, value: int, xlen: int) -> tuple[int, int]:
+    high, low = _upper(value, xlen)
+    return UPPER.encode(word, high), low
+
+
+def validate_fixed_hi20(object_: Object, imports: dict[str, int], xlen: int) -> None:
+    """Reject absolute upper immediates whose targets are fixed before placement."""
+    for section in object_.sections.values():
+        for relocation in section.relocations:
+            if relocation.kind != HI20:
+                continue
+            symbol = relocation.symbol
+            if symbol.section == "SHN_ABS":
+                address = symbol.offset
+            elif symbol.section == "SHN_UNDEF" and symbol.name in imports:
+                address = imports[symbol.name]
+            else:
+                continue
+            _encode_upper(0, address + relocation.addend, xlen)
+
+
 def _patch_low(section: Section, address: int, value: int, store: bool) -> None:
     word = section.read_word(address, 4)
     low = value & 0xFFF
@@ -135,9 +156,9 @@ def apply(
         patched = _IMMEDIATES[kind].encode(word, value - place)
         section.write_word(place, patched, width)
     elif kind in CALL_PAIRS or kind in (HI20, PCREL_HI20):
-        high, low = _upper(value if kind == HI20 else value - place, xlen)
         word = section.read_word(place, 4)
-        section.write_word(place, UPPER.encode(word, high), 4)
+        patched, low = _encode_upper(word, value if kind == HI20 else value - place, xlen)
+        section.write_word(place, patched, 4)
         if kind in CALL_PAIRS:
             if section.address(offset + 4) != place + 4:
                 raise ValueError(f"split AUIPC/JALR pair in {section.name}")

@@ -12,7 +12,7 @@ import pytest
 
 from ir import Address, InstructionType, StateSpaceKind
 from isa import create_isa
-from isa.isa import DecodedFlow
+from isa.isa import DecodedFlow, ISA
 from isa.sleigher.sla import OP_INT_AND, SlaSpec
 
 
@@ -430,6 +430,28 @@ def test_batched_decode_skips_malformed_forms_and_reads_across_scan_end(backend)
         assert list(backend.decode_range(image, start, end)) == expected
     assert list(backend.decode_range(image, 0x1000, 0x100B))[-1] is None
     assert backend.decode_flows(image, 0x1006).type is InstructionType.CALL
+
+
+def test_targeted_control_flow_scan_matches_full_decode(backend):
+    image = Image(bytes.fromhex("63040000 6700c0ff ef004000 01a0 1f00"))
+    far = (1 << (backend.pointer_size * 8)) - 4
+    assert list(backend.iter_control_flow_references(
+        image, 0x1000, 0x1010, {0x1004, 0x1008, 0x100C, far},
+    )) == [(0x1000, 0x1008), (0x1000, 0x1004), (0x1004, far), (0x100C, 0x100C)]
+
+    # Visit every possible first parcel, including reserved encodings and
+    # starts of four-byte instructions.
+    corpus = b"".join(word.to_bytes(2, "little") for word in range(1 << 16))
+    image = Image(corpus)
+    targets = {0, far, *range(image.base, image.base + len(corpus), 46)}
+    for start, end in (
+        (image.base, image.base + len(corpus) - 1),
+        (image.base + 1, image.base + 0x800),
+        (image.base - 1, image.base + 16),
+    ):
+        found = list(backend.iter_control_flow_references(image, start, end, targets))
+        expected = list(ISA.iter_control_flow_references(backend, image, start, end, targets))
+        assert found == expected
 
 
 def test_riscv_pipeline_keeps_materialized_addresses(tmp_path, backend):

@@ -103,6 +103,7 @@ ISA contract:
         function can_reorder_across(instruction) -> bool
         function add_extra_stack_space(instruction, pointer_size) -> Instruction
         function make_call_instruction() -> Instruction
+        function outline_call_target_bounds(first, last) -> (min, max) | None
         function make_return_instruction() -> Instruction
         function uses_red_zone(function) -> bool
         function can_outline_region(function, block, instructions,
@@ -113,6 +114,8 @@ ISA contract:
         function required_length(instruction, address) -> uint
         function try_interpret_as_pointer(binary, offset) -> set[Address]
         function iter_pointer_references(binary, start, end, targets)
+                -> Iterator[(address, target)]
+        function iter_control_flow_references(binary, start, end, targets)
                 -> Iterator[(address, target)]
         function iter_address_references(binary, start, end, targets)
                 -> Iterator[(address, target)]
@@ -126,6 +129,11 @@ ISA contract:
         instruction's final length.  make_return_instruction returns the return
         used to end a shared block.  The outliner patches the call's target with
         set_instruction_target after placing the shared block.
+
+        outline_call_target_bounds can give inclusive bounds for a destination
+        reachable from both source addresses. An empty interval rejects all
+        destinations. None leaves the search unrestricted. Every candidate
+        still requires the final set_instruction_target check.
 
         uses_red_zone tracks the stack depth through the function's control-flow
         graph.  It returns true when a memory access is below the current RSP,
@@ -181,6 +189,10 @@ ISA contract:
         iter_pointer_references yields (address, target) for every address in
         [start, end) whose pointer readings include a value in targets.  It
         matches calling try_interpret_as_pointer at each address.
+
+        iter_control_flow_references yields absolute targets in targets from
+        decode_control_flow_range in the same order. It omits fallthrough
+        edges unless the decoded instruction is a branch.
 
         iter_address_references yields (address, target) for target addresses
         formed across instruction sequences in [start, end). The source is
