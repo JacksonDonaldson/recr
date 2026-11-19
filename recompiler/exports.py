@@ -233,6 +233,9 @@ def read_ghidra_exports(
         datatype = data_types.get(raw_address)
         if not datatype:
             continue
+        if datatype == "string":
+            prototypes[name].add(f"extern char {name}[];")
+            continue
         array = re.fullmatch(r"(.+?)\s*((?:\[\d+\])+)", datatype)
         datatype = _type(array[1] if array else datatype, typedefs)
         if datatype:

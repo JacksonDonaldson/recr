@@ -117,7 +117,8 @@ GCC accepts extra compiler flags, object files, and static libraries after
 `--`. Before `--`, `-Wall` enables all recr warnings and `-Werror` makes
 enabled warnings fatal. Recr also passes both flags to GCC. Calls can use
 shared-library imports already present in the original ELF. Recr uses Ghidra's
-scalar, pointer, and array types for implicit declarations.
+scalar, pointer, and array types for implicit declarations. Ghidra `string`
+data is declared as a C `char[]`.
 Each hook must match the original function's prototype. Recr uses the
 prototype on the selected Ghidra function entry to declare the original for
 calls from the extension. Ghidra does not always include function prototypes
@@ -159,6 +160,7 @@ regions:
   - {start_address: 0x400000, file_offset: 0x10, length: 0x70}
   - {start_address: 0x410000, file_offset: 0x80, length: 0x100, permissions: rwx}
   - {start_address: 0x420000, file_offset: 0x180, length: 0x10, permissions: rw}
+  - {start_address: 0x420010, length: 0x100, permissions: rw}
 entry_points: [0x400000]
 functions:
   _start: {start_address: 0x400000, length: 0x20}
@@ -171,18 +173,21 @@ symbols:
   counter: {address: 0x420000, declaration: "extern int counter;"}
 ```
 
-Map each region with its virtual start, file offset, and byte length. Regions
-may appear in any order and must be disjoint in the file and in virtual memory.
-Permissions default to `rx`. Include data regions containing pointers so
-codezip can scan them for live functions. List reset, interrupt, and other
-entry addresses that firmware can reach from outside the mapped image under
-`entry_points` so codezip preserves their functions.
+Give each region a virtual start and byte length. Provide `file_offset` for
+file-backed regions. Omit it for runtime-only memory such as BSS. Recr can
+resolve Ghidra data symbols in those regions. Scanning, hook placement, and
+binary writes are limited to file-backed regions. Regions may appear in any
+order and must be disjoint in virtual memory and, where backed, in the file.
+Permissions default to `rx`. Include file-backed data regions containing
+pointers so codezip can scan them for live functions. List reset, interrupt,
+and other entry addresses that firmware can reach from outside the mapped
+image under `entry_points` so codezip preserves their functions.
 
 Use `functions` to identify hooks and give codezip the extents it can analyze
 for reclaimable space. Give every hooked function its original C prototype in
 `declaration` when the manifest supplies the function records. Recr skips
-functions whose full extent falls outside a single executable region and
-warns by default. Use
+functions whose full extent falls outside a single file-backed executable
+region and warns by default. Use
 `-Wno-function-outside-executable-range` to suppress this warning, including
 with `-Wall` or `-Werror`. Recr also skips functions shorter than the target's
 instruction alignment and warns by default. Use `-Wno-skip-short-functions`

@@ -36,16 +36,16 @@ def _integer(value: object, label: str, minimum: int = 0) -> int:
     return value
 
 
-def _regions(records: object, address_limit: int) -> list[Region]:
+def _regions(records: object, address_limit: int) -> tuple[list[Region], list[Segment]]:
     if not isinstance(records, list) or not records:
         raise ValueError("'regions' must be a nonempty list of mappings")
-    regions = []
+    file_regions = []
+    segments = []
     for index, record in enumerate(records, 1):
         label = f"region {index}"
         if not isinstance(record, dict):
             raise ValueError(f"{label} must be a mapping")
         start = _integer(record.get("start_address"), f"{label} start_address")
-        offset = _integer(record.get("file_offset"), f"{label} file_offset")
         length = _integer(record.get("length"), f"{label} length", 1)
         if start + length > address_limit:
             raise ValueError(f"{label} extends past the target address space")
@@ -53,8 +53,18 @@ def _regions(records: object, address_limit: int) -> list[Region]:
         if permissions not in ("r", "rw", "rx", "rwx"):
             raise ValueError(f"{label} permissions must be r, rw, rx, or rwx")
         flags = 4 | (2 if "w" in permissions else 0) | (1 if "x" in permissions else 0)
-        regions.append(Region(start, offset, length, flags))
-    return regions
+        file_size = 0
+        if "file_offset" in record:
+            offset = _integer(record["file_offset"], f"{label} file_offset")
+            file_regions.append(Region(start, offset, length, flags))
+            file_size = length
+        segments.append(Segment(start, file_size, length, flags))
+
+    virtual_order = sorted(segments, key=lambda segment: segment.start)
+    for left, right in zip(virtual_order, virtual_order[1:]):
+        if left.start + left.memory_size > right.start:
+            raise ValueError(f"raw regions overlap in virtual address space at {right.start:#x}")
+    return file_regions, segments
 
 
 def _symbols(records: object, address_limit: int) -> dict[str, int]:
@@ -165,16 +175,15 @@ def read_raw_input(
             raise ValueError(f"the manifest ISA disagrees with the {parsed.isa} Ghidra export")
     target = raw_target(parsed.isa, document.get("riscv"))
     address_limit = 1 << target.bits
-    regions = _regions(document.get("regions"), address_limit)
+    file_regions, segments = _regions(document.get("regions"), address_limit)
     symbol_records = document.get("symbols", {})
     symbols = _symbols(symbol_records, address_limit)
-    binary = RawBinary(manifest.parent / path, regions, symbols)
+    binary = RawBinary(manifest.parent / path, file_regions, symbols)
     parsed.functions = _check_functions(binary, parsed.functions, target.alignment, warn)
     entries = _entry_points(binary, document.get("entry_points", []))
     declared_references = entries | set(symbols.values())
     points = sorted(declared_references)
     protected = set()
-    segments = [Segment(r.start_address, r.length, r.length, r.flags) for r in regions]
     if xml is None:
         functions = {f.name: [f] for f in parsed.functions}
         addresses = {f.name: {f.start_address} for f in parsed.functions}

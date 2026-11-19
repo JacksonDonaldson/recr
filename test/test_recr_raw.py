@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from recr import main
+from recompiler.placement import Space
 from recompiler.raw import read_raw_input
 from test.test_recr_riscv import RISCV64_CC, _qemu_command
 
@@ -188,6 +189,71 @@ def _write_ghidra_export(firmware: Firmware, output: Path, *, transform_name: st
     ET.ElementTree(root).write(output)
 
 
+def test_recr_imports_strings_and_runtime_only_data(
+    firmware: Firmware, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    with firmware.wrapper.open("rb") as stream:
+        elf = ELFFile(stream)
+        bss = elf.get_section_by_name(".bss")
+        assert bss["sh_type"] == "SHT_NOBITS"
+        runtime_start = bss["sh_addr"]
+        symtab = elf.get_section_by_name(".symtab")
+        message, = symtab.get_symbol_by_name("notify_format")
+        counter, = symtab.get_symbol_by_name("runtime_counter")
+        assert counter["st_value"] == runtime_start
+        runtime_size = counter["st_size"]
+        message_address = message["st_value"]
+    runtime_end = runtime_start + runtime_size
+    export = tmp_path / "firmware.xml"
+    _write_ghidra_export(firmware, export)
+    xml = ET.parse(export)
+    for name, address, datatype in (
+        ("notify_format", message_address, "string"),
+        ("runtime_counter", runtime_start, "int"),
+        ("past_runtime_region", runtime_end, "int"),
+    ):
+        ET.SubElement(xml.find("DATA"), "DEFINED_DATA", ADDRESS=f"ram:{address:x}", DATATYPE=datatype, SIZE="0x4")
+        ET.SubElement(xml.find("SYMBOL_TABLE"), "SYMBOL", NAME=name, ADDRESS=f"ram:{address:x}")
+    phantom = ET.SubElement(xml.find("FUNCTIONS"), "FUNCTION", NAME="runtime_function", ENTRY_POINT=f"{runtime_start:x}")
+    ET.SubElement(phantom, "ADDRESS_RANGE", START=f"{runtime_start:x}", END=f"{runtime_end - 1:x}")
+    xml.write(export)
+    manifest = {key: value for key, value in firmware.layout.items() if key not in {"functions", "symbols"}}
+    # Even an executable region cannot provide code or free space without backing bytes.
+    manifest["regions"] = [
+        *manifest["regions"], {"start_address": runtime_start, "length": runtime_size, "permissions": "rwx"},
+    ]
+    firmware.manifest.write_text(yaml.safe_dump(manifest), encoding="utf-8")
+    raw = read_raw_input(firmware.manifest, export, warn=lambda message, option: None)
+    assert raw.exports.address("runtime_counter") == runtime_start
+    assert raw.exports.declarations["runtime_counter"] == "extern int runtime_counter;"
+    assert "past_runtime_region" not in raw.exports.addresses
+    assert (runtime_start, runtime_size) not in raw.binary.mapped_ranges()
+    assert not Space([(runtime_start, runtime_size)], raw.exports).ranges
+    original = firmware.binary.read_bytes()
+    with pytest.raises(ValueError, match="not mapped"):
+        raw.binary.write(runtime_start, b"\xff" * runtime_size)
+    assert raw.binary.image_bytes() == original
+
+    hook = tmp_path / "hook.re.c"
+    hook.write_text('''int @transform(int value) {
+        return transform(value) + runtime_counter + (notify_format[0] == 'Z' ? 40 : 0);
+    }
+    ''', encoding="utf-8")
+    output, receipt = tmp_path / "output", tmp_path / "receipt.yaml"
+    assert main([
+        str(firmware.manifest), str(export), str(hook), "--cc", shlex.join(firmware.compiler),
+        "-o", str(output), "-r", str(receipt),
+    ]) == 0
+    assert "skipping raw function 'runtime_function'" in capsys.readouterr().err
+    assert firmware.run(output, tmp_path / "hooked") == 65
+    assert firmware.binary.read_bytes() == original
+    assert len(output.read_bytes()) == len(original)
+    ranges = yaml.safe_load(receipt.read_text(encoding="utf-8"))
+    for item in ranges["freed"] + ranges["modified"]:
+        start = item["address"]
+        assert start >= runtime_end or start + item["length"] <= runtime_start
+
+
 @pytest.mark.parametrize(("flags", "level", "typed"), [
     pytest.param([], "warning", True, id="default"),
     pytest.param([], "warning", False, id="untyped"),
@@ -317,17 +383,21 @@ def test_recr_rejects_unsafe_ghidra_reference(
     ([{"start_address": 0x1000, "file_offset": 0, "length": 4},
       {"start_address": 0x1002, "file_offset": 4, "length": 4}], "overlap in virtual address space"),
     ([{"start_address": 0x1000, "file_offset": 0, "length": 4},
+      {"start_address": 0x1003, "length": 4, "permissions": "rw"}], "overlap in virtual address space"),
+    ([{"start_address": 0x1000, "file_offset": 0, "length": 4},
       {"start_address": 0x3000, "file_offset": 2, "length": 4}], "overlap in the file"),
 ])
 def test_recr_rejects_invalid_raw_mappings(tmp_path: Path, capsys, regions: list[dict], reason: str) -> None:
-    binary, manifest, output = (tmp_path / name for name in ("image.bin", "image.yml", "output"))
+    binary, manifest, output, receipt = (tmp_path / name for name in ("image.bin", "image.yml", "output", "receipt"))
     binary.write_bytes(b"12345678")
     document = {"binary": binary.name, "isa": "x86_64", "regions": regions}
     manifest.write_text(yaml.safe_dump(document), encoding="utf-8")
     output.write_bytes(b"previous output")
-    assert main([str(manifest), str(HOOK), "-o", str(output)]) == 1
+    receipt.write_bytes(b"previous receipt")
+    assert main([str(manifest), str(HOOK), "-o", str(output), "-r", str(receipt)]) == 1
     assert reason in capsys.readouterr().err
     assert output.read_bytes() == b"previous output"
+    assert receipt.read_bytes() == b"previous receipt"
 
 
 @pytest.mark.parametrize(("metadata", "reason"), [

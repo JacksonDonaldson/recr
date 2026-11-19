@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from parsers import ghidra_xml
-from recompiler.exports import read_ghidra_exports
+from recompiler.exports import Segment, read_ghidra_exports
 from recompiler.target import X86_64, Target
 
 
@@ -69,3 +69,23 @@ def test_ghidra_namespaced_function_keeps_its_name_and_typed_definition(tmp_path
     assert exports.functions == {"AppVprintf": [function]}
     assert exports.address("AppVprintf") == 0x1000
     assert exports.declarations == {"AppVprintf": "extern int AppVprintf(char *);"}
+
+
+def test_ghidra_string_data_import_is_a_character_array(tmp_path: Path) -> None:
+    xml = tmp_path / "program.xml"
+    xml.write_text(
+        """<PROGRAM>
+          <DATA>
+            <DEFINED_DATA ADDRESS="ram:1008" DATATYPE="string" DATATYPE_NAMESPACE="/" SIZE="0x4" />
+          </DATA>
+          <SYMBOL_TABLE>
+            <SYMBOL NAME="notify_format" ADDRESS="ram:1008" />
+          </SYMBOL_TABLE>
+        </PROGRAM>""",
+        encoding="utf-8",
+    )
+
+    exports = read_ghidra_exports(xml, [], [Segment(0x1000, 16, 16, 4)], X86_64)
+
+    assert exports.address("notify_format") == 0x1008
+    assert exports.declarations["notify_format"] == "extern char notify_format[];"

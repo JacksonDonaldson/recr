@@ -6,6 +6,9 @@
     .type dispatched, @function
 _start:
 #ifdef __riscv
+    lla t0, runtime_counter
+    li t1, 11
+    sw t1, 0(t0)
     li a0, 7
     jal ra, transform_thunk
     lla t0, dispatch
@@ -14,6 +17,7 @@ _start:
     li a7, 93
     ecall
 #else
+    movl $11, runtime_counter(%rip)
     mov $7, %edi
     call transform_thunk
     mov %eax, %edi
@@ -73,5 +77,18 @@ counter:
     .size counter, .-counter
 dispatch:
     .quad dispatched
+    .global notify_format
+    .type notify_format, @object
+notify_format:
+    .asciz "Zed"
+    .size notify_format, .-notify_format
+
+    .bss
+    .balign 4
+    .global runtime_counter
+    .type runtime_counter, @object
+runtime_counter:
+    .zero 4
+    .size runtime_counter, .-runtime_counter
 
     .section .note.GNU-stack, "", @progbits

@@ -115,6 +115,7 @@ Implemented:
   call trampolines. GCC checks each hook against the selected original's
   prototype, which also declares the original for calls from the extension.
   The prototype comes from the Ghidra function entry or the raw manifest.
+  Ghidra `string` data imports are declared as C character arrays.
   RISC-V `__thiscall` entries use the exported `this` structure pointer in
   `a0` as the first C parameter and retain the variadic marker.
   Missing Ghidra prototypes trigger a diagnostic with instructions to commit
@@ -127,12 +128,14 @@ Implemented:
   AUIPC/JALR call pairs together. The RISC-V tests run the RV64 sample and
   execute hooked RV64 and RV32 ELF fixtures under QEMU.
 - `recr <manifest.yaml> [<functions.xml>] <hooks.rec>` also accepts static
-  raw images. The manifest names the image, gives disjoint file-backed
-  virtual regions with permissions, and lists entry points to preserve.
+  raw images. The manifest names the image, gives disjoint virtual regions
+  with permissions, and lists entry points to preserve. Regions without a
+  `file_offset` allow Ghidra data imports. Only file-backed regions are
+  scanned, patched, or used for placement.
   Functions and C declarations come from the manifest or a Ghidra export.
   Functions shorter than the target's instruction alignment or extending
-  outside one executable region are skipped with warnings. Recr accepts
-  `-Wno-skip-short-functions` and `-Wno-function-outside-executable-range`
+  outside one file-backed executable region are skipped with warnings. Recr
+  accepts `-Wno-skip-short-functions` and `-Wno-function-outside-executable-range`
   alongside `-Wall` and `-Werror` before `--`. RISC-V raw images declare
   their architecture and ABI. Native x86-64 and QEMU RV64 tests build static
   fixtures, patch the raw bytes, and execute them at their mapped addresses
@@ -343,7 +346,8 @@ Implemented:
   `pcre2grep` 2146 bytes in 48 ranges (2661 bytes total). The pre-red-zone
   baseline was 360 and 2105 bytes (2465 total).
   The default codezip outputs and receipts are byte-identical on these inputs
-  with recr's protected entries, raw-image function filtering, and warning controls.
+  with recr's protected entries, raw-image function filtering, warning controls,
+  and runtime-only region support.
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,

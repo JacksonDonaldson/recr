@@ -322,7 +322,7 @@
 
 ]>
 <PROGRAM NAME="combined" EXE_PATH="/C:/MyStuff/reverse_engineering/ring/ring_research/ring/artifacts/sep_3_unpacked/00_fwbl/riscv.bin" EXE_FORMAT="Raw Binary" IMAGE_BASE="ram:b0280000">
-    <INFO_SOURCE USER="Jaxn8" TOOL="Ghidra 12.1" TIMESTAMP="Wed Nov 18 20:16:21 EST 2026" />
+    <INFO_SOURCE USER="Jaxn8" TOOL="Ghidra 12.1" TIMESTAMP="Wed Nov 18 20:31:11 EST 2026" />
     <PROCESSOR NAME="RISCV" LANGUAGE_PROVIDER="RISCV:LE:64:default:gcc" ENDIAN="little" />
     <DATATYPES>
         <TYPE_DEF NAME="__gnuc_va_list" NAMESPACE="/stdarg.h" DATATYPE="void *" DATATYPE_NAMESPACE="/" />
@@ -54584,8 +54584,8 @@
         <DEFINED_DATA ADDRESS="ram:b0200c28" DATATYPE="undefined8" DATATYPE_NAMESPACE="/" SIZE="0x8" />
         <DEFINED_DATA ADDRESS="ram:b0200c30" DATATYPE="undefined8" DATATYPE_NAMESPACE="/" SIZE="0x8" />
         <DEFINED_DATA ADDRESS="ram:b0200c38" DATATYPE="undefined8" DATATYPE_NAMESPACE="/" SIZE="0x8" />
-        <DEFINED_DATA ADDRESS="ram:b0200c40" DATATYPE="undefined4" DATATYPE_NAMESPACE="/" SIZE="0x4" />
-        <DEFINED_DATA ADDRESS="ram:b0200c44" DATATYPE="undefined4" DATATYPE_NAMESPACE="/" SIZE="0x4" />
+        <DEFINED_DATA ADDRESS="ram:b0200c40" DATATYPE="uint" DATATYPE_NAMESPACE="/" SIZE="0x4" />
+        <DEFINED_DATA ADDRESS="ram:b0200c44" DATATYPE="float" DATATYPE_NAMESPACE="/" SIZE="0x4" />
         <DEFINED_DATA ADDRESS="ram:b0200c48" DATATYPE="undefined1" DATATYPE_NAMESPACE="/" SIZE="0x1" />
         <DEFINED_DATA ADDRESS="ram:b0200c50" DATATYPE="undefined8" DATATYPE_NAMESPACE="/" SIZE="0x8" />
         <DEFINED_DATA ADDRESS="ram:b0200c58" DATATYPE="undefined8" DATATYPE_NAMESPACE="/" SIZE="0x8" />
@@ -116158,6 +116158,7 @@ WriteDevice), slots 5/6 ACS dtors. Slots 13-15 = storage overrides: 13 WriteRaw,
         <SYMBOL ADDRESS="ram:b01f4e98" NAME="inv_13" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:b01fa288" NAME="main_app_stack_canary" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:b0200c40" NAME="NotifyOutputEnabled" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
+        <SYMBOL ADDRESS="ram:b0200c44" NAME="NotifyOutputRunning" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:b0203670" NAME="g_fm_instances" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:b02036a0" NAME="g_fm_partitions" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:b02037a0" NAME="g_spi_flash_size" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
@@ -118380,6 +118381,7 @@ WriteDevice), slots 5/6 ACS dtors. Slots 13-15 = storage overrides: 13 WriteRaw,
         <SYMBOL ADDRESS="ram:c0c9c0bc" NAME="switchdataD_ram:c0c9c0bc" NAMESPACE="switchD_ram:c0c11144::" TYPE="global" SOURCE_TYPE="ANALYSIS" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:c0c9c110" NAME="switchdataD_ram:c0c9c110" NAMESPACE="switchD_ram:c0c112c6::" TYPE="global" SOURCE_TYPE="ANALYSIS" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:c0c9c124" NAME="switchdataD_ram:c0c9c124" NAMESPACE="switchD_ram:c0c12332::" TYPE="global" SOURCE_TYPE="ANALYSIS" PRIMARY="y" />
+        <SYMBOL ADDRESS="ram:c0c9c170" NAME="NotifyRecordFormat" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:c0c9c614" NAME="switchdataD_ram:c0c9c614" NAMESPACE="switchD_ram:c0c153b8::" TYPE="global" SOURCE_TYPE="ANALYSIS" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:c0c9d5dc" NAME="switchdataD_ram:c0c9d5dc" NAMESPACE="switchD_ram:c0c18702::" TYPE="global" SOURCE_TYPE="ANALYSIS" PRIMARY="y" />
         <SYMBOL ADDRESS="ram:c0c9d950" NAME="CShell_CommandNameDescriptionTable" NAMESPACE="" TYPE="global" SOURCE_TYPE="USER_DEFINED" PRIMARY="y" />
@@ -171682,8 +171684,13 @@ if code&lt;0 store -code at *exit_status_cell target first. Never returns.</REGU
             <STACK_FRAME LOCAL_VAR_SIZE="0x0" PARAM_OFFSET="0x0" RETURN_ADDR_SIZE="0x0" />
         </FUNCTION>
         <FUNCTION ENTRY_POINT="ram:c0c131c8" NAME="0c_networking::NotifyWriteRecord" LIBRARY_FUNCTION="n">
+            <RETURN_TYPE DATATYPE="void" DATATYPE_NAMESPACE="/" SIZE="0x0" />
             <ADDRESS_RANGE START="ram:c0c131c8" END="ram:c0c13323" />
+            <TYPEINFO_CMT>void __stdcall NotifyWriteRecord(void * param_1, uint param_2, long int)</TYPEINFO_CMT>
             <STACK_FRAME LOCAL_VAR_SIZE="0x0" PARAM_OFFSET="0x0" RETURN_ADDR_SIZE="0x0" />
+            <REGISTER_VAR NAME="param_1" REGISTER="a0" DATATYPE="void *" DATATYPE_NAMESPACE="/" />
+            <REGISTER_VAR NAME="param_2" REGISTER="a1" DATATYPE="uint" DATATYPE_NAMESPACE="/" />
+            <REGISTER_VAR NAME="int" REGISTER="a2" DATATYPE="long" DATATYPE_NAMESPACE="/" />
         </FUNCTION>
         <FUNCTION ENTRY_POINT="ram:c0c13324" NAME="0c_networking::FUN_ram_c0c13324" LIBRARY_FUNCTION="n">
             <ADDRESS_RANGE START="ram:c0c13324" END="ram:c0c1334b" />
