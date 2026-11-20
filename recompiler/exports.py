@@ -12,7 +12,7 @@ from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
 from ir import Function
-from parsers.ghidra_xml import _parse_hex
+from parsers.ghidra_xml import _parse_hex, is_switch_case
 from recompiler.riscv import plt_addresses
 from recompiler.target import X86_64, Target, executable_target
 
@@ -184,6 +184,8 @@ def read_ghidra_exports(
             definitions[name] = definition
     function_nodes = {}
     for node in root.findall("FUNCTIONS/FUNCTION"):
+        if is_switch_case(node.get("NAME", "")):
+            continue
         entry_point = node.get("ENTRY_POINT")
         if entry_point:
             try:

@@ -167,6 +167,11 @@ Implemented:
   and starts single-range bodies at the exported entry, omitting any bytes
   before it. If the export marks no memory sections as artificial, the parser
   skips functions named in the `<EXTERNAL>` namespace.
+  Ghidra `caseD_<hex>` pseudo-functions in any namespace and `default` entries
+  in generated switch namespaces are excluded from compaction and hook
+  selection. Their declared ranges protect overlapping functions and possible
+  continuations during compaction. Hook entry spans that overlap these ranges
+  are rejected.
 - YAML parsing (`parsers/yaml.py`) validates function records from `.yaml`
   and `.yml` exports. A paired sample fixture matches the Ghidra function
   records, rewritten ELF, and receipt.

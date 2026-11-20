@@ -132,6 +132,47 @@ def test_recr_rejects_missing_hook(sample_elf, tmp_path, capsys):
     assert not output.exists()
 
 
+@pytest.mark.parametrize("case", ["target", "namespaced-target", "interior", "after-window"])
+def test_recr_protects_ghidra_switch_cases(input_image, tmp_path, capsys, case):
+    binary, original_export = input_image
+    root = ET.parse(original_export)
+    functions = root.find("FUNCTIONS")
+    function = functions.find("FUNCTION[@NAME='min_int']")
+    start = int(function.get("ENTRY_POINT"), 16)
+    end = int(function.find("ADDRESS_RANGE").get("END"), 16)
+    case_name = f"switchD_ram:{start:x}::caseD_0"
+    if case in ("target", "namespaced-target"):
+        function.set("NAME", "main_app::caseD_0" if case == "namespaced-target" else case_name)
+        function.find("TYPEINFO_CMT").text = "int caseD_0(int a, int b)"
+        hook = "caseD_0"
+    else:
+        # The overwritten window starts after ENDBR64 and ends at the first store's end.
+        start += 10 if case == "interior" else 11
+        node = ET.SubElement(functions, "FUNCTION", NAME=case_name, ENTRY_POINT=f"ram:{start:x}")
+        ET.SubElement(node, "ADDRESS_RANGE", START=f"ram:{start:x}", END=f"ram:{end:x}")
+        hook = "min_int"
+    export, rec, output, receipt = (tmp_path / name for name in ("input.xml", "hook.rec", "output", "receipt.yaml"))
+    root.write(export)
+    rec.write_text(f"int @{hook}(int a, int b) {{ return a + b; }}")
+    output.write_bytes(b"existing image")
+    receipt.write_text("existing receipt\n")
+
+    status = main([str(binary), str(export), str(rec), "-o", str(output), "-r", str(receipt)])
+
+    if case == "after-window":
+        assert status == 0
+        assert Binary(output).read(start, end - start + 1) == Binary(binary).read(start, end - start + 1)
+    else:
+        assert status == 1
+        diagnostic = capsys.readouterr().err
+        if case in ("target", "namespaced-target"):
+            assert "hook 'caseD_0' must match exactly one original function, found 0" in diagnostic
+        else:
+            assert f"overlaps a Ghidra switch case at {start:#x}" in diagnostic
+        assert output.read_bytes() == b"existing image"
+        assert receipt.read_text() == "existing receipt\n"
+
+
 @pytest.mark.parametrize("namespaced", [False, True], ids=["duplicate-record", "namespace-collision"])
 def test_recr_rejects_ambiguous_hook(sample_elf, tmp_path, capsys, namespaced):
     root = ET.parse(GHIDRA_XML)

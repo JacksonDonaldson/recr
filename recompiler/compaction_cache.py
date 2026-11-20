@@ -39,6 +39,7 @@ def entry_path(raw: RawInput, protected: frozenset[int]) -> Path | None:
     metadata = (
         sys.implementation.cache_tag, raw.parsed.isa, sorted(protected), raw.parsed.warnings,
         [(f.name, f.start_address, f.file_offset, f.length) for f in raw.parsed.functions],
+        raw.parsed.switch_case_ranges,
         [(r.start_address, r.file_offset, r.length, r.flags) for r in binary.regions],
         sorted(raw.symbols.items()),
     )

@@ -20,3 +20,4 @@ class ParseResult:
     isa: str
     functions: list[Function] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    switch_case_ranges: list[tuple[int, int]] = field(default_factory=list)  # Half-open byte ranges.

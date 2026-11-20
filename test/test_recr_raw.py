@@ -276,6 +276,40 @@ def test_recr_reuses_raw_compaction_across_hook_edits(tmp_path: Path, monkeypatc
     assert output.read_bytes()[-1] == 0x42
 
 
+def test_recr_invalidates_raw_compaction_when_switch_case_is_added(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path / "cache")
+    image, manifest, xml, rec, output, receipt = (
+        tmp_path / name for name in ("image.bin", "image.yaml", "image.xml", "empty.rec", "output", "receipt.yaml")
+    )
+    base = 0x400000
+    contents = bytes.fromhex("c3 cc 90 c3")
+    image.write_bytes(contents)
+    manifest.write_text(yaml.safe_dump({
+        "binary": image.name,
+        "regions": [dict(start_address=base, file_offset=0, length=len(contents), permissions="rx")],
+    }))
+    rec.write_text("")
+    root = ET.Element("PROGRAM")
+    ET.SubElement(root, "PROCESSOR", LANGUAGE_PROVIDER="x86:LE:64:default:gcc")
+    functions = ET.SubElement(root, "FUNCTIONS")
+    fragment = ET.SubElement(functions, "FUNCTION", NAME="fragment", ENTRY_POINT="400002")
+    ET.SubElement(fragment, "ADDRESS_RANGE", START="400002", END="400003")
+    export = ET.ElementTree(root)
+    export.write(xml)
+    args = [str(manifest), str(xml), str(rec), "-o", str(output), "-r", str(receipt)]
+
+    assert main(args) == 0
+    assert output.read_bytes() == bytes.fromhex("c3 cc ff ff")
+
+    case = ET.SubElement(functions, "FUNCTION", NAME="switchD_ram:400000::caseD_f", ENTRY_POINT="ram:400003")
+    ET.SubElement(case, "ADDRESS_RANGE", START="ram:400003", END="ram:400003")
+    export.write(xml)
+
+    assert main(args) == 0
+    assert output.read_bytes() == contents
+    assert yaml.safe_load(receipt.read_text()) == {"freed": []}
+
+
 def test_recr_checks_fixed_riscv_hi20_before_compaction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:

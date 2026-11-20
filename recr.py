@@ -99,6 +99,7 @@ def _select_hook_function(
 
 def _hook(
     name: str, function: Function, binary: Binary, uplifter: Uplifter, exports: Exports,
+    switch_case_ranges: list[tuple[int, int]],
 ) -> Hook:
     entry = function.start_address
     label = f"hook {function.name!r} at {entry:#x}"
@@ -133,6 +134,12 @@ def _hook(
         raise ValueError(f"{label} has no {target.jump_size}-byte entry window. Only {end - start} usable bytes from {start:#x}")
     reference = min((address for address in exports.references if start < address < end), default=None)
     window = f"[{start:#x}, {end:#x})"
+    case_address = min((
+        max(entry, case_start) for case_start, case_end in switch_case_ranges
+        if case_start < end and entry < case_end
+    ), default=None)
+    if case_address is not None:
+        raise ValueError(f"{label} overlaps a Ghidra switch case at {case_address:#x} in its entry span [{entry:#x}, {end:#x})")
     if reference is not None:
         raise ValueError(f"hook {function.name!r} has a reference into its entry window {window} at {reference:#x}")
     for symbol, address_set in exports.addresses.items():
@@ -293,7 +300,7 @@ def _build(
                 "and export the XML again."
             )
         declarations[name] = declaration
-        hooks.append(_hook(name, function, original, uplifter, exports))
+        hooks.append(_hook(name, function, original, uplifter, exports, parsed.switch_case_ranges))
         if ignored is not None:
             ignored_entries[name] = ignored.start_address
     if len({hook.start for hook in hooks}) != len(hooks):

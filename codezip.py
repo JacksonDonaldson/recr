@@ -211,12 +211,23 @@ def run_pipeline(
     except (ValueError, BackendError) as exc:
         LOGGER.error("failed to recover cross-references in %s using %s. %s", args.binary, isa_name, exc)
         return 1
+    preserved_ranges = rejected_ranges
+    if parsed.switch_case_ranges:
+        mapped_ranges = binary.mapped_ranges()
+        preserved_ranges = rejected_ranges + [
+            (max(start, base), min(end, base + size))
+            for start, end in parsed.switch_case_ranges
+            for base, size in mapped_ranges
+            if start < base + size and base < end
+        ]
+        # A switch case can continue into the bytes after its declared body.
+        fallthrough_targets.update(end for _, end in parsed.switch_case_ranges)
     try:
         protected_entries |= uplifter.entries_to_preserve(
-            rejected_ranges, fallthrough_targets=fallthrough_targets,
+            preserved_ranges, fallthrough_targets=fallthrough_targets,
         )
     except (ValueError, BackendError) as exc:
-        LOGGER.error("failed to recover references from rejected function extents in %s. %s", args.binary, exc)
+        LOGGER.error("failed to recover references from preserved code ranges in %s. %s", args.binary, exc)
         return 1
 
     xref_count = sum(

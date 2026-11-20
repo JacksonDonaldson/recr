@@ -212,6 +212,47 @@ def test_ghidra_parser_reports_skipped_entries() -> None:
     assert "non-contiguous address ranges are not supported" in warnings
 
 
+@pytest.mark.parametrize("name", [
+    "main_app::switchD_ram:b01b81e0::caseD_0",
+    "main_app::caseD_0",
+    "caseD_0",
+    "switchD_unk_type_65::c00101c4a::default",
+])
+def test_ghidra_preserves_all_ranges_of_a_switch_case(tmp_path: Path, name: str) -> None:
+    path = tmp_path / "switch.xml"
+    path.write_text(f"""<PROGRAM>
+      <PROCESSOR LANGUAGE_PROVIDER="RISCV:LE:64:default:gcc" />
+      <FUNCTIONS>
+        <FUNCTION NAME="{name}" ENTRY_POINT="ram:b01b7fd2">
+          <ADDRESS_RANGE START="ram:b01b7fd0" END="ram:b01b7fdd" />
+          <ADDRESS_RANGE START="ram:b01b8072" END="ram:b01b8083" />
+        </FUNCTION>
+        <FUNCTION NAME="main_app::default" ENTRY_POINT="ram:b01b90f0">
+          <ADDRESS_RANGE START="ram:b01b90f0" END="ram:b01b90f1" />
+        </FUNCTION>
+      </FUNCTIONS>
+    </PROGRAM>""")
+
+    result = parse_re_file(str(path))
+
+    assert [(f.name, f.start_address, f.length) for f in result.functions] == [("main_app::default", 0xB01B90F0, 2)]
+    assert result.warnings == []
+    assert result.switch_case_ranges == [(0xB01B7FD0, 0xB01B7FDE), (0xB01B8072, 0xB01B8084)]
+
+
+def test_ghidra_rejects_a_switch_case_without_extent_metadata(tmp_path: Path) -> None:
+    path = tmp_path / "switch.xml"
+    path.write_text("""<PROGRAM>
+      <PROCESSOR LANGUAGE_PROVIDER="RISCV:LE:64:default:gcc" />
+      <FUNCTIONS>
+        <FUNCTION NAME="switchD_ram:b01b81e0::caseD_0" ENTRY_POINT="ram:b01b7fd2" />
+      </FUNCTIONS>
+    </PROGRAM>""")
+
+    with pytest.raises(ParseError, match=r"cannot preserve Ghidra switch case .*no ADDRESS_RANGE"):
+        parse_re_file(str(path))
+
+
 def test_ghidra_is_supported() -> None:
     assert ghidra_xml.is_supported(str(FIXTURES / "sample_ghidra.xml"))
     assert not ghidra_xml.is_supported(str(FIXTURES / "sample.yaml"))

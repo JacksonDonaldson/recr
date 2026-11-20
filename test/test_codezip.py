@@ -369,6 +369,45 @@ def test_pipeline_skips_a_fallthrough_extent_and_preserves_its_successor(
     }
 
 
+def test_pipeline_preserves_switch_cases_and_overlapping_functions(tmp_path: Path) -> None:
+    source, binary, export, output, receipt = (
+        tmp_path / name for name in ("input.s", "input", "input.xml", "output", "receipt.yaml")
+    )
+    source.write_text(".global _start\n_start: ret\nret\nnop\nret\nnop\nret\nret\n")
+    subprocess.run([
+        "gcc", "-nostdlib", "-static", "-no-pie", "-Wl,--build-id=none,-Ttext=0x401000",
+        source, "-o", binary,
+    ], check=True, capture_output=True)
+    export.write_text("""<PROGRAM>
+      <PROCESSOR NAME="x86" ADDRESS_MODEL="64-bit" />
+      <FUNCTIONS>
+        <FUNCTION NAME="main_app::caseD_0" ENTRY_POINT="ram:401001">
+          <ADDRESS_RANGE START="ram:401001" END="ram:401001" />
+        </FUNCTION>
+        <FUNCTION NAME="overlapping" ENTRY_POINT="401002">
+          <ADDRESS_RANGE START="401002" END="401003" />
+        </FUNCTION>
+        <FUNCTION NAME="switchD_401000::caseD_f" ENTRY_POINT="401003">
+          <ADDRESS_RANGE START="401003" END="401003" />
+        </FUNCTION>
+        <FUNCTION NAME="switchD_401000::default" ENTRY_POINT="401004">
+          <ADDRESS_RANGE START="401004" END="401004" />
+        </FUNCTION>
+        <FUNCTION NAME="continuation" ENTRY_POINT="401005">
+          <ADDRESS_RANGE START="401005" END="401005" />
+        </FUNCTION>
+        <FUNCTION NAME="ordinary::caseD_0_handler" ENTRY_POINT="401006">
+          <ADDRESS_RANGE START="401006" END="401006" />
+        </FUNCTION>
+      </FUNCTIONS>
+    </PROGRAM>""")
+
+    assert main([str(binary), str(export), "-o", str(output), "--receipt", str(receipt)]) == 0
+
+    assert Binary(output).read(0x401001, 6) == bytes.fromhex("c3 90 c3 90 c3 ff")
+    assert yaml.safe_load(receipt.read_text()) == {"freed": [{"address": 0x401006, "length": 1}]}
+
+
 def test_receipt_write_error_reports_published_binary(caplog, sample_elf: Path, tmp_path: Path) -> None:
     output = tmp_path / "out.elf"
     receipt = tmp_path / "missing" / "receipt.yaml"

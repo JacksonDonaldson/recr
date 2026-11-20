@@ -100,11 +100,11 @@ class Uplifter:
         self.function_map[Address.absolute(start)] = function
 
     def entries_to_preserve(
-        self, rejected_ranges: Sequence[tuple[int, int]], *,
+        self, preserved_ranges: Sequence[tuple[int, int]], *,
         fallthrough_targets: AbstractSet[int] = frozenset(),
     ) -> frozenset[int]:
-        """Preserve functions overlapping or reachable from rejected extents."""
-        if not rejected_ranges and not fallthrough_targets:
+        """Preserve functions overlapping or reachable from protected code ranges."""
+        if not preserved_ranges and not fallthrough_targets:
             return frozenset()
 
         functions = self.function_map.values()
@@ -122,7 +122,7 @@ class Uplifter:
                 for target in fallthrough_targets
             )
         }
-        for start, end in rejected_ranges:
+        for start, end in preserved_ranges:
             protected.update(
                 function.start_address for function in functions
                 if function.start_address < end

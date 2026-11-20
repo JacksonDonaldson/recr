@@ -3,10 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import xml.etree.ElementTree as ET
 
 from ir import Function
 from parsers.base import UNKNOWN_FILE_OFFSET, ParseError, ParseResult
+
+
+_SWITCH_CASE_NAME = re.compile(
+    r"(?:^|::)(?:caseD_[0-9a-fA-F]+|switchD_(?:[^:]+:{1,2})?[0-9a-fA-F]+::default)\Z"
+)
+
+
+def is_switch_case(name: str) -> bool:
+    """Recognize generated case labels and defaults in a switch namespace."""
+    return _SWITCH_CASE_NAME.search(name) is not None
 
 
 def is_supported(filename: str) -> bool:
@@ -37,9 +48,21 @@ def parse(filename: str) -> ParseResult:
 
     warnings: list[str] = []
     functions: list[Function] = []
+    switch_case_ranges: list[tuple[int, int]] = []
     artificial_ranges = _find_artificial_ranges(root)
 
     for element in root.findall("./FUNCTIONS/FUNCTION"):
+        name = element.get("NAME", "")
+        if is_switch_case(name):
+            try:
+                ranges = _address_ranges(element)
+                entry = _parse_hex(element.get("ENTRY_POINT", ""))
+                if not any(start <= entry <= end for start, end in ranges):
+                    raise ValueError("ENTRY_POINT is outside the declared ADDRESS_RANGE elements")
+            except ValueError as exc:
+                raise ParseError(f"cannot preserve Ghidra switch case {name!r} in {filename}. {exc}") from exc
+            switch_case_ranges.extend((start, end + 1) for start, end in ranges)
+            continue
         function = _parse_function(element, warnings, artificial_ranges)
         if function is not None:
             functions.append(function)
@@ -48,7 +71,7 @@ def parse(filename: str) -> ParseResult:
         isa = _detect_isa(root)
     except ParseError as exc:
         raise ParseError(f"cannot identify the ISA in Ghidra XML {filename}. {exc}") from exc
-    return ParseResult(isa=isa, functions=functions, warnings=warnings)
+    return ParseResult(isa=isa, functions=functions, warnings=warnings, switch_case_ranges=switch_case_ranges)
 
 
 def _detect_isa(root: ET.Element) -> str:
@@ -145,31 +168,10 @@ def _parse_function(
         warnings.append(f"skipping external function {name}")
         return None
 
-    ranges: list[tuple[int, int]] = []
-    for address_range in element.findall("ADDRESS_RANGE"):
-        start_value = address_range.get("START")
-        end_value = address_range.get("END")
-        if not start_value or not end_value:
-            warnings.append(f"skipping function {name}: incomplete ADDRESS_RANGE")
-            return None
-
-        try:
-            range_start = _parse_hex(start_value)
-            range_end = _parse_hex(end_value)
-        except ValueError:
-            warnings.append(f"skipping function {name}: invalid ADDRESS_RANGE")
-            return None
-
-        if range_end < range_start:
-            warnings.append(
-                f"skipping function {name}: ADDRESS_RANGE ends before it starts"
-            )
-            return None
-
-        ranges.append((range_start, range_end))
-
-    if not ranges:
-        warnings.append(f"skipping function {name}: no ADDRESS_RANGE")
+    try:
+        ranges = _address_ranges(element)
+    except ValueError as exc:
+        warnings.append(f"skipping function {name}: {exc}")
         return None
 
     if len(ranges) > 1:
@@ -196,6 +198,27 @@ def _parse_function(
         start_address=start_address,
         length=range_end - start_address + 1,
     )
+
+
+def _address_ranges(element: ET.Element) -> list[tuple[int, int]]:
+    """Read the inclusive bounds of each declared body range."""
+    ranges: list[tuple[int, int]] = []
+    for address_range in element.findall("ADDRESS_RANGE"):
+        start_value = address_range.get("START")
+        end_value = address_range.get("END")
+        if not start_value or not end_value:
+            raise ValueError("incomplete ADDRESS_RANGE")
+        try:
+            start = _parse_hex(start_value)
+            end = _parse_hex(end_value)
+        except ValueError as exc:
+            raise ValueError("invalid ADDRESS_RANGE") from exc
+        if end < start:
+            raise ValueError("ADDRESS_RANGE ends before it starts")
+        ranges.append((start, end))
+    if not ranges:
+        raise ValueError("no ADDRESS_RANGE")
+    return ranges
 
 
 def _parse_hex(value: str) -> int:
