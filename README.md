@@ -245,3 +245,10 @@ make -C test e2e-mutation
 
 The optimization pipeline now runs function removal and outlining before
 writing the output.
+
+## License
+
+You can use the original project code under either the [MIT License](LICENSE)
+or the [Unlicense](UNLICENSE). The bundled Ghidra 12.2 processor specifications
+are distributed under the [Apache License 2.0](LICENSE-Ghidra) with the
+[Ghidra attribution notice](NOTICE-Ghidra).

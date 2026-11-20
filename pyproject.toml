@@ -1,13 +1,15 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codezip"
+name = "recr"
 version = "0.1.0"
 description = "Recover unused space in compiled binaries without changing their layout."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "(MIT OR Unlicense) AND Apache-2.0"
+license-files = ["LICENSE", "UNLICENSE", "LICENSE-Ghidra", "NOTICE-Ghidra"]
 dependencies = ["pyelftools>=0.31", "PyYAML>=6.0"]
 
 [project.optional-dependencies]

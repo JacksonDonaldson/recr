@@ -102,9 +102,11 @@ When in doubt, be conservative: reject an optimization rather than risk changing
 
 Implemented:
 
-- `pyproject.toml` supports editable and wheel installs and provides the
-  `codezip` and `recr` commands. The distribution bundles the x86-64 and RISC-V SLEIGH
-  tables and the optional CUDA kernel source.
+- `pyproject.toml` defines the `recr` distribution for editable and wheel installs.
+  It provides the `codezip` and `recr` commands and bundles the x86-64 and RISC-V
+  SLEIGH tables and the optional CUDA kernel source. The project code is
+  available under MIT or the Unlicense. The distribution includes the Apache
+  2.0 license and notice for the bundled Ghidra tables.
 - `recr` compiles .rec hooks for x86-64, RV32, and RV64 non-PIE ELF with typed
   Ghidra XML. Hooks match the final component of Ghidra function names. When
   exactly two distinct entries match and one is both shorter and under eight
