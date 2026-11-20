@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
 import os
@@ -12,6 +12,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import cache
+from optimizers.outliner import FunctionRewrite
 
 if TYPE_CHECKING:
     from binary.raw import RawBinary
@@ -65,6 +66,7 @@ class Compaction:
     receipt: Receipt
     patches: list[tuple[int, str]]
     warnings: list[WarningEvent]
+    rewrites: list[FunctionRewrite]
 
     def apply(self, binary: RawBinary) -> None:
         for address, data in self.patches:
@@ -85,10 +87,20 @@ def load(path: Path) -> Compaction | None:
         entry["receipt"],
         [tuple(patch) for patch in entry["patches"]],
         [event if isinstance(event, str) else tuple(event) for event in entry["warnings"]],
+        [
+            FunctionRewrite(
+                item["start"], item["live_end"], item["original_end"],
+                tuple((start, end) for start, end in item["shared_blocks"]),
+            )
+            for item in entry["rewrites"]
+        ],
     )
 
 
-def store(path: Path, binary: RawBinary, receipt: Receipt, warnings: list[WarningEvent]) -> None:
+def store(
+    path: Path, binary: RawBinary, receipt: Receipt, warnings: list[WarningEvent],
+    rewrites: list[FunctionRewrite],
+) -> None:
     data = json.dumps({
         "receipt": receipt,
         "patches": [
@@ -96,6 +108,7 @@ def store(path: Path, binary: RawBinary, receipt: Receipt, warnings: list[Warnin
             for region in receipt.get("modified", [])
         ],
         "warnings": warnings,
+        "rewrites": [asdict(rewrite) for rewrite in rewrites],
     }, separators=(",", ":")).encode()
     checksum = sha256(data).hexdigest().encode()
     try:

@@ -120,6 +120,7 @@ def run_pipeline(
     binary: Binary | None = None, parsed: ParseResult | None = None,
     warn: Callable[[str], None] | None = None,
     warn_invalid_extent: Callable[[Function, FunctionExtentError], None] | None = None,
+    outline_rewrites: list[outliner.FunctionRewrite] | None = None,
 ) -> int:
     """Compact and write the image, using caller-supplied input metadata when available."""
     _configure_logging(args.verbose)
@@ -287,6 +288,8 @@ def run_pipeline(
             len(outline_result.selected_matches),
             len(outline_result.matches),
         )
+        if outline_rewrites is not None:
+            outline_rewrites.extend(outline_result.function_rewrites())
 
     LOGGER.info("filling %d free space range(s) with 0xff", len(free_space))
     for space in free_space:

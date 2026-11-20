@@ -80,6 +80,34 @@ class ExtractionResult:
         default_factory=dict, repr=False
     )
 
+    def function_rewrites(self) -> list[FunctionRewrite]:
+        """Describe the committed layouts and the shared code they call."""
+        rewrites = []
+        for layout in self.layouts.values():
+            targets = (
+                instruction.outline_target
+                for block in layout.blocks
+                for instruction in block.instructions
+                if instruction.outline_target is not None
+            )
+            shared_blocks = tuple(sorted({
+                (target.start_location.value, target.instructions[-1].address + target.instructions[-1].length)
+                for target in targets
+            }))
+            start = layout.function.start_address
+            rewrites.append(FunctionRewrite(start, layout.new_end, start + layout.function.length, shared_blocks))
+        return rewrites
+
+
+@dataclass(frozen=True)
+class FunctionRewrite:
+    """A rewritten function, its freed tail, and the shared blocks it calls."""
+
+    start: int
+    live_end: int
+    original_end: int
+    shared_blocks: tuple[tuple[int, int], ...]
+
 
 @dataclass
 class _InstructionIndex:

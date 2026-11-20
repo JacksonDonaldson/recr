@@ -113,6 +113,14 @@ C definitions in the extension take precedence over other imported names.
 recr ./a.out ./functions.xml ./hooks.rec -o ./a.out.recr -- -Iinclude -Llib -lexample
 ```
 
+Use `-p FILE` or `--patchstream FILE` to also save a binary patch stream for
+an ELF or raw image. The stream contains the extension and the rewrites it
+needs to use reclaimed space. Each record contains a virtual address, a byte
+count, and that many replacement bytes. The address and count are unsigned
+little-endian words, 4 bytes on RV32 and 8 bytes on RV64 and x86-64. Records
+cover contiguous changed bytes within a file-backed mapping. A single
+all-`0xff` address word terminates the stream.
+
 GCC accepts extra compiler flags, object files, and static libraries after
 `--`. Before `--`, `-Wall` enables all recr warnings and `-Werror` makes
 enabled warnings fatal. Recr also passes both flags to GCC. Calls can use

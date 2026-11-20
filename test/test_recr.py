@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from struct import Struct
 import subprocess
 import xml.etree.ElementTree as ET
 
@@ -12,11 +13,14 @@ import pytest
 import yaml
 
 from binary.binary import Binary
+from binary.raw import RawBinary, Region
 from ir import Address
 from isa.x86_64 import X86_64ISA
+from optimizers.outliner import FunctionRewrite
 from recr import main
 from recompiler.compiler import compile_rec, rewrite_hooks
 from recompiler.exports import Exports, Segment
+from recompiler.patchstream import encode_patchstream, select_patch_ranges
 from recompiler.placement import Object, Section, Space, _Image, place
 from recompiler.target import X86_64
 
@@ -91,6 +95,90 @@ def test_hook_uses_original_functions_and_shadows_exports(input_image, tmp_path,
     assert after.read(target, 4) == before.read(target, 4) == bytes.fromhex("f30f1efa")
     assert after.read(target + 4, 1) == b"\xe9"
     assert any(item["address"] == target + 4 for item in yaml.safe_load(receipt.read_text())["modified"])
+
+
+def _apply_patchstream(image: Binary, data: bytes, word_format: str) -> bytes:
+    header = Struct(f"<{word_format}{word_format}")
+    word_size = header.size // 2
+    end_marker = b"\xff" * word_size
+    offset = 0
+    while data[offset:offset + word_size] != end_marker:
+        address, length = header.unpack_from(data, offset)
+        offset += header.size
+        replacement = data[offset:offset + length]
+        assert 0 < length == len(replacement)
+        assert all(old != new for old, new in zip(image.read(address, length), replacement))
+        image.write(address, replacement)
+        offset += length
+    assert data[offset:] == end_marker
+    return image.image_bytes()
+
+
+def test_recr_writes_elf_and_patchstream_together(input_image, tmp_path):
+    binary, export = input_image
+    args = [str(binary), str(export), str(FIXTURES / "sample.rec")]
+    output = tmp_path / "hooked"
+    receipt = tmp_path / "receipt.yaml"
+    patch = tmp_path / "hooked.patch"
+    before = binary.read_bytes()
+    assert main([*args, "-o", str(output), "-r", str(receipt), "--patchstream", str(patch)]) == 0
+    replay, full, original = Binary(binary), Binary(output), Binary(binary)
+    _apply_patchstream(replay, patch.read_bytes(), "Q")
+    freed = yaml.safe_load(receipt.read_text())["freed"]
+    assert freed
+    for region in freed:
+        start, length = region["address"], region["length"]
+        assert full.read(start, length) == b"\xff" * length
+        assert replay.read(start, length) == original.read(start, length)
+    replay_path = tmp_path / "replayed"
+    replay.write_to_disk(replay_path)
+    assert subprocess.check_output([replay_path]) == subprocess.check_output([output])
+    assert binary.read_bytes() == before
+
+
+@pytest.mark.parametrize("destination", ["input", "output", "receipt"])
+def test_recr_rejects_patchstream_path_aliases(input_image, tmp_path, capsys, destination):
+    binary, export = input_image
+    output, receipt = tmp_path / "hooked", tmp_path / "receipt.yaml"
+    output.write_bytes(b"existing image")
+    receipt.write_bytes(b"existing receipt")
+    patch = {"input": binary, "output": output, "receipt": receipt}[destination]
+    before = binary.read_bytes()
+    assert main([
+        str(binary), str(export), str(FIXTURES / "sample.rec"),
+        "-o", str(output), "-r", str(receipt), "-p", str(patch),
+    ]) == 1
+    assert "patch stream must use a separate path" in capsys.readouterr().err
+    assert binary.read_bytes() == before
+    assert output.read_bytes() == b"existing image"
+    assert receipt.read_bytes() == b"existing receipt"
+
+
+def test_patchstream_reserves_the_all_ones_address(tmp_path: Path) -> None:
+    path = tmp_path / "image.bin"
+    before = bytes(2)
+    path.write_bytes(before)
+    image = RawBinary(path, [Region(0xFFFFFFFE, 0, len(before), 6)])
+    ranges = [(0xFFFFFFFE, 0x100000000)]
+    assert encode_patchstream(before, image, 4, ranges) == bytes.fromhex("ffffffff")
+
+    image.write(0xFFFFFFFE, b"\x01\xff")
+    assert encode_patchstream(before, image, 4, ranges) == bytes.fromhex("feffffff 02000000 01ff ffffffff")
+
+    image.write(0xFFFFFFFE, b"\x00")
+    with pytest.raises(ValueError, match="patch stream terminator"):
+        encode_patchstream(before, image, 4, ranges)
+
+
+def test_patchstream_follows_shared_blocks_in_reclaimed_tails() -> None:
+    rewrites = [
+        FunctionRewrite(0x10, 0x20, 0x30, ((0x44, 0x48),)),
+        FunctionRewrite(0x30, 0x40, 0x50, ((0x27, 0x2A),)),
+        FunctionRewrite(0x50, 0x60, 0x70, ((0x44, 0x48),)),
+    ]
+    assert select_patch_ranges([(0x22, 0x24)], rewrites) == {
+        (0x10, 0x20), (0x22, 0x24), (0x27, 0x2A), (0x30, 0x40), (0x44, 0x48),
+    }
 
 
 def test_fragmented_hook_executes_calls_and_jumps_with_a_static_library(input_image, tmp_path):

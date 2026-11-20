@@ -17,6 +17,7 @@ import codezip
 from recr import main
 from recompiler.placement import Space
 from recompiler.raw import read_raw_input
+from test.test_recr import _apply_patchstream
 from test.test_recr_riscv import RISCV64_CC, _qemu_command
 
 
@@ -205,7 +206,10 @@ def test_recr_classifies_uplift_failures(
     assert receipt.read_bytes() == previous_receipt
 
 
-def test_recr_reuses_raw_compaction_across_hook_edits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("uses_tail", [False, True], ids=["unused-tail", "used-tail"])
+def test_recr_reuses_raw_compaction_across_hook_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uses_tail: bool,
+) -> None:
     monkeypatch.setattr(cache, "CACHE_ROOT", tmp_path / "cache")
     image, manifest, hook = (tmp_path / name for name in ("image.bin", "image.yaml", "hook.re.c"))
     output, receipt = tmp_path / "output", tmp_path / "receipt.yaml"
@@ -217,7 +221,7 @@ def test_recr_reuses_raw_compaction_across_hook_edits(tmp_path: Path, monkeypatc
         "transform": dict(start_address=base, length=6, declaration="int transform(void);"),
         "spare": dict(start_address=base + 0x100, length=0x80),
     }
-    sequence = bytes.fromhex("8b07 0306 0fafc0 8902 c3")
+    sequence = bytes.fromhex("8b07 0306 0fafc0 8902 31c9 c3" if uses_tail else "8b07 0306 0fafc0 8902 c3")
     for index in range(3):
         start = 0x20 + 0x20 * index
         data[start:start + len(sequence)] = sequence
@@ -231,7 +235,7 @@ def test_recr_reuses_raw_compaction_across_hook_edits(tmp_path: Path, monkeypatc
     }
     manifest.write_text(yaml.safe_dump(layout))
     hook.write_text("int @transform(void) { return 17; }\n")
-    args = [str(manifest), str(hook), "--cc", "gcc", "-o", str(output), "-r", str(receipt)]
+    args = [str(manifest), str(hook), "--cc", "gcc", "-o", str(output), "-r", str(receipt), "-fcf-protection=none"]
     run_pipeline = codezip.run_pipeline
     compactions = 0
 
@@ -245,10 +249,17 @@ def test_recr_reuses_raw_compaction_across_hook_edits(tmp_path: Path, monkeypatc
     assert compactions == 1
     initial_output, initial_receipt = output.read_bytes(), receipt.read_bytes()
     assert initial_output[0x20] == 0xe8  # An outlined call in the cached patch set.
-    assert main(args) == 0
+    patch = tmp_path / "stream"
+    assert main([*args, "-p", str(patch)]) == 0
     assert compactions == 1
     assert output.read_bytes() == initial_output
     assert receipt.read_bytes() == initial_receipt
+    replay = _apply_patchstream(read_raw_input(manifest).binary, patch.read_bytes(), "Q")
+    assert replay[0] == 0xe9
+    for start in (0x20, 0x40, 0x60):
+        expected = initial_output[start:start + len(sequence)] if uses_tail and start == 0x20 else sequence
+        assert replay[start:start + len(sequence)] == expected
+    assert replay[0x100:0x100 + len(sequence)] == (sequence if uses_tail else data[0x100:0x100 + len(sequence)])
 
     hook.write_text("int @transform(void) { return 18; }\n")
     assert main(args) == 0
@@ -432,6 +443,21 @@ def test_recr_hooks_static_raw_image(
     modified = {item["address"] for item in patched["modified"]}
     assert {entries["transform"], entries["spare"]} <= modified
     assert {entries["_start"], entries["dispatched"]}.isdisjoint(modified)
+
+
+def test_recr_patchstream_hooks_raw_image(firmware: Firmware, tmp_path: Path) -> None:
+    output = firmware.binary.with_suffix(".bin.recr")
+    patch = tmp_path / "firmware.patch"
+    args = [str(firmware.manifest), str(HOOK), "--cc", shlex.join(firmware.compiler)]
+    before = firmware.binary.read_bytes()
+    assert main([*args, "-p", str(patch)]) == 0
+    raw = read_raw_input(firmware.manifest)
+    replay = _apply_patchstream(raw.binary, patch.read_bytes(), "Q")
+    assert replay != output.read_bytes()
+    replay_path = tmp_path / "replayed.bin"
+    replay_path.write_bytes(replay)
+    assert firmware.run(replay_path, tmp_path / "replayed") == 24
+    assert firmware.binary.read_bytes() == before
 
 
 def _write_ghidra_export(firmware: Firmware, output: Path, *, transform_name: str = "transform") -> None:

@@ -20,6 +20,7 @@ from recr import Hook, _trampoline, main
 from recompiler.exports import Exports, Segment
 from recompiler.placement import Object, Section, Space, Symbol, _Image, place
 from recompiler.target import raw_target
+from test.test_recr import _apply_patchstream
 
 
 TEST = Path(__file__).resolve().parent
@@ -317,9 +318,14 @@ def test_recr_hooks_a_riscv32_elf_without_compressed_instructions(tmp_path: Path
     source = tmp_path / "hook.rec"
     source.write_text("int @transform(int arg) { return transform(arg) + 5; }\n")
     output = tmp_path / "hooked"
-    assert main([
-        str(binary), str(export), str(source), "-o", str(output),
-        "--cc", shlex.join(RISCV64_CC),
-    ]) == 0
+    patch = tmp_path / "hooked.patch"
+    args = [str(binary), str(export), str(source), "--cc", shlex.join(RISCV64_CC)]
+    assert main([*args, "-o", str(output), "-p", str(patch)]) == 0
+    replay = Binary(binary)
+    _apply_patchstream(replay, patch.read_bytes(), "I")
+    replay_path = tmp_path / "replayed"
+    replay.write_to_disk(replay_path)
+    assert replay.image_bytes() != output.read_bytes()
     assert subprocess.run(_qemu_command(binary, 32)).returncode == 10
     assert subprocess.run(_qemu_command(output, 32)).returncode == 15
+    assert subprocess.run(_qemu_command(replay_path, 32)).returncode == 15

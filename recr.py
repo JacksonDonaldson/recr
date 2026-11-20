@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -19,10 +20,12 @@ import codezip
 from input_parser import ParseError, ParseResult, parse_re_file
 from ir import Address, AddressKind, FreeSpace, Function, Instruction, InstructionType
 from isa.isa import ISA
+from optimizers.outliner import FunctionRewrite
 from parsers.yaml import EXTENSIONS as YAML_EXTENSIONS
 from recompiler import compaction_cache, riscv
 from recompiler.compiler import HOOK_PREFIX, compile_rec, rewrite_hooks
 from recompiler.exports import Exports, read_exports
+from recompiler.patchstream import encode_patchstream, select_patch_ranges
 from recompiler.placement import Fragment, Object, Space, place
 from recompiler.raw import FUNCTION_OUTSIDE_EXECUTABLE_RANGE, SKIP_SHORT_FUNCTIONS, RawInput, read_raw_input
 from recompiler.target import Target
@@ -218,7 +221,7 @@ def _trampoline_at(hook: Hook, address: int, isa: ISA, target: Target) -> Fragme
 def _compact(
     options: argparse.Namespace, parsed: ParseResult, raw: RawInput | None,
     protected: frozenset[int], warnings: WarningOptions, hooks: list[Hook],
-) -> compaction_cache.Receipt:
+) -> tuple[compaction_cache.Receipt, list[FunctionRewrite]]:
     def warn_extent(start: int, covered_end: int, message: str) -> None:
         for hook in hooks:
             if hook.start < covered_end and start < hook.resume:
@@ -235,7 +238,7 @@ def _compact(
                 else:
                     warn_extent(*event)
             cached.apply(raw.binary)
-            return cached.receipt
+            return cached.receipt, cached.rewrites
 
     events: list[compaction_cache.WarningEvent] = []
 
@@ -248,15 +251,16 @@ def _compact(
         warn_extent(*event)
         events.append(event)
 
+    rewrites: list[FunctionRewrite] = []
     if codezip.run_pipeline(
         options, protected_entries=protected, binary=raw.binary if raw is not None else None,
-        parsed=parsed, warn=warn, warn_invalid_extent=warn_invalid_extent,
+        parsed=parsed, warn=warn, warn_invalid_extent=warn_invalid_extent, outline_rewrites=rewrites,
     ):
         raise ValueError(f"codezip could not prepare {options.binary} using {options.re_file}. See the compaction errors above")
     receipt = yaml.safe_load(options.receipt.read_text(encoding="utf-8"))
     if raw is not None and path is not None:
-        compaction_cache.store(path, raw.binary, receipt, events)
-    return receipt
+        compaction_cache.store(path, raw.binary, receipt, events, rewrites)
+    return receipt, rewrites
 
 
 def _build(
@@ -351,7 +355,8 @@ def _build(
         "--isa", target.isa,
     ])
 
-    receipt = _compact(options, parsed, raw, protected, warnings, hooks)
+    original_bytes = original.image_bytes() if args.patchstream else None
+    receipt, rewrites = _compact(options, parsed, raw, protected, warnings, hooks)
     free = [(item["address"], item["length"]) for item in receipt["freed"]]
     space = Space(free, exports)
     image = original if raw is not None else Binary(compacted)
@@ -382,14 +387,33 @@ def _build(
                 f"cannot apply {len(fragment.data)} extension bytes at {fragment.address:#x} in {args.binary}. {exc}"
             ) from exc
 
-    # The completed image becomes visible only after all fixups succeed.
+    stream = None
+    if original_bytes is not None:
+        used_trampolines = [fragment for hook, fragment in zip(hooks, trampolines) if hook.name in imports]
+        ranges = select_patch_ranges(
+            ((fragment.address, fragment.address + len(fragment.data))
+             for fragment in (*used_trampolines, *placed, *patches) if fragment.data),
+            rewrites,
+        )
+        stream = encode_patchstream(original_bytes, image, isa.pointer_size, ranges)
+
+    destination = args.output
     try:
-        with TemporaryDirectory(prefix=".recr-", dir=args.output.parent) as output_dir:
+        with ExitStack() as stack:
+            output_dir = stack.enter_context(TemporaryDirectory(prefix=".recr-", dir=args.output.parent))
             pending = Path(output_dir) / "output"
             image.write_to_disk(pending)
-            os.replace(pending, args.output)
+            outputs = [(pending, args.output)]
+            if stream is not None:
+                destination = args.patchstream
+                patch_dir = stack.enter_context(TemporaryDirectory(prefix=".recr-", dir=destination.parent))
+                pending_patch = Path(patch_dir) / "patchstream"
+                pending_patch.write_bytes(stream)
+                outputs.append((pending_patch, destination))
+            for pending, destination in outputs:
+                os.replace(pending, destination)
     except OSError as exc:
-        raise ValueError(f"cannot write patched image to {args.output}. {exc}") from exc
+        raise ValueError(f"cannot write recr output to {destination}. {exc}") from exc
     if args.receipt is not None:
         freed = [FreeSpace(Address.absolute(s.start), s.end - s.start) for s in space.ranges]
         modified = [
@@ -440,6 +464,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("re_file", type=Path, nargs="?", metavar="EXPORT", help="Ghidra XML function export")
     parser.add_argument("rec", type=Path, metavar="REC", help=".re.c source file")
     parser.add_argument("-o", "--output", type=Path)
+    parser.add_argument("-p", "--patchstream", type=Path, metavar="FILE", help="also write virtual-address patches to FILE")
     parser.add_argument("-r", "--receipt", type=Path)
     parser.add_argument("--isa")
     parser.add_argument("--cc", default=os.environ.get("CC"), help="GCC executable or command")
@@ -468,10 +493,14 @@ def main(argv: list[str] | None = None) -> int:
             args.binary = args.input
         args.output = args.output or args.binary.with_name(args.binary.name + ".recr")
         inputs = {path.resolve() for path in (args.input, args.binary, args.re_file, args.rec)}
-        if args.output.resolve() in inputs:
+        output = args.output.resolve()
+        receipt = args.receipt.resolve() if args.receipt is not None else None
+        if output in inputs:
             raise ValueError(f"recr output must use a separate path from the inputs. {args.output} resolves to an input file")
-        if args.receipt is not None and args.receipt.resolve() in inputs | {args.output.resolve()}:
+        if receipt in inputs | {output}:
             raise ValueError(f"recr receipt must use a separate path from input and output files. {args.receipt} aliases one of them")
+        if args.patchstream is not None and args.patchstream.resolve() in inputs | {output, receipt}:
+            raise ValueError(f"recr patch stream must use a separate path from the inputs, output, and receipt. {args.patchstream} aliases one of them")
         with TemporaryDirectory(prefix="recr-") as directory:
             _build(args, compiler_flags, Path(directory), raw, warnings)
     except (ValueError, OSError, ParseError, ELFError, ET.ParseError, WarningError) as exc:

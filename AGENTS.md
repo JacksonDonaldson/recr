@@ -143,6 +143,11 @@ Implemented:
   Returns and unconditional jumps, including tail jumps to the next address,
   pass the termination check. Recr applies `invalid-function-extent` to this
   warning and rejects a hook targeting such an extent.
+  `--patchstream FILE` (`-p FILE`) writes an additional output for ELF and raw
+  images. It includes extension writes and the function rewrites and shared
+  blocks needed to reclaim their space. Each record stores the address and
+  byte count as little-endian ISA words, followed by the changed bytes. A
+  single all-`0xff` address word terminates the stream.
 - `recr <manifest.yaml> [<functions.xml>] <hooks.rec>` also accepts static
   raw images. The manifest names the image, gives disjoint virtual regions
   with permissions, and lists entry points to preserve. Regions without a
@@ -378,7 +383,7 @@ Implemented:
   cached in `test/build/e2e/<arch>/baseline/`, and Ghidra exports are reused
   when their binary and script hashes match, so only changed inputs are
   rebuilt or re-exported.
-  The current freed-byte breakdown is `pcre2test` 519 bytes in 60 ranges and
+  The current standalone freed-byte breakdown is `pcre2test` 519 bytes in 60 ranges and
   `pcre2grep` 2161 bytes in 51 ranges (2680 bytes total). Before fallthrough
   extents were skipped, the counts were 515 and 2146 bytes (2661 total).
   The pre-red-zone baseline was 360 and 2105 bytes (2465 total).
