@@ -109,7 +109,7 @@ def _hook(
         for segment in exports.segments
     ):
         raise ValueError(f"{label} is not in file-backed executable memory. Its extent ends at {limit:#x} (exclusive)")
-    uplifter.uplift_function(function)
+    uplifter.uplift_function(function, require_terminator=True)
     target = exports.target
     pad = target.landing_pad
     if pad and binary.read(entry, min(function.length, len(pad))) != pad:

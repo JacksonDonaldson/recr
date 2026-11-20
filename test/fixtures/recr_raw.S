@@ -16,6 +16,7 @@ _start:
     jalr ra, 0(t0)
     li a7, 93
     ecall
+1:  j 1b
 #else
     movl $11, runtime_counter(%rip)
     mov $7, %edi
@@ -25,6 +26,7 @@ _start:
     mov %eax, %edi
     mov $60, %eax
     syscall
+1:  jmp 1b
 #endif
     .size _start, .-_start
 transform:

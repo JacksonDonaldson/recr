@@ -10,7 +10,7 @@ from struct import Struct
 from typing import TYPE_CHECKING
 
 from isa.isa import DecodedFlow, ISA
-from isa.riscv.encoding import JUMP, UPPER, relative_immediate, sign_extend
+from isa.riscv.encoding import COMPRESSED_JUMP, JUMP, UPPER, relative_immediate, sign_extend
 from isa.riscv.liveness import link_live_before, live_block_exits
 from isa.riscv.references import scan
 from isa.riscv.sleigher import RISCVSlaSpec
@@ -99,6 +99,19 @@ class _RISCVISA(ISA):
     def decode_flows(self, binary: Binary, address: int) -> DecodedFlow:
         data = self._read_instruction(binary, address)
         return self.spec.decode_flow(data, address, self._resolve(data, address))
+
+    def fallthrough_target(self, instruction: Instruction) -> int | None:
+        target = (instruction.address + instruction.length) & self.address_mask
+        if Address.absolute(target) not in instruction.flows_to:
+            return None
+        if instruction.type is InstructionType.BRANCH:
+            word = int.from_bytes(instruction.original_data, "little")
+            immediate = relative_immediate(word, instruction.length, self.xlen)
+            if immediate in (JUMP, COMPRESSED_JUMP) or (
+                instruction.length == 4 and word & 0x7F == 0x67
+            ):
+                return None
+        return target
 
     def decode_range(
         self, binary: Binary, start: int, end: int,

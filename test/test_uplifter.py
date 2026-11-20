@@ -13,7 +13,7 @@ from ir import (
     Reference,
 )
 from test.uplift_sample import uplift_sample
-from uplifter import Uplifter
+from uplifter import FunctionFallthroughError, Uplifter
 
 
 @pytest.fixture(scope="session")
@@ -272,6 +272,35 @@ class _CodeBinary:
         if offset < 0 or offset + length > len(self.data):
             raise ValueError(f"virtual address {address:#x} is not mapped")
         return self.data[offset : offset + length]
+
+
+@pytest.mark.parametrize(("isa_name", "encoded", "falls_through"), [
+    pytest.param("x86_64", "c3", False, id="x86-return"),
+    pytest.param("x86_64", "ffe0", False, id="x86-indirect-jump"),
+    pytest.param("x86_64", "eb00", False, id="x86-jump-to-next"),
+    pytest.param("x86_64", "7500", True, id="x86-conditional-to-next"),
+    pytest.param("x86_64", "75fe", True, id="x86-conditional-loop"),
+    pytest.param("x86_64", "e805000000", True, id="x86-returning-call"),
+    pytest.param("riscv64", "6f004000", False, id="rv64-jump-to-next"),
+    pytest.param("riscv64", "09a0", False, id="rv64-compressed-jump-to-next"),
+    pytest.param("riscv64", "6302b500", True, id="rv64-conditional-to-next"),
+    pytest.param("riscv32", "ef004000", True, id="rv32-returning-call"),
+])
+def test_require_terminator(isa_name: str, encoded: str, falls_through: bool) -> None:
+    code = bytes.fromhex(encoded)
+    entry = 0x1000
+    uplifter = Uplifter(isa_name, _CodeBinary(entry, code))
+    function = Function("fragment", -1, entry, len(code))
+
+    if falls_through:
+        with pytest.raises(FunctionFallthroughError, match="falls through") as error:
+            uplifter.uplift_function(function, require_terminator=True)
+        assert error.value.target == entry + len(code)
+        assert Address.absolute(entry) not in uplifter.function_map
+        assert not function.basic_blocks
+    else:
+        uplifter.uplift_function(function, require_terminator=True)
+        assert uplifter.function_map[Address.absolute(entry)] is function
 
 
 def test_uplift_accepts_case_bodies_after_an_indirect_switch_jump(

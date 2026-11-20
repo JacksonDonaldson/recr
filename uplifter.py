@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Sequence
 from itertools import chain
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AbstractSet
 
 from ir import (
     Address,
@@ -38,6 +38,18 @@ class FunctionExtentError(ValueError):
         self.covered_end = covered_end
 
 
+class FunctionFallthroughError(FunctionExtentError):
+    """The last instruction can continue beyond the declared extent."""
+
+    def __init__(self, function: Function, last: Instruction, target: int) -> None:
+        super().__init__(
+            f"cannot uplift function {function.name}: last instruction at "
+            f"{last.address:#x} falls through to {target:#x} outside the declared extent",
+            function.start_address + function.length,
+        )
+        self.target = target
+
+
 class Uplifter:
     """Turn function locations from an input description into IR."""
 
@@ -46,7 +58,7 @@ class Uplifter:
         self.binary = binary
         self.function_map: dict[Address, Function] = {}
 
-    def uplift_function(self, function: Function) -> None:
+    def uplift_function(self, function: Function, *, require_terminator: bool = False) -> None:
         """Disassemble ``function``, recover its flow graph, and index it.
 
         The whole declared extent is decoded first.  Control flow is then
@@ -54,6 +66,9 @@ class Uplifter:
         rejected if an instruction does not decode, an instruction crosses the
         declared end, a flow target lands in the middle of an instruction, or
         decoded bytes are unreachable from the entry.
+
+        With ``require_terminator``, reject an extent whose final instruction
+        can fall through to code outside the extent.
 
         An unresolved local flow (for example an indirect switch jump) can hide
         its successors from static recovery.  When a reachable instruction has
@@ -71,6 +86,11 @@ class Uplifter:
         start = function.start_address
         end = start + function.length
         instructions = self._decode_linear(function, start, end)
+        if require_terminator:
+            last = instructions[next(reversed(instructions))]
+            target = self.isa.fallthrough_target(last)
+            if target is not None:
+                raise FunctionFallthroughError(function, last, target)
         basic_blocks, outgoing_references = self._recover_flow(
             function, instructions, start, end
         )
@@ -80,10 +100,11 @@ class Uplifter:
         self.function_map[Address.absolute(start)] = function
 
     def entries_to_preserve(
-        self, rejected_ranges: Sequence[tuple[int, int]]
+        self, rejected_ranges: Sequence[tuple[int, int]], *,
+        fallthrough_targets: AbstractSet[int] = frozenset(),
     ) -> frozenset[int]:
-        """Preserve overlapping functions and targets referenced by rejected bytes."""
-        if not rejected_ranges:
+        """Preserve functions overlapping or reachable from rejected extents."""
+        if not rejected_ranges and not fallthrough_targets:
             return frozenset()
 
         functions = self.function_map.values()
@@ -94,7 +115,13 @@ class Uplifter:
             for instruction in block.instructions
         }
         targets = set(owners)
-        protected = set()
+        protected = {
+            function.start_address for function in functions
+            if any(
+                function.start_address <= target < function.start_address + function.length
+                for target in fallthrough_targets
+            )
+        }
         for start, end in rejected_ranges:
             protected.update(
                 function.start_address for function in functions

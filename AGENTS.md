@@ -137,7 +137,12 @@ Implemented:
   During compaction, unreachable decoded instructions and instructions crossing
   a declared function end warn with `invalid-function-extent`. Recr excludes
   those ranges, protects overlapping functions and recovered reference targets,
-  and requires valid hook extents. Standalone codezip rejects extent mismatches.
+  and requires valid hook extents. Standalone codezip rejects those two extent
+  errors. Both CLIs warn and skip functions whose final instruction can fall
+  through, protecting any function that contains the continuation address.
+  Returns and unconditional jumps, including tail jumps to the next address,
+  pass the termination check. Recr applies `invalid-function-extent` to this
+  warning and rejects a hook targeting such an extent.
 - `recr <manifest.yaml> [<functions.xml>] <hooks.rec>` also accepts static
   raw images. The manifest names the image, gives disjoint virtual regions
   with permissions, and lists entry points to preserve. Regions without a
@@ -368,24 +373,19 @@ Implemented:
   cached in `test/build/e2e/<arch>/baseline/`, and Ghidra exports are reused
   when their binary and script hashes match, so only changed inputs are
   rebuilt or re-exported.
-  The current freed-byte breakdown is `pcre2test` 515 bytes in 63 ranges and
-  `pcre2grep` 2146 bytes in 48 ranges (2661 bytes total). The pre-red-zone
-  baseline was 360 and 2105 bytes (2465 total).
-  The default codezip outputs and receipts are byte-identical on these inputs
-  with recr's protected entries, raw-image function filtering, warning controls,
-  runtime-only region support, invalid-extent recovery, and compaction caching.
-  Match pruning, encoding-set grouping, window reuse, and layout reuse
-  preserve these outputs.
+  The current freed-byte breakdown is `pcre2test` 519 bytes in 60 ranges and
+  `pcre2grep` 2161 bytes in 51 ranges (2680 bytes total). Before fallthrough
+  extents were skipped, the counts were 515 and 2146 bytes (2661 total).
+  The pre-red-zone baseline was 360 and 2105 bytes (2465 total).
   Switch jump tables are uplifted conservatively as unresolved local flow, so
   the build does not disable them.
 - `make -C test e2e-riscv` runs the full pcre2 check on RV64 under QEMU,
   including receipt verification, the original and rewritten `make check`,
   and the plain and UTF corpus. RV64 frees 1640 bytes in 177 ranges from
-  `pcre2test` and 2654 bytes in 91 ranges from `pcre2grep` (4294 total).
+  `pcre2test` and 2652 bytes in 90 ranges from `pcre2grep` (4292 total).
+  Before fallthrough extents were skipped, `pcre2grep` freed 2654 bytes in
+  91 ranges (4294 total).
   The RV64 pre-outlining counts were 112 and 2056 bytes (2168 total).
-  The x86-64 counts above are identical before and after RISC-V outlining.
-  Bulk and target-aware scans and outliner search changes preserve both RV64
-  outputs and receipts.
 - Mutation sensitivity check (`test/e2e/mutation_check.py`, `make -C test
   e2e-mutation`, native x86-64 only) flips random bytes in the cached
   codezipped binaries and runs the matching pcre2 test script, plus the

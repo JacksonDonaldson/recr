@@ -153,6 +153,13 @@ class X86_64ISA(ISA):
             raise ValueError(f"cannot decode instruction at {address:#x} as x86-64. Available bytes are {data.hex(' ') or '<none>'}")
         return flow
 
+    def fallthrough_target(self, instruction: Instruction) -> int | None:
+        target = super().fallthrough_target(instruction)
+        if target is not None and instruction.type is InstructionType.BRANCH:
+            if self._mnemonic(instruction) == "JMP":
+                return None
+        return target
+
     # ------------------------------------------------------------ range scans
 
     # Addresses are handed to the device in batches so the scratch buffers stay

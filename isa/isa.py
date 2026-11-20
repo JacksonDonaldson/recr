@@ -62,6 +62,11 @@ class ISA(ABC):
         """
         raise NotImplementedError
 
+    def fallthrough_target(self, instruction: Instruction) -> int | None:
+        """Return the implicit next address of a decoded instruction, if any."""
+        target = instruction.address + instruction.length
+        return target if Address.absolute(target) in instruction.flows_to else None
+
     def decode_range(
         self, binary: "Binary", start: int, end: int
     ) -> Iterator[DecodedFlow | None]:

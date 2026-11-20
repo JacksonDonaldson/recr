@@ -22,7 +22,7 @@ from input_parser import ParseError, parse_re_file
 from ir import FreeSpace, Function
 from optimizers import function_remover, outliner
 from parsers.base import ParseResult
-from uplifter import FunctionExtentError, Uplifter
+from uplifter import FunctionExtentError, FunctionFallthroughError, Uplifter
 
 LOGGER = logging.getLogger("codezip")
 
@@ -160,6 +160,7 @@ def run_pipeline(
 
     failures = 0
     rejected_ranges: list[tuple[int, int]] = []
+    fallthrough_targets: set[int] = set()
     for function in parsed.functions:
         LOGGER.debug(
             "uplifting %s @ %#x (%#x bytes)",
@@ -168,14 +169,19 @@ def run_pipeline(
             function.length,
         )
         try:
-            uplifter.uplift_function(function)
+            uplifter.uplift_function(function, require_terminator=True)
         except FunctionExtentError as exc:
-            if warn_invalid_extent is None:
+            if isinstance(exc, FunctionFallthroughError):
+                fallthrough_targets.add(exc.target)
+            elif warn_invalid_extent is None:
                 failures += 1
                 LOGGER.error("failed to uplift %s at %#x in %s. %s", function.name, function.start_address, args.binary, exc)
+                continue
+            if warn_invalid_extent is None:
+                LOGGER.warning("%s. Skipping this extent in %s", exc, args.binary)
             else:
                 warn_invalid_extent(function, exc)
-                rejected_ranges.append((function.start_address, exc.covered_end))
+            rejected_ranges.append((function.start_address, exc.covered_end))
         except (ValueError, NotImplementedError) as exc:
             failures += 1
             LOGGER.error("failed to uplift %s at %#x in %s. %s", function.name, function.start_address, args.binary, exc)
@@ -206,7 +212,9 @@ def run_pipeline(
         LOGGER.error("failed to recover cross-references in %s using %s. %s", args.binary, isa_name, exc)
         return 1
     try:
-        protected_entries |= uplifter.entries_to_preserve(rejected_ranges)
+        protected_entries |= uplifter.entries_to_preserve(
+            rejected_ranges, fallthrough_targets=fallthrough_targets,
+        )
     except (ValueError, BackendError) as exc:
         LOGGER.error("failed to recover references from rejected function extents in %s. %s", args.binary, exc)
         return 1
@@ -233,7 +241,9 @@ def run_pipeline(
     if args.report_outline_matches:
         LOGGER.info("searching for profitable outline matches")
         try:
-            outline_result = outliner.extract_instruction_regions(binary, uplifter, uplifter.isa, warn=warn)
+            outline_result = outliner.extract_instruction_regions(
+                binary, uplifter, uplifter.isa, protected_entries=protected_entries, warn=warn,
+            )
         except (ValueError, NotImplementedError) as exc:
             LOGGER.error("cannot report outline matches in %s using %s. %s", args.binary, isa_name, exc)
             return 1

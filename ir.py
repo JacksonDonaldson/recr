@@ -106,6 +106,7 @@ class Instruction:
     modifies: list[StateSpace] = field(default_factory=list)
     depends_on: list[StateSpace] = field(default_factory=list)
     flows_from: list[Address] = field(default_factory=list)
+    # A target equal to the next address may be an explicit jump.
     flows_to: list[Address] = field(default_factory=list)
 
 

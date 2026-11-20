@@ -118,7 +118,7 @@ def test_recr_places_riscv_hook_and_trampoline_in_reach(firmware: Firmware, tmp_
     assert any(item["address"] == far for item in yaml.safe_load(receipt.read_text())["freed"])
 
 
-@pytest.mark.parametrize("failure", ["unreachable", "overrun", "decode"])
+@pytest.mark.parametrize("failure", ["unreachable", "overrun", "fallthrough", "decode"])
 def test_recr_classifies_uplift_failures(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch, failure: str,
@@ -147,6 +147,10 @@ def test_recr_classifies_uplift_failures(
         data[bad:neighbor + 4] = bytes.fromhex("b8 90 90 90 90 c3")
         length = 2
         reason = "extends past the function end"
+    elif failure == "fallthrough":
+        neighbor, length = bad + 1, 1
+        data[bad:neighbor + 4] = bytes.fromhex("90 90 90 90 c3")
+        reason = f"instruction at {base + bad:#x} falls through to {base + neighbor:#x}"
     else:
         bad, length = len(data) - 1, 1
         data[bad] = 0x0f
@@ -580,6 +584,29 @@ def test_recr_requires_a_manifest_hook_prototype(
     ]) == 1
 
     assert diagnostic in capsys.readouterr().err
+    assert output.read_bytes() == b"previous output"
+    assert receipt.read_bytes() == b"previous receipt"
+
+
+def test_recr_rejects_a_hook_whose_extent_falls_through(
+    firmware: Firmware, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    transform = firmware.layout["functions"]["transform"]
+    transform["length"] -= 1 if firmware.isa == "x86_64" else 2  # Omit the return.
+    firmware.manifest.write_text(yaml.safe_dump(firmware.layout))
+    output, receipt = tmp_path / "output", tmp_path / "receipt"
+    output.write_bytes(b"previous output")
+    receipt.write_bytes(b"previous receipt")
+
+    assert main([
+        str(firmware.manifest), str(HOOK), "--cc", shlex.join(firmware.compiler),
+        "-o", str(output), "-r", str(receipt), "-Wno-invalid-function-extent",
+    ]) == 1
+
+    diagnostic = capsys.readouterr().err
+    end = transform["start_address"] + transform["length"]
+    assert "recr: cannot uplift function transform" in diagnostic
+    assert f"falls through to {end:#x} outside the declared extent" in diagnostic
     assert output.read_bytes() == b"previous output"
     assert receipt.read_bytes() == b"previous receipt"
 

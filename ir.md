@@ -222,6 +222,11 @@ ISA contract:
             return: []
             flows_from is left empty; the code-flow recovery pass fills it.
 
+        fallthrough_target returns the implicit next address of a decoded
+        instruction, or None when there is no implicit continuation. An
+        unconditional jump can target the next address explicitly, so
+        flows_to alone can be ambiguous.
+
         disassemble models unknown transfers conservatively using the
         architecture's calling convention. On x86-64:
             calls depend on the System V AMD64 argument state (RDI, RSI, RDX,

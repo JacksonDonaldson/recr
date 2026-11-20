@@ -8,6 +8,8 @@ import re
 import shutil
 import subprocess
 
+import yaml
+
 from binary.binary import Binary
 from codezip import _render_receipt, build_arg_parser, main
 from ir import Address, FreeSpace
@@ -99,7 +101,7 @@ def test_pipeline_writes_binary_with_free_space_filled(
     assert result == 0
     assert "function main @ 0x40182b" in capsys.readouterr().out
 
-    assert "uplifted 45/45 function(s)" in caplog.text
+    assert "uplifted 44/45 function(s)" in caplog.text
     assert "recovering cross-references" in caplog.text
     assert "incoming reference(s)" in caplog.text
     assert "removing unreferenced functions" in caplog.text
@@ -313,6 +315,58 @@ def test_missing_export_is_reported_as_an_error(
 
     assert result == 1
     assert "does not exist" in caplog.text
+
+
+def test_pipeline_skips_a_fallthrough_extent_and_preserves_its_successor(
+    caplog, tmp_path: Path,
+) -> None:
+    source, binary, export, output, receipt = (
+        tmp_path / name for name in ("input.s", "input", "input.xml", "output", "receipt.yaml")
+    )
+    source.write_text(
+        ".global _start\n"
+        "_start: ret\n"
+        "fragment: nop\n"
+        "continuation: ret\n"
+        "tail_call: .byte 0xeb, 0x00\n"  # jmp to the next address
+        "tail_target: ret\n"
+        "spare: ret\n"
+    )
+    subprocess.run([
+        "gcc", "-nostdlib", "-static", "-no-pie", "-Wl,--build-id=none,-Ttext=0x401000",
+        source, "-o", binary,
+    ], check=True, capture_output=True)
+    export.write_text("""<PROGRAM>
+      <PROCESSOR NAME="x86" ADDRESS_MODEL="64-bit" />
+      <FUNCTIONS>
+        <FUNCTION NAME="fragment" ENTRY_POINT="401001">
+          <ADDRESS_RANGE START="401001" END="401001" />
+        </FUNCTION>
+        <FUNCTION NAME="continuation" ENTRY_POINT="401002">
+          <ADDRESS_RANGE START="401002" END="401002" />
+        </FUNCTION>
+        <FUNCTION NAME="tail_call" ENTRY_POINT="401003">
+          <ADDRESS_RANGE START="401003" END="401004" />
+        </FUNCTION>
+        <FUNCTION NAME="tail_target" ENTRY_POINT="401005">
+          <ADDRESS_RANGE START="401005" END="401005" />
+        </FUNCTION>
+        <FUNCTION NAME="spare" ENTRY_POINT="401006">
+          <ADDRESS_RANGE START="401006" END="401006" />
+        </FUNCTION>
+      </FUNCTIONS>
+    </PROGRAM>""")
+
+    assert main([str(binary), str(export), "-o", str(output), "--receipt", str(receipt)]) == 0
+
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "cannot uplift function fragment" in warnings[0]
+    assert "instruction at 0x401001 falls through to 0x401002" in warnings[0]
+    assert Binary(output).read(0x401001, 6) == bytes.fromhex("90 c3 ff ff c3 ff")
+    assert yaml.safe_load(receipt.read_text()) == {
+        "freed": [{"address": 0x401003, "length": 2}, {"address": 0x401006, "length": 1}],
+    }
 
 
 def test_receipt_write_error_reports_published_binary(caplog, sample_elf: Path, tmp_path: Path) -> None:
